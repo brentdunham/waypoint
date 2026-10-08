@@ -116,6 +116,21 @@ def _findings_sourced(t: Transcript, _: Any, s: Settings) -> CheckResult:
     )
 
 
+@check("findings_cited")
+def _findings_cited(t: Transcript, _: Any, s: Settings) -> CheckResult:
+    """Every finding's sources came from citations, not the retrieved-results
+    fallback. Stricter than ``findings_sourced``, which the fallback satisfies."""
+    if not s.research.web_search:
+        return CheckResult("findings_cited", None, "web search off")
+    findings = t.values.get("findings") or []
+    if not findings:
+        return CheckResult("findings_cited", False, "no findings")
+    return _ok(
+        "findings_cited",
+        [f"not cited: {f['question']}" for f in findings if not f.get("cited", bool(f["sources"]))],
+    )
+
+
 @check("plan_bounds")
 def _plan_bounds(t: Transcript, _: Any, __: Settings) -> CheckResult:
     n = len(t.values.get("plan") or [])

@@ -11,6 +11,7 @@ from evals.cases import Case
 from evals.checks import run_checks
 from evals.driver import run_case
 from evals.judge import Judge, assign, load_rubric, material_for
+from evals.replay import Replay, ReplayStore
 from evals.scorecard import CaseResult, usage_summary
 from waypoint.agents.models import resolve_models
 from waypoint.agents.registry import get_spec
@@ -58,14 +59,24 @@ async def evaluate(
     concurrency: int = 2,
     grade: bool = True,
     progress: Any = None,
+    replay: ReplayStore | None = None,
+    fresh: bool = False,
 ) -> list[CaseResult]:
+    """Run and grade every case ``trials`` times.
+
+    With ``replay``, model calls already in the store are answered from it and
+    new ones are added; ``fresh`` records without reading (``evals.replay``).
+    """
     gate = asyncio.Semaphore(concurrency)
     judge = Judge(settings, concurrency=concurrency * 2)
     rubric = load_rubric(agent)
 
     async def one(case: Case, trial: int) -> CaseResult:
         async with gate:
-            transcript = await run_case(settings, agent, case, models=models, trial=trial)
+            session = Replay(replay, case.id, trial, read=not fresh) if replay else None
+            transcript = await run_case(
+                settings, agent, case, models=models, trial=trial, replay=session
+            )
         result = CaseResult(case, transcript, run_checks(transcript, case.checks, settings))
         if grade:
             result.grades = await judge.grade_transcript(agent, transcript, case, rubric)
@@ -91,14 +102,20 @@ async def compare(
     trials: int = 1,
     concurrency: int = 2,
     seed: int = 7,
+    replay: ReplayStore | None = None,
+    fresh: bool = False,
 ) -> dict[str, Any]:
-    """Run both configurations and judge each criterion pairwise, A vs B."""
-    results_a = await evaluate(
-        settings, agent, cases, a, trials=trials, concurrency=concurrency, grade=False
-    )
-    results_b = await evaluate(
-        settings, agent, cases, b, trials=trials, concurrency=concurrency, grade=False
-    )
+    """Run both configurations and judge each criterion pairwise, A vs B.
+
+    With ``replay``, the roles A and B share are recorded once and replayed
+    for the other side (same case, trial, model and input).
+    """
+    kw: dict[str, Any] = {
+        "trials": trials, "concurrency": concurrency, "grade": False,
+        "replay": replay, "fresh": fresh,
+    }  # fmt: skip
+    results_a = await evaluate(settings, agent, cases, a, **kw)
+    results_b = await evaluate(settings, agent, cases, b, **kw)
     judge = Judge(settings, concurrency=concurrency * 2)
     rubric = load_rubric(agent)
     rng = random.Random(seed)

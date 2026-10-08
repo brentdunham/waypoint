@@ -3,11 +3,16 @@
 Reads the same .env as the service (ANTHROPIC_API_KEY, MODEL, MODELS__*,
 RESEARCH__*, EVALS__*). ``--fake`` runs everything on the scripted model,
 which checks the harness, not the agents.
+
+Model calls are recorded and replayed (``evals/replay.py``): a rerun pays only
+for calls whose input or setup changed. ``--fresh`` resamples everything.
+Iterate on one trial; ``accept`` needs a three-trial scorecard.
 """
 
 import argparse
 import asyncio
 import datetime as dt
+import io
 import json
 import sys
 from pathlib import Path
@@ -16,9 +21,12 @@ from typing import Any
 from evals.calibrate import calibrate
 from evals.cases import load_dataset
 from evals.judge import ROUTING, assign, load_rubric
+from evals.replay import FILENAME, ReplayStore
 from evals.runner import compare, evaluate, parse_overrides, resolved, self_judging
 from evals.scorecard import (
+    MIN_BASELINE_TRIALS,
     RESULTS,
+    AcceptError,
     CaseResult,
     accept,
     build_scorecard,
@@ -58,6 +66,14 @@ def _cases(agent: str, args: argparse.Namespace) -> list[Any]:
     return cases
 
 
+def _replay(args: argparse.Namespace) -> ReplayStore | None:
+    if args.no_replay or args.fake:
+        return None  # the scripted model is free, and its answers are not worth keeping
+    store = ReplayStore((args.out or RESULTS) / FILENAME)
+    print(f"replay: {store.path}{' (fresh: recording only)' if args.fresh else ''}")
+    return store
+
+
 def _progress(result: CaseResult) -> None:
     t = result.transcript
     failed = [c.name for c in result.checks if c.passed is False]
@@ -67,11 +83,17 @@ def _progress(result: CaseResult) -> None:
     status = (
         "ERROR " + (t.error or "") if t.error else ("FAIL " + ",".join(failed) if failed else "ok")
     )
-    print(f"  {t.case_id}#{t.trial} {t.elapsed_s:5.1f}s {status} {scores}".rstrip(), flush=True)
+    replayed = f" replayed {sum(t.replayed.values())}/{sum(t.replayed.values()) + len(t.calls)}"
+    print(
+        f"  {t.case_id}#{t.trial} {t.elapsed_s:5.1f}s {status} {scores}"
+        f"{replayed if t.replayed else ''}".rstrip(),
+        flush=True,
+    )
 
 
 def cmd_run(args: argparse.Namespace) -> int:
     settings = _settings(args)
+    replay = _replay(args)
     failed = False
     for agent in _agents(args.agent):
         models = resolved(settings, agent, parse_overrides(agent, args.model))
@@ -89,6 +111,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 concurrency=args.concurrency,
                 grade=not args.no_judge,
                 progress=_progress,
+                replay=replay,
+                fresh=args.fresh,
             )
         )
         calibration = {name: assign(settings, agent, name).status for name in load_rubric(agent)}
@@ -133,8 +157,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
     cases = _cases(agent, args)
     print(f"{agent}: A {a}\n{' ' * len(agent)}  B {b}")
     report = asyncio.run(
-        compare(settings, agent, cases, a, b, trials=args.trials, concurrency=args.concurrency)
-    )
+        compare(
+            settings, agent, cases, a, b, trials=args.trials, concurrency=args.concurrency,
+            replay=_replay(args), fresh=args.fresh,
+        )
+    )  # fmt: skip
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     out = (args.out or RESULTS) / agent / f"{stamp}-compare"
     out.mkdir(parents=True, exist_ok=True)
@@ -175,7 +202,11 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
 
 
 def cmd_accept(args: argparse.Namespace) -> int:
-    target = accept(args.agent, Path(args.scorecard))
+    try:
+        target = accept(args.agent, Path(args.scorecard), min_trials=args.min_trials)
+    except AcceptError as exc:
+        print(f"not accepted: {exc}", file=sys.stderr)
+        return 2
     print(f"baseline for {args.agent} is now {target}")
     return 0
 
@@ -189,6 +220,10 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Summaries contain non-ASCII (≥, ±). A Windows console or redirect defaults
+    # to cp1252 and would crash the final print after the files are written.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(prog="python -m evals", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     agent_choices = [*AGENTS, "all"]
@@ -201,9 +236,14 @@ def main(argv: list[str] | None = None) -> int:
     def selection(p: argparse.ArgumentParser) -> None:
         p.add_argument("--case", action="append", default=[], help="case id (repeatable)")
         p.add_argument("--tag", action="append", default=[], help="cases with this tag")
-        p.add_argument("--trials", type=int, default=1)
+        p.add_argument("--trials", type=int, default=1,
+                       help=f"1 to iterate; {MIN_BASELINE_TRIALS} for a scorecard to accept")  # fmt: skip
         p.add_argument("--concurrency", type=int, default=2)
         p.add_argument("--out", type=Path, default=None, help="results directory")
+        p.add_argument("--fresh", action="store_true",
+                       help="resample every model call; record, do not replay")  # fmt: skip
+        p.add_argument("--no-replay", action="store_true",
+                       help="neither replay nor record model calls")  # fmt: skip
 
     run = sub.add_parser("run", help="run the dataset and write a scorecard")
     common(run)
@@ -229,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
     acc = sub.add_parser("accept", help="make a scorecard the baseline")
     acc.add_argument("--agent", required=True, choices=list(AGENTS))
     acc.add_argument("scorecard", help="path to a scorecard.json")
+    acc.add_argument("--min-trials", type=int, default=MIN_BASELINE_TRIALS,
+                     help=f"refuse scorecards with fewer trials (default {MIN_BASELINE_TRIALS})")  # fmt: skip
     acc.set_defaults(fn=cmd_accept)
 
     fp = sub.add_parser("fingerprint", help="print the configuration fingerprint")

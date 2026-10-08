@@ -29,6 +29,9 @@ CHECK_FLOOR = 0.10
 """Smallest pass-rate drop that fails the gate, whatever the observed spread."""
 CRITERION_FLOOR = 0.25
 """Smallest drop in a criterion's mean (1-4 scale) that fails the gate."""
+MIN_BASELINE_TRIALS = 3
+"""``accept`` refuses fewer: the gate's tolerance is the baseline's spread
+across trials, and one trial has none. Iterate on one trial; accept on three."""
 
 
 @dataclass(slots=True)
@@ -104,6 +107,22 @@ def _prices() -> dict[str, dict[str, float]]:
     return {k: v for k, v in data.get("models", {}).items() if isinstance(v, dict)}
 
 
+def call_cost(
+    price: Mapping[str, float], input_tokens: int, output_tokens: int, searches: int
+) -> float:
+    """USD for one call. ``long_*`` rates apply above ``long_threshold`` input tokens.
+
+    A web-search call is several requests billed as one call here, so a call
+    whose summed input crosses the threshold is priced at the long rate even
+    when each request stayed under it. That overstates, never understates.
+    """
+    long = "long_threshold" in price and input_tokens > price["long_threshold"]
+    rate_in = price["long_input"] if long else price["input"]
+    rate_out = price["long_output"] if long else price["output"]
+    tokens = input_tokens * rate_in + output_tokens * rate_out
+    return tokens / 1_000_000 + searches * price.get("search", 0.0)
+
+
 def usage_summary(results: list[CaseResult]) -> dict[str, Any]:
     prices = _prices()
     roles: dict[str, dict[str, Any]] = {}
@@ -131,9 +150,11 @@ def usage_summary(results: list[CaseResult]) -> dict[str, Any]:
             if price is None:
                 total_cost = None
             elif total_cost is not None:
-                total_cost += (
-                    call.input_tokens * price["input"] + call.output_tokens * price["output"]
-                ) / 1_000_000 + call.searches * price.get("search", 0.0)
+                total_cost += call_cost(price, call.input_tokens, call.output_tokens, call.searches)
+    replayed: dict[str, int] = defaultdict(int)
+    for result in results:
+        for role, n in result.transcript.replayed.items():
+            replayed[role] += n
     runs = len(results) or 1
     for row in roles.values():
         row["models"] = sorted(row["models"])
@@ -142,6 +163,7 @@ def usage_summary(results: list[CaseResult]) -> dict[str, Any]:
         row["output_tokens_per_run"] = round(row["output_tokens"] / runs)
     return {
         "roles": roles,
+        "replayed": dict(sorted(replayed.items())),
         "cost_usd": round(total_cost, 4) if total_cost is not None else None,
         "cost_usd_per_run": round(total_cost / runs, 4) if total_cost is not None else None,
     }
@@ -281,10 +303,20 @@ def load_baseline(agent: str) -> dict[str, Any] | None:
     return data
 
 
-def accept(agent: str, scorecard_path: Path) -> Path:
+class AcceptError(ValueError):
+    """The scorecard cannot become a baseline."""
+
+
+def accept(agent: str, scorecard_path: Path, *, min_trials: int = MIN_BASELINE_TRIALS) -> Path:
     card = json.loads(scorecard_path.read_text(encoding="utf-8"))
     if card.get("agent") != agent:
-        raise ValueError(f"{scorecard_path} is a scorecard for {card.get('agent')!r}")
+        raise AcceptError(f"{scorecard_path} is a scorecard for {card.get('agent')!r}")
+    if int(card.get("trials", 0)) < min_trials:
+        raise AcceptError(
+            f"{scorecard_path} ran {card.get('trials')} trial(s); a baseline needs "
+            f"{min_trials} so the gate has a spread to tolerate. Rerun with "
+            f"--trials {min_trials} (replay makes the repeat cheap)."
+        )
     card.pop("runs", None)  # the baseline is the summary, not the transcripts
     BASELINES.mkdir(exist_ok=True)
     target = BASELINES / f"{agent}.json"
@@ -356,6 +388,13 @@ def render_markdown(
         "",
         f"Cost per run: {'$' + format(cost, '.4f') if cost is not None else 'unknown (model not in prices.toml)'}",
     ]
+    if replayed := usage.get("replayed"):
+        lines += [
+            "",
+            "Replayed, not billed and not counted above: "
+            + ", ".join(f"{role} {n}" for role, n in replayed.items())
+            + " calls.",
+        ]
     lines += ["", "Grounded means grounded in what the agent retrieved; the judge does not browse."]
     if found is not None:
         lines += ["", "## Baseline gate", ""]

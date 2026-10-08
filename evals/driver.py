@@ -20,8 +20,9 @@ from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
 from evals.cases import Case
+from evals.replay import Replay
 from waypoint.agents.context import AgentContext, memory_namespace
-from waypoint.agents.models import build_embeddings
+from waypoint.agents.models import INTERCEPTOR, build_embeddings
 from waypoint.agents.registry import get_spec
 from waypoint.serialization import jsonable
 from waypoint.settings import Settings
@@ -51,6 +52,9 @@ class Transcript:
     """Final graph state, JSON-shaped."""
     interrupts: list[Any] = field(default_factory=list)
     calls: list[Call] = field(default_factory=list)
+    """Live model calls. Replayed ones are counted in ``replayed`` instead."""
+    replayed: dict[str, int] = field(default_factory=dict)
+    """Role -> model calls answered from the replay store (not billed)."""
     error: str | None = None
     elapsed_s: float = 0.0
 
@@ -89,6 +93,7 @@ class Transcript:
                 }
                 for c in self.calls
             ],
+            "replayed": self.replayed,
             "error": self.error,
             "elapsed_s": round(self.elapsed_s, 2),
         }
@@ -148,9 +153,35 @@ def _turn_input(input_key: str, text: str) -> dict[str, Any]:
 
 
 async def run_case(
-    settings: Settings, agent: str, case: Case, *, models: dict[str, str], trial: int = 0
+    settings: Settings,
+    agent: str,
+    case: Case,
+    *,
+    models: dict[str, str],
+    trial: int = 0,
+    replay: Replay | None = None,
 ) -> Transcript:
-    """Run every turn of ``case``; never raises for an agent failure."""
+    """Run every turn of ``case``; never raises for an agent failure.
+
+    With ``replay``, model calls seen before are answered from its store and
+    new ones are recorded (``evals.replay``).
+    """
+    token = INTERCEPTOR.set(replay)
+    try:
+        return await _run_case(settings, agent, case, models=models, trial=trial, replay=replay)
+    finally:
+        INTERCEPTOR.reset(token)
+
+
+async def _run_case(
+    settings: Settings,
+    agent: str,
+    case: Case,
+    *,
+    models: dict[str, str],
+    trial: int,
+    replay: Replay | None,
+) -> Transcript:
     spec = get_spec(agent)
     user = f"{case.id}-{trial}-{uuid.uuid4().hex[:6]}"
     transcript = Transcript(agent=agent, case_id=case.id, trial=trial, models=dict(models))
@@ -205,4 +236,6 @@ async def run_case(
         transcript.error = f"{type(exc).__name__}: {exc}"
     transcript.elapsed_s = time.perf_counter() - started
     transcript.calls = recorder.calls
+    if replay is not None:
+        transcript.replayed = dict(sorted(replay.replayed.items()))
     return transcript

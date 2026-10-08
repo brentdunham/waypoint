@@ -15,6 +15,11 @@
 # Run it by hand from the Actions tab (Run workflow), with a choice of agent
 # and trials. A run fails when a metric drops past the baseline's tolerance;
 # GitHub emails the failure. Scorecards and transcripts are kept as an artifact.
+#
+# Cost: one trial of both agents is an estimated $2-3 (Sonnet 5, searcher on
+# Haiku 5.5); three trials, enough to accept as a baseline, about $7.60.
+# Runs here never replay: the point is to sample the live models and the live
+# web, so each run pays in full. Set EVALS_CADENCE=off to stop the spend.
 
 name: evals
 
@@ -29,10 +34,10 @@ on:
         options: [all, research, chat]
         default: all
       trials:
-        description: Trials per case (3+ for the gate to mean anything)
+        description: Trials per case (1 to check; 3 for a scorecard to accept as baseline)
         type: number
-        default: 3
-
+        default: 1
+        
 permissions:
   contents: read
 
@@ -73,6 +78,8 @@ jobs:
       # fingerprint differs and the summary says so. `python -m evals
       # fingerprint` prints it locally. Everything not set here is the default.
       MODEL: claude-sonnet-5
+      MODELS__RESEARCH__SEARCHER: claude-haiku-5-5
+      RESEARCH__MAX_SEARCHES: "2"
       MAX_TOKENS: "4096"
       EMBEDDINGS_MODEL: openai:text-embedding-3-small
       EMBEDDINGS_DIMS: "1536"
@@ -86,7 +93,7 @@ jobs:
       LANGSMITH_TRACING: ${{ vars.EVALS_LANGSMITH_TRACING || 'false' }}
       LANGSMITH_PROJECT: waypoint-evals
       AGENT: ${{ inputs.agent || 'all' }}
-      TRIALS: ${{ inputs.trials || 3 }}
+      TRIALS: ${{ inputs.trials || 1 }}
     steps:
       - name: Check secrets
         run: |
@@ -106,7 +113,7 @@ jobs:
 
       - name: Run evals against the baseline
         run: |
-          uv run python -m evals run --agent "$AGENT" --trials "$TRIALS" \
+          uv run python -m evals run --no-replay --agent "$AGENT" --trials "$TRIALS" \
             --against-baseline --out eval-results
 
       - name: Summary

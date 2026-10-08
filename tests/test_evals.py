@@ -301,8 +301,10 @@ def test_cli_run_accept_and_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert main(argv) == 0
     card = next(out.glob("chat/*/scorecard.json"))
     assert json.loads(card.read_text())["checks"]["completed"]["passed"] == 1
-    assert main(["accept", "--agent", "chat", str(card)]) == 0
+    assert main(["accept", "--agent", "chat", str(card)]) == 2  # one trial: refused
+    assert main(["accept", "--agent", "chat", "--min-trials", "1", str(card)]) == 0
     assert main([*argv, "--against-baseline"]) == 0
+    assert not (out / "replay.sqlite").exists()  # the scripted model is never recorded
 
 
 def test_judge_knows_the_date_and_prompt_changes_invalidate_calibration(
@@ -315,3 +317,175 @@ def test_judge_knows_the_date_and_prompt_changes_invalidate_calibration(
     before = judge_module.rubric_hash("research")
     monkeypatch.setattr(judge_module, "SYSTEM", judge_module.SYSTEM + " Extra rule.")
     assert judge_module.rubric_hash("research") != before
+
+
+# -- replay ------------------------------------------------------------------------
+
+
+def _research_case() -> Case:
+    return _case(input="tidal power", checks={"completed": True})
+
+
+def _run(settings: Any, store: Any, *, trial: int = 0, fresh: bool = False) -> Transcript:
+    from evals.replay import Replay
+
+    session = Replay(store, "c", trial, read=not fresh)
+    models = resolved(settings, "research", {})
+    return asyncio.run(
+        run_case(settings, "research", _research_case(), models=models, trial=trial, replay=session)
+    )
+
+
+def test_replay_answers_a_repeat_run_from_the_store(tmp_path: Path) -> None:
+    from evals.replay import ReplayStore
+
+    settings = build_settings()
+    store = ReplayStore(tmp_path / "replay.sqlite")
+    first = _run(settings, store)
+    assert first.error is None
+    assert first.replayed == {}
+    second = _run(settings, store)
+    assert second.error is None
+    assert set(second.replayed) == {"planner", "searcher", "critic", "writer"}
+    assert second.values["report"] == first.values["report"]
+    assert second.values["findings"] == first.values["findings"]
+
+
+def test_replay_reruns_only_what_changed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evals.replay import ReplayStore
+
+    settings = build_settings()
+    store = ReplayStore(tmp_path / "replay.sqlite")
+    _run(settings, store)
+    monkeypatch.setattr(research, "SYNTH", research.SYNTH.replace("No filler.", "Be brief."))
+    changed = _run(settings, store)
+    assert set(changed.replayed) == {"planner", "searcher", "critic"}  # the writer ran live
+
+
+def test_replay_keeps_trials_apart_and_fresh_does_not_read(tmp_path: Path) -> None:
+    from evals.replay import ReplayStore
+
+    settings = build_settings()
+    store = ReplayStore(tmp_path / "replay.sqlite")
+    _run(settings, store)
+    assert _run(settings, store, trial=1).replayed == {}
+    assert _run(settings, store, fresh=True).replayed == {}
+
+
+def test_replay_key_sees_max_uses_and_masks_the_date() -> None:
+    import datetime as dt
+
+    from langchain_core.messages import HumanMessage
+
+    from evals.replay import _input_key, _signature
+    from waypoint.agents.models import build_model
+
+    settings = build_settings(fake_model=False, anthropic_api_key="sk-test-not-sent")
+    model = build_model(settings, model="claude-haiku-5-5")
+
+    def searcher(max_uses: int) -> str:
+        tool = {"type": research.WEB_SEARCH_TOOL, "name": "web_search", "max_uses": max_uses}
+        return _signature(model.bind_tools([tool]))
+
+    assert searcher(2) != searcher(3)
+    assert "sk-test-not-sent" not in searcher(2)
+    today = HumanMessage(f"Today is {dt.date.today().isoformat()}.", id="a")
+    other_day = HumanMessage("Today is 2020-01-01.", id="b")
+    assert "<today>" in _input_key([today])
+    assert _input_key([today]) == _input_key([HumanMessage(today.content, id="c")])
+    assert _input_key([today]) != _input_key([other_day])
+
+
+def test_long_prompts_are_priced_at_the_long_rate() -> None:
+    from evals.scorecard import call_cost
+
+    price = {"input": 0.1, "output": 0.5, "long_threshold": 100_000,
+             "long_input": 0.5, "long_output": 2.5, "search": 0.01}  # fmt: skip
+    assert call_cost(price, 50_000, 1_000, 2) == pytest.approx(0.005 + 0.0005 + 0.02)
+    assert call_cost(price, 200_000, 1_000, 0) == pytest.approx(0.1 + 0.0025)
+    assert call_cost({"input": 2.0, "output": 10.0}, 1_000_000, 0, 5) == pytest.approx(2.0)
+
+
+def test_accept_needs_three_trials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evals.scorecard import AcceptError, accept
+
+    monkeypatch.setattr("evals.scorecard.BASELINES", tmp_path / "baselines")
+    card = tmp_path / "scorecard.json"
+    card.write_text(json.dumps({"agent": "research", "trials": 1}))
+    with pytest.raises(AcceptError, match="3"):
+        accept("research", card)
+    card.write_text(json.dumps({"agent": "research", "trials": 3}))
+    assert accept("research", card).exists()
+
+
+# -- uncited search answers ----------------------------------------------------------
+
+
+def _uncited_reply(question: str) -> Any:
+    from langchain_core.messages import AIMessage
+
+    results = [
+        {"type": "web_search_result", "url": f"https://example.com/r{n}", "title": f"Result {n}"}
+        for n in range(8)
+    ]
+    return AIMessage(
+        content=[
+            {"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "q"}},
+            {"type": "web_search_tool_result", "tool_use_id": "s1", "content": results},
+            {"type": "text", "text": f"Uncited answer to: {question}"},
+        ]
+    )
+
+
+def test_an_uncited_search_answer_falls_back_to_its_results_and_is_capped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from waypoint.agents.models import ScriptedChatModel
+
+    original = ScriptedChatModel._next
+
+    def next_(self: ScriptedChatModel, messages: list[Any]) -> Any:
+        text = str(messages[-1].content) if messages else ""
+        if text.startswith("Answer this research question"):
+            return _uncited_reply(text.rsplit("Question:", 1)[-1].strip())
+        return original(self, messages)
+
+    monkeypatch.setattr(ScriptedChatModel, "_next", next_)
+    settings = build_settings()
+    case = _case(input="tidal power", checks={"findings_sourced": True, "findings_cited": True})
+    transcript = asyncio.run(
+        run_case(settings, "research", case, models=resolved(settings, "research", {}))
+    )
+    assert transcript.error is None
+    findings = transcript.values["findings"]
+    assert findings
+    for finding in findings:
+        assert finding["cited"] is False
+        assert len(finding["sources"]) == research.RETRIEVED_SOURCES
+        assert finding["confidence"] <= research.UNCITED_CAP
+    results = {r.name: r.passed for r in run_checks(transcript, case.checks, settings)}
+    assert results["findings_sourced"] is True
+    assert results["findings_cited"] is False
+
+
+def test_retrieved_sources_skip_errors_and_duplicates() -> None:
+    from langchain_core.messages import AIMessage
+
+    from waypoint.agents.citations import retrieved_sources
+
+    reply = AIMessage(
+        content=[
+            {"type": "web_search_tool_result", "content": {"type": "error", "error_code": "x"}},
+            {"type": "web_search_tool_result", "content": [
+                {"url": "https://a.example", "title": "A"},
+                {"url": "https://a.example", "title": "A again"},
+                {"url": "https://b.example"},
+            ]},
+        ]
+    )  # fmt: skip
+    assert retrieved_sources(reply, 5) == [
+        {"url": "https://a.example", "title": "A"},
+        {"url": "https://b.example", "title": "https://b.example"},
+    ]
+    assert len(retrieved_sources(reply, 1)) == 1
+    assert retrieved_sources(AIMessage(content="plain"), 5) == []

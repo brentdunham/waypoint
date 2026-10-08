@@ -160,8 +160,14 @@ never from URLs in the prose: a URL in citation metadata came back from a
 search, a URL in the text may have been invented. Workers are not streamed,
 so citations arrive whole rather than reassembled from deltas.
 
+A worker that searched but attached no citations (claude-haiku-5-5 did in
+about a quarter of findings, 2026-10-08) gets the first five pages its searches
+returned as sources, with `cited: false`. The URLs are still real search
+results; what is lost is which sentence each one supports. The critic and the
+writer are told, and the `findings_cited` eval check counts them.
+
 Two rules are enforced in code, not left to the critic's judgment: a finding
-with no sources is capped at 0.3 confidence, and the source list at the end of
+with no sources, or only uncited ones, is capped at 0.3 confidence, and the source list at the end of
 the briefing is built from metadata and appended, so the writer cannot add a
 source that was never retrieved.
 

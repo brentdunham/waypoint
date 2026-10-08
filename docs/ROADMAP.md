@@ -239,9 +239,13 @@ claude-haiku-4-5, escalation claude-sonnet-4-5):
   `calibrated-vague`, `useful-late`). With four examples per criterion one
   disagreement is 25 points. Next: review those labels and grow the set to
   about ten per criterion.
-* **Cost.** About 120k input tokens and 32 web searches per research run on
-  the searcher alone; the searcher dominates. `prices.toml` has no entry for
-  claude-sonnet-5 yet, so cost shows as unknown.
+* **Cost.** On claude-sonnet-5 the searcher was about 84% of a run: 4.6M
+  input tokens and 372 searches per 8-case, 3-trial run, about $18.50 in all,
+  and five such runs came to most of $100 (2026-10-08). Cut by moving the
+  searcher to claude-haiku-5-5, capping `max_uses` at 2, recording and
+  replaying model calls so an experiment pays only for what it changed, and
+  requiring 3 trials only to accept a baseline (TESTING.md §4, Cost).
+  `prices.toml` now prices every model in use.
 
 Deviations from the plan, on purpose:
 * `sources_cited` passes at 30% of listed sources cited, not all of them: live

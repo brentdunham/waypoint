@@ -81,7 +81,9 @@ and cost money; they are not part of `pytest`. The harness itself is tested
 offline in `tests/test_evals.py`.
 
 ```bash
-uv run python -m evals run --agent research --trials 3      # scorecard per agent
+uv run python -m evals run --agent research                 # 1 trial, replayed where it can be
+uv run python -m evals run --agent research --trials 3      # a scorecard you can accept
+uv run python -m evals run --agent research --fresh         # resample every model call
 uv run python -m evals run --agent all --no-judge           # programmatic checks only
 uv run python -m evals run --agent chat --case arithmetic   # one case
 uv run python -m evals run --agent research --model critic=claude-opus-4-5
@@ -101,7 +103,9 @@ How it fits together (`evals/`):
   registers, with its own in-memory store, and records every model call with
   role, model, tokens, web searches and latency.
 * **Checks** — deterministic, run first: `[n]` citations resolve, sources are
-  used, rounds and plan size stay in bounds, a declined plan searches nothing;
+  used, every finding has sources (`findings_sourced`) and they came from
+  citations rather than the search-results fallback (`findings_cited`),
+  rounds and plan size stay in bounds, a declined plan searches nothing;
   for chat, the right tool was (or was not) called, facts were remembered and
   seeded memories recalled.
 * **Judge** — `rubrics/<agent>.toml`, one call per criterion, reasoning before
@@ -121,16 +125,54 @@ How it fits together (`evals/`):
   not listed there shows tokens only.
 * **Baseline gate** — `baselines/<agent>.json`. A metric fails when it drops
   by more than twice the baseline's spread across trials, and never less than
-  0.10 (check pass rate) or 0.25 (criterion mean). Run the baseline with
-  `--trials 3` or more so the spread means something.
+  0.10 (check pass rate) or 0.25 (criterion mean). `accept` refuses a
+  scorecard with fewer than 3 trials (`--min-trials` overrides), because one
+  trial has no spread. Iterate on one trial; run three only to accept.
+* **Replay** — `results/replay.sqlite` (beside `--out`). Every model call is
+  stored under its case, trial, role, model, bound setup (tools, `max_uses`,
+  output schema, `max_tokens`) and input messages, with today's date masked.
+  A rerun answers stored calls from the file and pays only for calls whose
+  key changed, and for everything downstream of them. See below.
 * **Compare** — runs two model configurations on the same cases and asks the
   judge which output is better per criterion, in shuffled order. Reports win
   rates next to cost and check pass rates.
 
+### Cost, and what replay saves
+
+On 2026-10-08 one research run of 8 cases x 3 trials, every role on
+claude-sonnet-5, cost about $18.50, and the searcher was about $15.60 of it:
+4.6M input tokens, because each web search's results are input again for the
+next search in the same call, plus 372 searches at $0.01. Five such runs were
+most of a $100 bill. Three changes bring it down:
+
+* The searcher runs on `claude-haiku-5-5` (`MODELS__RESEARCH__SEARCHER`), at
+  $0.10 / $0.50 per million tokens against $2 / $10.
+* `RESEARCH__MAX_SEARCHES=2`: calls that made a third search averaged 48k
+  input tokens against 21k for two.
+* Replay. A writer-prompt change replays the planner, every search and the
+  critic, and pays for the writer alone, about $0.90 for 8 cases x 3 trials.
+  A critic change replays the planner and the first wave of searches, then
+  runs the critic, its new follow-up searches and the writer live.
+
+What a key covers is exactly what reaches the API, so a prompt, model,
+`max_uses` or schema change can never be answered from a stale call. What it
+cannot see is the outside world: replayed searches are the web as it was when
+recorded. `--fresh` resamples everything and records the new answers; use it
+when the question is "has something changed out there", and before accepting
+a baseline you mean to keep for a while. Replayed calls are not billed and
+not in the usage table; the summary lists how many there were per role.
+Delete `replay.sqlite` to start over.
+
+`compare` shares the store too: when A and B differ only in the writer, both
+sides replay the same planner, searches and critic.
+
 ### Scheduled runs
 
-`.github/workflows/evals.yml` runs `evals run --agent all --trials 3
---against-baseline` on `main`, weekly by default, against live models. The
+`.github/workflows/evals.yml` runs `evals run --agent all --trials 1
+--against-baseline --no-replay` on `main`, weekly by default, against live
+models. One trial should cost roughly $2-3 (an estimate from the Sonnet token
+counts; measure it on the first run). It never replays: its job is to notice the
+live models and the live web moving. The
 workflow wakes daily and a small first job decides whether today is a run
 day, so the cadence is a repository variable, not a code change:
 
@@ -149,10 +191,11 @@ The run fails, and GitHub emails it, when a metric drops past the baseline's
 tolerance. Each run's summary appears on the run page and the scorecards and
 transcripts are kept for 90 days as an artifact. Scorecards carry the commit
 SHA. **Run workflow** on the Actions tab starts one by hand, for one agent or
-all, with a chosen trial count.
+all, with a chosen trial count; 3 trials gives a scorecard `accept` takes.
 
 The workflow's `env` block repeats the non-secret configuration the
-baselines were accepted with (`MODEL`, `MAX_TOKENS`, `EVALS__*`). If the two
+baselines were accepted with (`MODEL`, `MODELS__RESEARCH__SEARCHER`,
+`RESEARCH__MAX_SEARCHES`, `MAX_TOKENS`, `EVALS__*`). If the two
 drift, the summary says the configuration differs from the baseline: either
 bring the workflow in line or accept a new baseline.
 

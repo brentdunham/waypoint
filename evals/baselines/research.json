@@ -38,14 +38,23 @@
       },
       "passed": 21
     },
+    "findings_cited": {
+      "applicable": 21,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 0.8095,
+        "stdev": 0.165
+      },
+      "passed": 17
+    },
     "findings_sourced": {
       "applicable": 21,
       "not_applicable": 0,
       "pass_rate": {
-        "mean": 0.9524,
-        "stdev": 0.0825
+        "mean": 1.0,
+        "stdev": 0.0
       },
-      "passed": 20
+      "passed": 21
     },
     "plan_bounds": {
       "applicable": 21,
@@ -80,8 +89,8 @@
       "graded": 21,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.2857,
-        "stdev": 0.1429
+        "mean": 3.3333,
+        "stdev": 0.2182
       },
       "pass_rate": 0.9048
     },
@@ -89,8 +98,8 @@
       "graded": 21,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.9048,
-        "stdev": 0.0825
+        "mean": 3.7619,
+        "stdev": 0.165
       },
       "pass_rate": 1.0
     },
@@ -98,10 +107,10 @@
       "graded": 21,
       "judge": "calibrated",
       "mean": {
-        "mean": 2.7619,
-        "stdev": 0.0825
+        "mean": 2.4762,
+        "stdev": 0.3595
       },
-      "pass_rate": 0.7619
+      "pass_rate": 0.4762
     },
     "plan_quality": {
       "graded": 21,
@@ -122,78 +131,72 @@
       "pass_rate": 1.0
     }
   },
-  "date": "2026-10-08T13:53:17+00:00",
+  "date": "2026-10-08T20:23:29+00:00",
   "elapsed_s_per_run": {
-    "mean": 91.8338,
-    "stdev": 35.7222
+    "mean": 47.2717,
+    "stdev": 41.1588
   },
   "errors": 0,
-  "fingerprint": "46dbb1659d0e",
-  "git_sha": null,
+  "fingerprint": "5aa3aef3056b",
+  "git_sha": "75eea33",
   "judge_model": "claude-haiku-4-5",
   "models": {
     "critic": "claude-sonnet-5",
     "planner": "claude-sonnet-5",
-    "searcher": "claude-sonnet-5",
+    "searcher": "claude-haiku-5-5",
     "writer": "claude-sonnet-5"
   },
   "settings": {
     "max_follow_ups": 3,
     "max_rounds": 2,
-    "max_searches": 3,
+    "max_searches": 2,
     "web_search": true
   },
   "trials": 3,
   "usage": {
-    "cost_usd": null,
-    "cost_usd_per_run": null,
+    "cost_usd": 3.8749,
+    "cost_usd_per_run": 0.1615,
+    "replayed": {
+      "critic": 14,
+      "planner": 24,
+      "searcher": 56,
+      "writer": 7
+    },
     "roles": {
       "critic": {
-        "calls": 42,
-        "input_tokens": 404973,
-        "input_tokens_per_run": 16874,
-        "latency_s_per_call": 21.37,
+        "calls": 28,
+        "input_tokens": 172357,
+        "input_tokens_per_run": 7182,
+        "latency_s_per_call": 19.94,
         "models": [
           "claude-sonnet-5"
         ],
-        "output_tokens": 100028,
-        "output_tokens_per_run": 4168,
-        "searches": 0
-      },
-      "planner": {
-        "calls": 24,
-        "input_tokens": 14460,
-        "input_tokens_per_run": 602,
-        "latency_s_per_call": 6.46,
-        "models": [
-          "claude-sonnet-5"
-        ],
-        "output_tokens": 13510,
-        "output_tokens_per_run": 563,
+        "output_tokens": 57525,
+        "output_tokens_per_run": 2397,
         "searches": 0
       },
       "searcher": {
-        "calls": 168,
-        "input_tokens": 4715771,
-        "input_tokens_per_run": 196490,
-        "latency_s_per_call": 15.69,
+        "calls": 112,
+        "input_tokens": 2401904,
+        "input_tokens_per_run": 100079,
+        "latency_s_per_call": 10.59,
         "models": [
-          "claude-sonnet-5"
+          "claude-haiku-5-5"
         ],
-        "output_tokens": 264518,
-        "output_tokens_per_run": 11022,
-        "searches": 376
+        "output_tokens": 222708,
+        "output_tokens_per_run": 9280,
+        "searches": 221
       },
       "writer": {
-        "calls": 21,
-        "input_tokens": 220900,
-        "input_tokens_per_run": 9204,
-        "latency_s_per_call": 14.6,
+        "calls": 14,
+        "input_tokens": 93435,
+        "input_tokens_per_run": 3893,
+        "latency_s_per_call": 15.4,
         "models": [
           "claude-sonnet-5"
         ],
-        "output_tokens": 31865,
-        "output_tokens_per_run": 1328,
+        "output_tokens": 20655,
+        "output_tokens_per_run": 861,
         "searches": 0
       }
     }

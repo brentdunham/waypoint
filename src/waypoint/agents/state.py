@@ -4,7 +4,7 @@ A key without a reducer is last-write-wins, which silently loses data when two
 parallel branches write it. Anything a fan-out touches gets a reducer.
 """
 
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, NotRequired, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
@@ -18,8 +18,9 @@ class ChatState(TypedDict, total=False):
 
 
 class Source(TypedDict):
-    """A page a finding cites. Taken from the provider's citation metadata, never
-    from text the model wrote, so a URL here is one the search actually returned."""
+    """A page behind a finding. Taken from the provider's citation metadata or,
+    failing that, its search results (``Finding.cited``); never from text the
+    model wrote, so a URL here is one the search actually returned."""
 
     url: str
     title: str
@@ -29,6 +30,10 @@ class Finding(TypedDict):
     question: str
     answer: str
     sources: list[Source]
+    cited: NotRequired[bool]
+    """False when the searcher searched but cited nothing, and ``sources`` are
+    the pages its searches returned rather than ones it cited. Absent (findings
+    checkpointed before 2026-10-08) means cited."""
     confidence: float | None
     """Set by the critic. ``None`` until the finding has been reviewed."""
     issue: str

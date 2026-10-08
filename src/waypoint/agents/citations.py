@@ -36,6 +36,32 @@ def answer_and_sources(message: BaseMessage) -> tuple[str, list[Source]]:
     return "".join(parts).strip(), list(seen.values())
 
 
+def retrieved_sources(message: BaseMessage, limit: int) -> list[Source]:
+    """The pages the reply's own web searches returned, in result order.
+
+    The fallback for a reply that searched but attached no citations: the
+    URLs are real search results, but nothing ties a sentence to one of them.
+    claude-haiku-5-5 did this in about 1 finding in 4 on 2026-10-08.
+    """
+    content: Any = message.content
+    if isinstance(content, str):
+        return []
+    seen: dict[str, Source] = {}
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "web_search_tool_result":
+            continue
+        results = block.get("content")
+        if not isinstance(results, list):
+            continue  # an error result
+        for result in results:
+            url = result.get("url") if isinstance(result, dict) else None
+            if url and url not in seen:
+                seen[url] = Source(url=url, title=str(result.get("title") or url))
+                if len(seen) >= limit:
+                    return list(seen.values())
+    return list(seen.values())
+
+
 def number_sources(findings: Sequence[Finding]) -> dict[str, int]:
     """One global numbering across all findings, in first-cited order."""
     numbers: dict[str, int] = {}

@@ -30,7 +30,7 @@ from langgraph.runtime import Runtime, get_runtime
 from langgraph.types import CachePolicy, RetryPolicy, Send, interrupt
 from pydantic import BaseModel, Field, ValidationError
 
-from waypoint.agents.citations import answer_and_sources, number_sources
+from waypoint.agents.citations import answer_and_sources, number_sources, retrieved_sources
 from waypoint.agents.context import AgentContext
 from waypoint.agents.models import FINDINGS_MARKER, ModelRouter, RoleModel, structured
 from waypoint.agents.state import Finding, ResearchState, WorkerInput
@@ -44,7 +44,10 @@ ROLES = ("planner", "searcher", "critic", "writer")
 
 MAX_QUESTIONS = 5
 UNCITED_CAP = 0.3
-"""Highest confidence an unsourced finding can get, whatever the critic says."""
+"""Highest confidence an uncited finding can get, whatever the critic says:
+one with no sources, or with only retrieved ones (``Finding.cited``)."""
+RETRIEVED_SOURCES = 5
+"""How many search results stand in as sources for an answer that cited none."""
 
 WEB_SEARCH_TOOL = "web_search_20250305"
 """The basic version. Later versions route searches through code execution by
@@ -116,7 +119,12 @@ say so plainly instead of smoothing it over.
 Topic: {topic}
 Question: {question}"""
 
-SEARCH_RULE = "Search the web first and base every claim on what you find."
+SEARCH_RULE = """Search the web first and base every claim on what you find.
+Do not write links, URLs, footnotes or citation markers such as [1]: the
+sources you draw on are attached to your answer automatically."""
+"""The second sentence is for claude-haiku-5-5, which on 2026-10-08 typed
+citations into its prose as markdown links in 6 of 21 runs instead of using
+the API's citation blocks, leaving those findings with no sources."""
 NO_SEARCH_RULE = "Answer from what you know; you have no way to check sources."
 
 CRITIC_SYSTEM = "You review research findings before they go into a briefing. Be strict."
@@ -129,7 +137,9 @@ This is investigation round {round} of at most {max_rounds}.
 Score every finding. Then list at most {max_follow_ups} follow-up questions,
 only for gaps that would change the briefing's conclusion or for claims that
 contradict each other. Each follow-up is one short question that a single web
-search could answer, not a compound of several. {last_round}
+search could answer, not a compound of several. A finding marked "cited": false
+searched but tied no claim to a source; its sources are what the search
+returned, not evidence for any specific claim. {last_round}
 
 {marker}
 {findings}"""
@@ -283,12 +293,16 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
                 ) from exc
             raise
         answer, sources = answer_and_sources(reply)
+        cited = bool(sources)
+        if not cited and cfg.web_search:
+            sources = retrieved_sources(reply, RETRIEVED_SOURCES)
         return {
             "findings": [
                 Finding(
                     question=state["question"],
                     answer=answer,
                     sources=sources,
+                    cited=cited,
                     confidence=None,
                     issue="",
                     round=state["round"],
@@ -307,6 +321,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
                     "question": f["question"],
                     "answer": f["answer"],
                     "sources": [s["url"] for s in f["sources"]],
+                    "cited": f.get("cited", True),
                 }
                 for f in findings
             ],
@@ -336,7 +351,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
         for finding in findings:
             verdict = by_question.get(_norm(finding["question"]))
             confidence = _clamp(verdict.confidence) if verdict else 0.5
-            if not finding["sources"]:
+            if not finding["sources"] or not finding.get("cited", True):
                 confidence = min(confidence, UNCITED_CAP)
             reviewed.append(
                 {**finding, "confidence": confidence, "issue": verdict.issue if verdict else ""}
@@ -450,7 +465,11 @@ def _render_finding(finding: Finding, numbers: dict[str, int]) -> str:
     lines = [
         f"Q: {finding['question']}",
         f"A: {finding['answer']}",
-        f"Sources: {cites or 'none'}",
+        (
+            f"Sources: {cites or 'none'}"
+            if finding.get("cited", True)
+            else f"Sources (searched, not cited for any claim): {cites or 'none'}"
+        ),
         f"Confidence: {confidence:.1f}" if confidence is not None else "Confidence: unreviewed",
     ]
     if finding["issue"]:

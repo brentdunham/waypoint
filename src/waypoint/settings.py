@@ -47,7 +47,16 @@ class ResearchSettings(BaseModel):
             "answers come from the model alone and carry no sources."
         ),
     )
-    max_searches: int = Field(default=3, ge=1, le=10, description="Searches per question.")
+    max_searches: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        description=(
+            "Web searches per worker call (the tool's max_uses). Each search's results "
+            "are input again on every later search in the call, so the third search "
+            "more than doubled a call's input in the 2026-10-08 evals (21k -> 48k tokens)."
+        ),
+    )
     max_rounds: int = Field(
         default=2,
         ge=1,

@@ -104,6 +104,8 @@ export interface Finding {
   question: string;
   answer: string;
   sources: Source[];
+  /** False: the searcher cited nothing and `sources` are its search results. Absent means cited. */
+  cited?: boolean;
   /** Set by the critic; null until reviewed. */
   confidence: number | null;
   /** The critic's note on what is weak or missing; empty when nothing is. */

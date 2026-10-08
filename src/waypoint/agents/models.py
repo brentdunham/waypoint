@@ -3,7 +3,8 @@
 import json
 import logging
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, override
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, override
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.embeddings import Embeddings
@@ -271,14 +272,14 @@ class ModelRouter:
 
     def __init__(self, settings: Settings, agent: str, roles: Sequence[str]) -> None:
         self.settings = settings
-        self._agent = agent
+        self.agent = agent
         self._roles = tuple(roles)
 
     def name(self, role: str, context: AgentContext | None) -> str:
         if role not in self._roles:
-            raise KeyError(f"{self._agent!r} declares no model role {role!r}")
+            raise KeyError(f"{self.agent!r} declares no model role {role!r}")
         chosen = context.model_for(role) if context is not None else None
-        return chosen or resolve_models(self.settings, self._agent, (role,))[role]
+        return chosen or resolve_models(self.settings, self.agent, (role,))[role]
 
     def bind(
         self,
@@ -288,8 +289,22 @@ class ModelRouter:
     ) -> RoleModel:
         """``prepare`` turns the bare chat model into what the node invokes."""
         if role not in self._roles:
-            raise KeyError(f"{self._agent!r} declares no model role {role!r}")
+            raise KeyError(f"{self.agent!r} declares no model role {role!r}")
         return RoleModel(self, role, prepare, build_kwargs)
+
+
+class CallInterceptor(Protocol):
+    """Wraps a role's runnable when it is built. See :data:`INTERCEPTOR`."""
+
+    def wrap(self, agent: str, role: str, model: str, runnable: Any) -> Any: ...
+
+
+INTERCEPTOR: ContextVar[CallInterceptor | None] = ContextVar("model_interceptor", default=None)
+"""Set by the eval harness (``evals.replay``) to record and replay model calls.
+
+Never set by the service. Read when a role's runnable is first built, so it
+applies to graphs built and first run inside the context that set it.
+"""
 
 
 class RoleModel:
@@ -321,9 +336,10 @@ class RoleModel:
             prepared = self._prepare(model) if self._prepare else model
             # Inherited by the chat model's callbacks, so usage and traces can
             # be attributed to a role without knowing the graph's node names.
-            self._built[name] = prepared.with_config(
-                metadata={"model_role": self.role, "model_name": name}
-            )
+            built = prepared.with_config(metadata={"model_role": self.role, "model_name": name})
+            if (interceptor := INTERCEPTOR.get()) is not None:
+                built = interceptor.wrap(self._router.agent, self.role, name, built)
+            self._built[name] = built
         return self._built[name]
 
 

@@ -86,6 +86,14 @@ Names are case-insensitive. A typo in an agent or role name stops the boot
 with the list of valid names. The searcher needs a model with server-side web
 search (Claude 4.6 and later, see `RESEARCH__WEB_SEARCH`).
 
+`.env.example` sets `MODELS__RESEARCH__SEARCHER=claude-haiku-5-5`. The searcher
+re-reads every search result as input, so it was about 84% of a research run's
+cost on claude-sonnet-5 (2026-10-08 evals: 4.6M of 5.6M input tokens per
+8-case, 3-trial run). Haiku 5.5 is $0.10 / $0.50 per million input / output
+tokens for prompts up to 100k tokens, against $2 / $10 for Sonnet 5. Planner,
+critic and writer stay on `MODEL`; they judge and write, which is where the
+larger model earns its price.
+
 The resolved map is fixed when a run starts and recorded on the run
 (`GET /runs/<id>` → `models`) and in the research briefing's metadata.
 
@@ -128,12 +136,12 @@ stored vectors were made by the old model.
 | Variable | Default | Notes |
 |---|---|---|
 | `RESEARCH__WEB_SEARCH` | `true` | Workers use Anthropic's server-side web search (`web_search_20250305`) and cite results. Must be enabled for the organization in the Claude Console, and the model must support it (Claude 4.6 and later). A rejected request fails the run with a message pointing here. `false` -> answers from the model alone, no sources, confidence capped at 0.3. |
-| `RESEARCH__MAX_SEARCHES` | `3` | Searches per question (`max_uses`). |
+| `RESEARCH__MAX_SEARCHES` | `2` | Web searches per worker call (the tool's `max_uses`). Each search's results are input again for every later search in the same call: in the 2026-10-08 evals, calls that made a third search averaged 48k input tokens against 21k for two. |
 | `RESEARCH__MAX_ROUNDS` | `2` | Investigation waves, counting the first. `1` disables critic follow-ups. |
 | `RESEARCH__MAX_FOLLOW_UPS` | `3` | New questions the critic may add per round. |
 
 Cost bound per run: at most `(5 + MAX_FOLLOW_UPS x (MAX_ROUNDS - 1)) x
-MAX_SEARCHES` searches, 24 with the defaults. Web search is billed per search
+MAX_SEARCHES` searches, 16 with the defaults. Web search is billed per search
 ($10 per 1,000 at the time of writing) on top of tokens, and search results
 count as input tokens, which is usually the larger cost. A two-question run
 with one search each and one follow-up took about 70 seconds.
