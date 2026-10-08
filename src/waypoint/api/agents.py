@@ -1,13 +1,12 @@
-from typing import Any
-
-from flask import Blueprint, jsonify
+from fastapi import APIRouter
 
 from waypoint.agents import list_specs
+from waypoint.schemas import AgentInfo, AgentList
 
-bp = Blueprint("agents", __name__, url_prefix="/agents")
+router = APIRouter(prefix="/agents", tags=["agents"])
 
 
-@bp.get("")
-def index() -> Any:
+@router.get("")
+async def index() -> AgentList:
     """The frontend builds its agent picker from this."""
-    return jsonify(agents=list_specs())
+    return AgentList(agents=[AgentInfo.model_validate(spec) for spec in list_specs()])

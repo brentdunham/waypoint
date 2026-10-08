@@ -11,11 +11,9 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from flask import Flask
 from pydantic import ValidationError
-from tests.conftest import TEST_REDIS_URL, build_settings, new_thread, requires_infra
+from tests.conftest import TEST_REDIS_URL, TestApp, build_settings, new_thread, requires_infra
 
-from waypoint.agents.runtime import EXTENSION_KEY
 from waypoint.infra.bus import Event, RedisBus
 from waypoint.infra.redis import create_client
 
@@ -53,19 +51,19 @@ def test_idle_blocking_read_returns_empty_instead_of_timing_out() -> None:
 
 
 def test_lost_stream_ends_without_inventing_a_terminal_event(
-    app: Flask, monkeypatch: pytest.MonkeyPatch
+    app: TestApp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = app.test_client()
     thread_id = new_thread(client, "chat")
-    run = client.post(f"/api/v1/threads/{thread_id}/runs", json={"message": "hi"}).get_json()
+    run = client.post(f"/api/v1/threads/{thread_id}/runs", json={"message": "hi"}).json()
 
     async def broken(run_id: str, **_: Any) -> AsyncIterator[Event]:
         yield Event(id="1-0", type="run.started", data={"run_id": run_id})
         raise ConnectionError("redis went away")
 
-    runtime = app.extensions[EXTENSION_KEY]
+    runtime = app.runtime
     monkeypatch.setattr(runtime.runs, "events", broken)
-    body = client.get(run["events_url"]).get_data(as_text=True)
+    body = client.get(run["events_url"]).text
 
     assert "event: run.started" in body
     assert "run.failed" not in body  # the run did not fail; following it did

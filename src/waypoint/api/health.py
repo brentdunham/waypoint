@@ -5,25 +5,29 @@ dependency, or a Redis blip becomes a rolling restart. ``/readyz`` answers
 "should traffic come here", and does check.
 """
 
-from typing import Any
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
-from flask import Blueprint, jsonify
+from waypoint.api.deps import Runtime
+from waypoint.schemas import Health, Readiness
 
-from waypoint.agents import get_runtime
-from waypoint.aio import loop
-
-bp = Blueprint("health", __name__)
-
-
-@bp.get("/healthz")
-def healthz() -> Any:
-    return jsonify(status="ok", loop="running" if loop.running else "stopped")
+router = APIRouter(tags=["health"])
 
 
-@bp.get("/readyz")
-def readyz() -> Any:
-    runtime = get_runtime()
-    checks = loop.run_sync(runtime.health(), timeout=5)
+@router.get("/healthz")
+async def healthz() -> Health:
+    return Health(status="ok")
+
+
+@router.get(
+    "/readyz",
+    response_model=Readiness,
+    responses={503: {"model": Readiness, "description": "A dependency is down."}},
+)
+async def readyz(runtime: Runtime) -> Readiness | JSONResponse:
+    checks = await runtime.health()
     degraded = [k for k, v in checks.items() if v == "down"]
-    body = {"status": "degraded" if degraded else "ready", "checks": checks}
-    return jsonify(body), (503 if degraded else 200)
+    body = Readiness(status="degraded" if degraded else "ready", checks=checks)
+    if degraded:
+        return JSONResponse(body.model_dump(), status_code=503)
+    return body

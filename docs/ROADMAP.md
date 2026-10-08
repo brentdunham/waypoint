@@ -258,6 +258,19 @@ Deviations from the plan, on purpose:
 Tests: `test_model_routing.py`, `test_evals.py`, and a retry test in
 `test_research.py`.
 
+### Flask to FastAPI (2026-10-08)
+
+Done before step 4 because OpenTelemetry instrumentation is per framework.
+The API contract did not change: same paths, status codes, problem+json and
+SSE frames, so the web UI needed nothing. What went: `aio.py` (a daemon
+thread owning the event loop, sync views hopping onto it, and a sync bridge
+for SSE), `wsgi.py`, `flask[async]` and `asgiref`. What came: the runtime
+built in the lifespan on the server's loop, async handlers, scopes as
+dependencies, response models for every endpoint, and the OpenAPI page at
+`/api/v1/docs`. Deliberate changes: a malformed query parameter is a 422, not
+a 500; bodies over 8 MB are a 413 `payload-too-large`; `/healthz` no longer
+reports the background loop it no longer has (ARCHITECTURE.md §1).
+
 ## Next
 
 ### 4. Observability and cost

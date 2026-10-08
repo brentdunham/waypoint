@@ -2,22 +2,22 @@
 
 Order matters. The Postgres pool has to exist before the checkpointer and store
 can bind to it; the checkpointer and store have to exist before graphs compile;
-graphs have to exist before the run manager can drive them. All of it happens
-on ``app.aio.loop`` so that every loop-bound object agrees about which loop it
-lives on.
+graphs have to exist before the run manager can drive them. All of it is built
+in the app's lifespan, on the server's event loop, which every request handler
+and every run task shares.
 """
 
+import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from flask import Flask, current_app
+from fastapi import Request
 
 from waypoint.agents.models import build_embeddings, check_embedding_dims, check_model_config
 from waypoint.agents.registry import build_all, roles_by_agent
 from waypoint.agents.types import Graph
-from waypoint.aio import loop
 from waypoint.infra import redis as redis_infra
 from waypoint.infra.bus import EventBus, MemoryBus, RedisBus
 from waypoint.infra.cache import RedisCache
@@ -30,7 +30,8 @@ from waypoint.settings import Settings
 
 log = logging.getLogger(__name__)
 
-EXTENSION_KEY = "agents.runtime"
+STARTUP_TIMEOUT_S = 90
+SHUTDOWN_TIMEOUT_S = 20
 
 
 @dataclass(slots=True)
@@ -75,7 +76,7 @@ class AgentRuntime:
         self._closers.clear()
 
 
-async def _create(settings: Settings) -> AgentRuntime:
+async def create_runtime(settings: Settings) -> AgentRuntime:
     # Before any connection opens: a typo in MODELS__* is a config error, and
     # finding it at the first run of that agent would be far from the cause.
     check_model_config(settings, roles_by_agent())
@@ -227,11 +228,9 @@ async def _seed_bootstrap_key(keys: KeyStore, db: Database | None, settings: Set
     )
 
 
-def init_runtime(app: Flask, settings: Settings) -> AgentRuntime:
-    loop.start()
-    runtime = loop.run_sync(_create(settings), timeout=90)
-    app.extensions[EXTENSION_KEY] = runtime
-    app.extensions["keystore"] = runtime.keys
+async def start_runtime(settings: Settings) -> AgentRuntime:
+    async with asyncio.timeout(STARTUP_TIMEOUT_S):
+        runtime = await create_runtime(settings)
     log.info(
         "agent runtime ready",
         extra={"agents": sorted(runtime.graphs), "model": settings.model},
@@ -239,17 +238,18 @@ def init_runtime(app: Flask, settings: Settings) -> AgentRuntime:
     return runtime
 
 
-def shutdown_runtime(app: Flask) -> None:
-    runtime: AgentRuntime | None = app.extensions.pop(EXTENSION_KEY, None)
-    if runtime is not None:
-        with contextlib.suppress(Exception):
-            loop.run_sync(runtime.aclose(), timeout=20)
+async def stop_runtime(runtime: AgentRuntime) -> None:
+    """Cancel runs in flight and close pools. Bounded, so shutdown cannot hang."""
+    with contextlib.suppress(Exception):
+        async with asyncio.timeout(SHUTDOWN_TIMEOUT_S):
+            await runtime.aclose()
 
 
-def get_runtime() -> AgentRuntime:
-    runtime = current_app.extensions.get(EXTENSION_KEY)
+def get_runtime(request: Request) -> AgentRuntime:
+    """FastAPI dependency: the runtime the lifespan built."""
+    runtime: AgentRuntime | None = getattr(request.app.state, "runtime", None)
     if runtime is None:  # pragma: no cover - only during startup races
         from waypoint.errors import ServiceUnavailable
 
         raise ServiceUnavailable("Agent runtime is still starting.")
-    return runtime  # type: ignore[no-any-return]
+    return runtime

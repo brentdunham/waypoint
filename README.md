@@ -1,14 +1,14 @@
 # Waypoint
 
 Agent runs that checkpoint, pause for a person, resume days later and rewind.
-A Flask + LangGraph service and a React 19 TypeScript frontend, on Python 3.14,
+A FastAPI + LangGraph service and a React 19 TypeScript frontend, on Python 3.14,
 with Postgres and Redis. Runs are durable, streamable, resumable, cancellable
 and rewindable; each agent role gets its own model, and an eval harness scores
 the agents against a baseline.
 
 ```
 .                    docs/ARCHITECTURE.md  — how and why it fits together
-├── src/waypoint     Flask + LangGraph service
+├── src/waypoint     FastAPI + LangGraph service
 ├── web/             React 19 + Vite + TypeScript frontend
 ├── tests/           pytest: a unit tier with no infra, an integration tier with
 ├── evals/           datasets, checks and an LLM judge that score the agents (TESTING.md §4)
@@ -144,6 +144,11 @@ uv run python -m waypoint                        # API on :8000
 
 cd web; npm install; npm run dev            # UI on :5173, proxies /api
 ```
+
+On Windows, `python -m waypoint` runs uvicorn on a selector event loop,
+because psycopg's async mode cannot use Windows' default one. Running uvicorn
+yourself, pass `--loop waypoint.loops:selector_loop` for the same reason.
+API docs: <http://localhost:8000/api/v1/docs>.
 
 No Postgres or Redis to hand? It still boots: the checkpointer and store fall
 back to memory and the event bus to a single process. You lose durability,

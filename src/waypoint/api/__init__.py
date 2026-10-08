@@ -1,9 +1,9 @@
-from flask import Blueprint
+from fastapi import APIRouter
 
 from waypoint.api import agents, health, keys, memories, runs, threads
 
-api = Blueprint("api", __name__)
+api = APIRouter()
 for module in (health, agents, threads, runs, keys, memories):
-    api.register_blueprint(module.bp)
+    api.include_router(module.router)
 
 __all__ = ["api"]

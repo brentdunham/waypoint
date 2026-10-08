@@ -10,7 +10,7 @@ Run them with:
 import time
 
 import pytest
-from flask.testing import FlaskClient
+from starlette.testclient import TestClient
 from tests.conftest import BOOTSTRAP_KEY, new_thread, read_sse, requires_infra, run_and_wait
 
 pytestmark = [pytest.mark.integration, requires_infra]
@@ -19,23 +19,23 @@ pytestmark = [pytest.mark.integration, requires_infra]
 # -- auth -------------------------------------------------------------------
 
 
-def test_requests_without_a_key_are_rejected(infra_client: FlaskClient) -> None:
+def test_requests_without_a_key_are_rejected(infra_client: TestClient) -> None:
     response = infra_client.get("/api/v1/threads")
     assert response.status_code == 401
-    assert response.get_json()["type"].endswith("unauthorized")
+    assert response.json()["type"].endswith("unauthorized")
 
 
-def test_a_bad_key_is_rejected(infra_client: FlaskClient) -> None:
+def test_a_bad_key_is_rejected(infra_client: TestClient) -> None:
     response = infra_client.get("/api/v1/threads", headers={"Authorization": "Bearer ak_nope.nope"})
     assert response.status_code == 401
 
 
-def test_bootstrap_key_works(infra_client: FlaskClient, auth: dict[str, str]) -> None:
+def test_bootstrap_key_works(infra_client: TestClient, auth: dict[str, str]) -> None:
     assert infra_client.get("/api/v1/threads", headers=auth).status_code == 200
 
 
 def test_minted_keys_are_scoped_to_their_tenant(
-    infra_client: FlaskClient, auth: dict[str, str]
+    infra_client: TestClient, auth: dict[str, str]
 ) -> None:
     mine = new_thread(infra_client, "chat", auth)
 
@@ -49,21 +49,21 @@ def test_minted_keys_are_scoped_to_their_tenant(
         headers=auth,
     )
     assert minted.status_code == 201
-    other = {"Authorization": f"Bearer {minted.get_json()['api_key']}"}
+    other = {"Authorization": f"Bearer {minted.json()['api_key']}"}
 
     # Another tenant's thread must look like it does not exist at all.
     assert infra_client.get(f"/api/v1/threads/{mine}/state", headers=other).status_code == 404
-    assert infra_client.get("/api/v1/threads", headers=other).get_json()["threads"] == []
+    assert infra_client.get("/api/v1/threads", headers=other).json()["threads"] == []
 
 
 def test_a_key_without_the_admin_scope_cannot_mint_keys(
-    infra_client: FlaskClient, auth: dict[str, str]
+    infra_client: TestClient, auth: dict[str, str]
 ) -> None:
     minted = infra_client.post(
         "/api/v1/keys",
         json={"tenant_id": "acme", "user_id": "u2", "scopes": ["agents:run"]},
         headers=auth,
-    ).get_json()["api_key"]
+    ).json()["api_key"]
     response = infra_client.post(
         "/api/v1/keys",
         json={"tenant_id": "evil", "user_id": "u3"},
@@ -72,12 +72,12 @@ def test_a_key_without_the_admin_scope_cannot_mint_keys(
     assert response.status_code == 403
 
 
-def test_revoked_keys_stop_working(infra_client: FlaskClient, auth: dict[str, str]) -> None:
+def test_revoked_keys_stop_working(infra_client: TestClient, auth: dict[str, str]) -> None:
     raw = infra_client.post(
         "/api/v1/keys",
         json={"tenant_id": "acme", "user_id": "u4", "scopes": ["threads:read"]},
         headers=auth,
-    ).get_json()["api_key"]
+    ).json()["api_key"]
     key_id = raw.removeprefix("ak_").split(".", 1)[0]
     headers = {"Authorization": f"Bearer {raw}"}
 
@@ -106,9 +106,7 @@ def test_state_survives_a_process_restart(make_app, auth: dict[str, str]) -> Non
     paused = run_and_wait(client, thread_id, {"message": "geothermal"}, auth)
     assert paused["status"] == "interrupted"
 
-    from waypoint.agents.runtime import shutdown_runtime
-
-    shutdown_runtime(first)
+    first.close()  # the lifespan's shutdown: runs cancelled, pools closed
 
     second = make_app(**config)
     resumed = run_and_wait(second.test_client(), thread_id, {"resume": {"approved": True}}, auth)
@@ -119,11 +117,11 @@ def test_state_survives_a_process_restart(make_app, auth: dict[str, str]) -> Non
 # -- streaming ----------------------------------------------------------------
 
 
-def test_sse_replays_from_last_event_id(infra_client: FlaskClient, auth: dict[str, str]) -> None:
+def test_sse_replays_from_last_event_id(infra_client: TestClient, auth: dict[str, str]) -> None:
     thread_id = new_thread(infra_client, "chat", auth)
     run = infra_client.post(
         f"/api/v1/threads/{thread_id}/runs", json={"message": "resumable stream"}, headers=auth
-    ).get_json()
+    ).json()
     url = run["events_url"]
 
     everything = read_sse(infra_client, url, auth)
@@ -140,15 +138,11 @@ def test_sse_replays_from_last_event_id(infra_client: FlaskClient, auth: dict[st
     assert tail == everything[1:]
 
 
-def _first_event_id(client: FlaskClient, url: str, auth: dict[str, str]) -> str:
-    response = client.get(url, headers=auth, buffered=False)
-    try:
-        for chunk in response.response:
-            for line in chunk.decode().splitlines():
-                if line.startswith("id: "):
-                    return line.removeprefix("id: ")
-    finally:
-        response.close()
+def _first_event_id(client: TestClient, url: str, auth: dict[str, str]) -> str:
+    with client.stream("GET", url, headers=auth) as response:
+        for line in response.iter_lines():
+            if line.startswith("id: "):
+                return line.removeprefix("id: ")
     raise AssertionError("no event id seen")
 
 
@@ -201,7 +195,7 @@ def test_the_token_bucket_refuses_a_burst(make_app, auth: dict[str, str]) -> Non
     body = next(
         client.post(
             f"/api/v1/threads/{thread_id}/runs", json={"message": "hi"}, headers=auth
-        ).get_json()
+        ).json()
         for _ in range(1)
     )
     assert body["type"].endswith("rate-limited")
@@ -211,18 +205,18 @@ def test_the_token_bucket_refuses_a_burst(make_app, auth: dict[str, str]) -> Non
 # -- cancellation ------------------------------------------------------------------
 
 
-def test_a_running_job_can_be_cancelled(infra_client: FlaskClient, auth: dict[str, str]) -> None:
+def test_a_running_job_can_be_cancelled(infra_client: TestClient, auth: dict[str, str]) -> None:
     thread_id = new_thread(infra_client, "research", auth)
     run = infra_client.post(
         f"/api/v1/threads/{thread_id}/runs", json={"message": "cancel me"}, headers=auth
-    ).get_json()
+    ).json()
 
     cancelled = infra_client.post(f"/api/v1/runs/{run['run_id']}/cancel", headers=auth)
     assert cancelled.status_code == 202
 
     deadline = time.time() + 5
     while time.time() < deadline:
-        status = infra_client.get(f"/api/v1/runs/{run['run_id']}", headers=auth).get_json()
+        status = infra_client.get(f"/api/v1/runs/{run['run_id']}", headers=auth).json()
         if status["status"] != "running":
             break
         time.sleep(0.1)
@@ -230,7 +224,7 @@ def test_a_running_job_can_be_cancelled(infra_client: FlaskClient, auth: dict[st
 
 
 def test_cancelling_a_finished_run_is_a_conflict(
-    infra_client: FlaskClient, auth: dict[str, str]
+    infra_client: TestClient, auth: dict[str, str]
 ) -> None:
     thread_id = new_thread(infra_client, "chat", auth)
     result = run_and_wait(infra_client, thread_id, {"message": "quick"}, auth)
@@ -241,8 +235,8 @@ def test_cancelling_a_finished_run_is_a_conflict(
 # -- readiness -----------------------------------------------------------------------
 
 
-def test_readyz_sees_both_backends(infra_client: FlaskClient) -> None:
-    checks = infra_client.get("/api/v1/readyz").get_json()["checks"]
+def test_readyz_sees_both_backends(infra_client: TestClient) -> None:
+    checks = infra_client.get("/api/v1/readyz").json()["checks"]
     assert checks["postgres"] == "ok"
     assert checks["redis"] == "ok"
 
@@ -288,7 +282,7 @@ def test_workers_can_boot_concurrently_against_a_fresh_database(
     assert len(apps) == 3
 
     for application in apps:
-        assert application.test_client().get("/api/v1/readyz").get_json()["status"] == "ready"
+        assert application.test_client().get("/api/v1/readyz").json()["status"] == "ready"
 
     # And the migrated schema actually works.
     client = apps[0].test_client()

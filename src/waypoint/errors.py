@@ -5,11 +5,15 @@ stable ``type`` slug, so clients can branch on the slug instead of parsing prose
 """
 
 import logging
+from collections.abc import Sequence
+from http import HTTPStatus
 from typing import Any
 
-from flask import Flask, g, jsonify
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from werkzeug.exceptions import HTTPException
+from starlette.exceptions import HTTPException
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +55,10 @@ class Conflict(AppError):
     status, title, slug = 409, "Conflict", "conflict"
 
 
+class PayloadTooLarge(AppError):
+    status, title, slug = 413, "Content Too Large", "payload-too-large"
+
+
 class RateLimited(AppError):
     status, title, slug = 429, "Too Many Requests", "rate-limited"
 
@@ -63,44 +71,83 @@ class ServiceUnavailable(AppError):
     status, title, slug = 503, "Service Unavailable", "unavailable"
 
 
-def problem(status: int, title: str, detail: str, slug: str = "error", **extra: Any) -> Any:
+def problem_body(
+    status: int,
+    title: str,
+    detail: str,
+    slug: str = "error",
+    *,
+    request_id: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
     body: dict[str, Any] = {
         "type": f"{BASE_TYPE}{slug}",
         "title": title,
         "status": status,
         "detail": detail,
     }
-    if request_id := getattr(g, "request_id", None):
+    if request_id:
         body["request_id"] = request_id
-    body |= extra
-    response = jsonify(body)
-    response.status_code = status
-    response.content_type = CONTENT_TYPE
-    return response
+    return body | extra
 
 
-def register_error_handlers(app: Flask) -> None:
-    @app.errorhandler(AppError)
-    def _app_error(exc: AppError) -> Any:
+def problem(
+    request: Request, status: int, title: str, detail: str, slug: str = "error", **extra: Any
+) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", None)
+    body = problem_body(status, title, detail, slug, request_id=request_id, **extra)
+    return JSONResponse(body, status_code=status, media_type=CONTENT_TYPE)
+
+
+def validation_errors(errors: Sequence[Any]) -> list[dict[str, Any]]:
+    """Pydantic errors without the echoed input, URL or context.
+
+    Body fields are reported by name alone (``["agent"]``, not ``["body",
+    "agent"]``), as they were before FastAPI; query and header errors keep
+    their location prefix, since that is what tells you where to look.
+    """
+    out = []
+    for error in errors:
+        loc = list(error.get("loc", ()))
+        if loc[:1] == ["body"]:
+            loc = loc[1:]
+        out.append({"type": error.get("type"), "loc": loc, "msg": error.get("msg")})
+    return out
+
+
+def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(AppError)
+    async def _app_error(request: Request, exc: AppError) -> JSONResponse:
         if exc.status >= SERVER_ERROR:
             log.warning("%s: %s", exc.slug, exc.detail)
-        return problem(exc.status, exc.title, exc.detail, exc.slug, **exc.extra)
+        return problem(request, exc.status, exc.title, exc.detail, exc.slug, **exc.extra)
 
-    @app.errorhandler(ValidationError)
-    def _validation_error(exc: ValidationError) -> Any:
+    async def _invalid(request: Request, errors: Sequence[Any]) -> JSONResponse:
         return problem(
+            request,
             422,
             "Unprocessable Entity",
-            "Request body failed validation.",
+            "Request failed validation.",
             "validation-failed",
-            errors=exc.errors(include_url=False, include_context=False, include_input=False),
+            errors=validation_errors(errors),
         )
 
-    @app.errorhandler(HTTPException)
-    def _http_error(exc: HTTPException) -> Any:
-        return problem(exc.code or 500, exc.name, exc.description or exc.name, "http-error")
+    @app.exception_handler(RequestValidationError)
+    async def _request_invalid(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return await _invalid(request, exc.errors())
 
-    @app.errorhandler(Exception)
-    def _unhandled(exc: Exception) -> Any:
-        log.exception("unhandled exception", extra={"error_type": type(exc).__name__})
-        return problem(500, "Internal Server Error", "An unexpected error occurred.")
+    @app.exception_handler(ValidationError)
+    async def _model_invalid(request: Request, exc: ValidationError) -> JSONResponse:
+        return await _invalid(request, exc.errors(include_url=False, include_context=False))
+
+    @app.exception_handler(HTTPException)
+    async def _http_error(request: Request, exc: HTTPException) -> JSONResponse:
+        title = HTTPStatus(exc.status_code).phrase
+        slug = PayloadTooLarge.slug if exc.status_code == PayloadTooLarge.status else "http-error"
+        response = problem(request, exc.status_code, title, str(exc.detail or title), slug)
+        if exc.headers:
+            response.headers.update(exc.headers)
+        return response
+
+    # Anything else is turned into a 500 problem by ``middleware.RequestContext``,
+    # which, unlike an ``Exception`` handler here, still adds X-Request-ID.

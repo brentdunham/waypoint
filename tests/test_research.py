@@ -10,10 +10,9 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from flask import Flask
-from flask.testing import FlaskClient
 from langchain_core.messages import AIMessage
-from tests.conftest import new_thread, run_and_wait
+from starlette.testclient import TestClient
+from tests.conftest import TestApp, new_thread, run_and_wait
 
 from waypoint.agents.citations import answer_and_sources, number_sources
 from waypoint.agents.models import FINDINGS_MARKER, ScriptedChatModel
@@ -38,7 +37,7 @@ def _critic(*, follow_ups: list[str], confidence: float = 0.9) -> Script:
     return script
 
 
-def _research(client: FlaskClient, topic: str = "tidal power") -> dict[str, Any]:
+def _research(client: TestClient, topic: str = "tidal power") -> dict[str, Any]:
     thread_id = new_thread(client, "research")
     run_and_wait(client, thread_id, {"message": topic})
     return run_and_wait(client, thread_id, {"resume": {"approved": True}})
@@ -94,7 +93,7 @@ def test_sources_are_numbered_once_across_findings() -> None:
 # -- graph -------------------------------------------------------------------
 
 
-def test_plan_comes_with_a_rationale_per_question(client: FlaskClient) -> None:
+def test_plan_comes_with_a_rationale_per_question(client: TestClient) -> None:
     thread_id = new_thread(client, "research")
     result = run_and_wait(client, thread_id, {"message": "tidal power"})
     interrupt = result["interrupts"][0]["value"]
@@ -102,7 +101,7 @@ def test_plan_comes_with_a_rationale_per_question(client: FlaskClient) -> None:
     assert all(interrupt["rationale"])
 
 
-def test_findings_are_cited_scored_and_listed_in_the_report(client: FlaskClient) -> None:
+def test_findings_are_cited_scored_and_listed_in_the_report(client: TestClient) -> None:
     result = _research(client)["result"]
     findings = result["findings"]
     assert findings
@@ -120,7 +119,7 @@ def test_findings_are_cited_scored_and_listed_in_the_report(client: FlaskClient)
 
 
 def test_critic_follow_ups_run_one_more_wave_then_stop(
-    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Asks every round, including a duplicate of a planned question. Only the
     # new question may run, and only once: round 2 is the last (max_rounds=2).
@@ -140,7 +139,7 @@ def test_critic_follow_ups_run_one_more_wave_then_stop(
 
 
 def test_one_round_means_no_follow_ups(
-    make_app: Callable[..., Flask], monkeypatch: pytest.MonkeyPatch
+    make_app: Callable[..., TestApp], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setitem(
         ScriptedChatModel.structured_scripts, "Critique", _critic(follow_ups=["Anything else?"])
@@ -151,7 +150,7 @@ def test_one_round_means_no_follow_ups(
 
 
 def test_uncited_findings_are_capped_whatever_the_critic_says(
-    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from waypoint.agents.graphs import research
 
@@ -165,7 +164,7 @@ def test_uncited_findings_are_capped_whatever_the_critic_says(
 
 
 def test_critic_scoring_an_unknown_question_falls_back(
-    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def critic(prompt: str) -> dict[str, Any]:
         return {
@@ -179,7 +178,7 @@ def test_critic_scoring_an_unknown_question_falls_back(
 
 
 def test_rejected_web_search_fails_with_the_fix_in_the_message(
-    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class BadRequestError(Exception):  # same name as the anthropic SDK's
         pass
@@ -201,7 +200,7 @@ def test_rejected_web_search_fails_with_the_fix_in_the_message(
 
 
 def test_a_malformed_plan_is_retried_not_fatal(
-    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Found by the live evals: a list sent as a JSON string failed the whole run,
     because LangGraph's default retry policy never retries a ValueError."""
@@ -225,7 +224,7 @@ def test_a_malformed_plan_is_retried_not_fatal(
 
 
 def test_every_model_call_is_told_the_date(
-    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Without it the agent called its own recent search results fabricated."""
     import datetime as dt

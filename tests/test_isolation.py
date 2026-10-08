@@ -11,11 +11,11 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from flask.testing import FlaskClient
 from langgraph.cache.memory import InMemoryCache
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
+from starlette.testclient import TestClient
 from tests.conftest import build_settings, new_thread, run_and_wait
 
 from waypoint.agents.context import AgentContext
@@ -83,10 +83,10 @@ def test_research_cache_is_shared_within_a_tenant_but_not_across() -> None:
     assert other_tenant == 0  # ...but never across a tenant boundary
 
 
-def test_remember_tool_writes_where_the_memories_api_reads(client: FlaskClient) -> None:
+def test_remember_tool_writes_where_the_memories_api_reads(client: TestClient) -> None:
     thread_id = new_thread(client, "chat")
     run_and_wait(client, thread_id, {"message": '[[tool:remember({"fact": "drinks tea"})]]'})
-    memories = client.get("/api/v1/memories").get_json()["memories"]
+    memories = client.get("/api/v1/memories").json()["memories"]
     assert [m["value"]["fact"] for m in memories] == ["drinks tea"]
 
 

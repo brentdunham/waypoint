@@ -10,10 +10,9 @@ import asyncio
 import logging
 
 import pytest
-from flask import Flask
-from flask.testing import FlaskClient
 from langchain_core.embeddings import Embeddings
-from tests.conftest import TEST_DATABASE_URL, build_settings, requires_infra
+from starlette.testclient import TestClient
+from tests.conftest import TEST_DATABASE_URL, TestApp, build_settings, requires_infra
 
 from waypoint.agents.models import EmbeddingsConfigError, build_embeddings, check_embedding_dims
 
@@ -88,19 +87,19 @@ def test_network_error_is_logged_not_fatal(caplog: pytest.LogCaptureFixture) -> 
     assert "not verified" in caplog.text
 
 
-def _assert_search_ranks_by_query(client: FlaskClient, headers: dict[str, str]) -> None:
+def _assert_search_ranks_by_query(client: TestClient, headers: dict[str, str]) -> None:
     for fact in FACTS:
         created = client.post("/api/v1/memories", json={"fact": fact}, headers=headers)
         assert created.status_code == 201
     for fact in FACTS:
         found = client.get(
-            "/api/v1/memories", query_string={"q": fact, "limit": 1}, headers=headers
-        ).get_json()["memories"]
+            "/api/v1/memories", params={"q": fact, "limit": 1}, headers=headers
+        ).json()["memories"]
         assert [m["value"]["fact"] for m in found] == [fact]
 
 
 def test_in_memory_store_gets_the_vector_index(make_app: object) -> None:
-    app: Flask = make_app(embeddings_model="openai:text-embedding-3-small", embeddings_dims=64)  # type: ignore[operator]
+    app: TestApp = make_app(embeddings_model="openai:text-embedding-3-small", embeddings_dims=64)  # type: ignore[operator]
     _assert_search_ranks_by_query(app.test_client(), {})
 
 
@@ -110,7 +109,7 @@ def test_pgvector_store_ranks_by_query(make_app: object, auth: dict[str, str]) -
     """Real Postgres: setup() must create the extension and store_vectors table."""
     from tests.conftest import BOOTSTRAP_KEY, TEST_REDIS_URL
 
-    app: Flask = make_app(  # type: ignore[operator]
+    app: TestApp = make_app(  # type: ignore[operator]
         database_url=TEST_DATABASE_URL,
         redis_url=TEST_REDIS_URL,
         auth_enabled=True,

@@ -9,57 +9,43 @@ failure it prevents.
 ```
 browser ──► nginx ──► gunicorn (N workers, UvicornWorker)
                           │
-                          ├─ Flask, sync views, threadpool
-                          │      └─ every await hops onto ───┐
-                          │                                  ▼
-                          │                        one background event loop
-                          │                        per worker process
-                          │                              │
-                          ├──────────────────────────────┤
+                          ├─ FastAPI, async handlers, one event loop
+                          │  per worker; runs are tasks on it
+                          │
+                          ├──────────────────────────────┐
                           ▼                              ▼
                     Postgres                          Redis
              checkpoints, long-term store,     run event streams, cancel
              threads, api_keys, run_audit      pub/sub, limits, node cache
 ```
 
-## 1. One event loop per process, not one per request
+## 1. One event loop per process, owned by the server
 
-`src/waypoint/aio.py`.
+`src/waypoint/__init__.py` (the lifespan), `src/waypoint/agents/runtime.py`.
 
-Flask is WSGI. `flask[async]` lets you write `async def` views, but each one is
-executed by `asyncio.run`-ing it in a **fresh event loop**. Anything that binds
-to a loop breaks under that: a psycopg pool, an `AsyncPostgresSaver`, a Redis
-pub/sub subscription, a background task. You get "attached to a different
-loop" errors, or worse, a new connection pool per request.
+A psycopg pool, an `AsyncPostgresSaver`, a Redis connection and a running
+graph all bind to the event loop they were created on. So everything is
+created on one loop and stays there: the server's. FastAPI's lifespan builds
+the runtime (`start_runtime`) before the first request, every handler is
+`async def` and awaits it directly, and every run is an `asyncio.Task` on the
+same loop. Shutdown cancels runs in flight and closes the pools, bounded at
+20 seconds (`stop_runtime`); gunicorn's graceful timeout is 30.
 
-So one daemon thread owns one loop for the life of the worker. Every
-loop-bound resource is created **on** it (`agents/runtime.py::_create` runs
-there), and views — which are deliberately *synchronous* — hop on:
+Until 2026-10 this was Flask, which is WSGI: `flask[async]` runs each
+`async def` view in a fresh event loop, which breaks every loop-bound object
+above. The workaround was a daemon thread owning one loop per process, sync
+views hopping onto it, and a bridge that turned an async generator into a
+sync one for SSE. It worked, and it was all plumbing; with an ASGI framework
+none of it is needed.
 
-```python
-loop.run_sync(coro)              # block this worker thread
-loop.iter_sync(async_generator)  # bridge into a sync generator, e.g. SSE
-```
+Request plumbing is one plain ASGI middleware (`src/waypoint/middleware.py`):
+request id, the access log line, the 8 MB body limit, and a last-resort 500
+that still carries `X-Request-ID`. Not Starlette's `BaseHTTPMiddleware`: it
+runs the endpoint in a separate task, which loses the log ContextVar bound
+here and interferes with streaming responses.
 
-The thread and loop lifecycle is **anyio's `BlockingPortal`**, not hand-rolled.
-It is the same idea, it is already a transitive dependency (httpx pulls it in),
-and someone else maintains its edge cases.
-
-What anyio does *not* have — and the reason `aio.py` still exists — is
-`iter_sync`. A Flask streaming response is a sync generator; without this bridge
-each item would re-enter the async world. It pumps the async generator on the
-shared loop into a bounded queue, drains everything buffered in one thread round
-trip rather than one per item (0.04 ms/item versus 0.31 unbatched), and — the
-part that matters most — calls `task.cancel()` in its `finally`. When a client
-hangs up mid-stream the generator is closed, the producer is cancelled, and the
-graph stops. Cancellation in the browser really does stop work in the backend.
-
-That gap is upstreamable, and there is a patch for it in `anyio-pr/`.
-
-Trade-off: sync views mean concurrency comes from gunicorn's threadpool, not
-from the loop. That is fine here because the threads spend their time waiting
-on the loop, not on CPU. Keep worker counts *low* — 2 is the default — and let
-the loop do the multiplexing.
+Keep worker counts low (2 is the default). Runs are I/O bound; concurrency
+comes from the loop, not from forking.
 
 ## 2. A run is not an HTTP request
 
@@ -69,7 +55,7 @@ The naive design ties a graph run to the POST that started it. Then a
 four-minute run needs a four-minute request, a dropped connection loses the
 work, a proxy timeout kills it, and a second tab cannot watch.
 
-Instead: `POST` starts an `asyncio.Task` on the shared loop and returns `202`
+Instead: `POST` starts an `asyncio.Task` on the worker's loop and returns `202`
 with a `run_id`. The task writes every event to a **Redis Stream**. Clients
 attach separately over SSE — from any worker, any number of times, after any
 reconnect.

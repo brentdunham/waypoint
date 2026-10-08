@@ -1,10 +1,10 @@
 """Human-in-the-loop: the graph pauses, a second request resumes it."""
 
-from flask.testing import FlaskClient
+from starlette.testclient import TestClient
 from tests.conftest import new_thread, run_and_wait
 
 
-def test_research_pauses_for_approval(client: FlaskClient) -> None:
+def test_research_pauses_for_approval(client: TestClient) -> None:
     thread_id = new_thread(client, "research")
     result = run_and_wait(client, thread_id, {"message": "tidal power"})
 
@@ -13,11 +13,11 @@ def test_research_pauses_for_approval(client: FlaskClient) -> None:
     assert interrupt["kind"] == "approve_plan"
     assert len(interrupt["plan"]) >= 2
 
-    state = client.get(f"/api/v1/threads/{thread_id}/state").get_json()
+    state = client.get(f"/api/v1/threads/{thread_id}/state").json()
     assert state["next"] == ["approve"]
 
 
-def test_approving_runs_the_fan_out_and_produces_a_report(client: FlaskClient) -> None:
+def test_approving_runs_the_fan_out_and_produces_a_report(client: TestClient) -> None:
     thread_id = new_thread(client, "research")
     run_and_wait(client, thread_id, {"message": "tidal power"})
 
@@ -28,7 +28,7 @@ def test_approving_runs_the_fan_out_and_produces_a_report(client: FlaskClient) -
     assert len(result["result"]["findings"]) >= 2
 
 
-def test_the_human_can_edit_the_plan_while_approving(client: FlaskClient) -> None:
+def test_the_human_can_edit_the_plan_while_approving(client: TestClient) -> None:
     thread_id = new_thread(client, "research")
     run_and_wait(client, thread_id, {"message": "tidal power"})
 
@@ -42,7 +42,7 @@ def test_the_human_can_edit_the_plan_while_approving(client: FlaskClient) -> Non
     assert findings[0]["question"] == "Only this question?"
 
 
-def test_declining_stops_the_graph_without_running_workers(client: FlaskClient) -> None:
+def test_declining_stops_the_graph_without_running_workers(client: TestClient) -> None:
     thread_id = new_thread(client, "research")
     run_and_wait(client, thread_id, {"message": "tidal power"})
 
@@ -52,11 +52,11 @@ def test_declining_stops_the_graph_without_running_workers(client: FlaskClient) 
     assert result["result"].get("findings") in (None, [])
 
 
-def test_an_interrupt_survives_a_new_client(client: FlaskClient, app) -> None:
+def test_an_interrupt_survives_a_new_client(client: TestClient, app) -> None:
     """The pause lives in the checkpointer, not in the request that created it."""
     thread_id = new_thread(client, "research")
     run_and_wait(client, thread_id, {"message": "tidal power"})
 
     fresh = app.test_client()
-    state = fresh.get(f"/api/v1/threads/{thread_id}/state").get_json()
+    state = fresh.get(f"/api/v1/threads/{thread_id}/state").json()
     assert state["interrupts"]

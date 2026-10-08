@@ -9,11 +9,11 @@ import asyncio
 from typing import Any
 
 import pytest
-from flask.testing import FlaskClient
 from langgraph.cache.memory import InMemoryCache
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
+from starlette.testclient import TestClient
 from tests.conftest import build_settings, new_thread, run_and_wait
 
 from waypoint import create_app
@@ -113,7 +113,7 @@ def test_a_run_cannot_pick_a_model_nobody_approved() -> None:
 
 def test_run_records_the_models_it_used(make_app: Any) -> None:
     app = make_app(model="base", models_allowed=["base", "small"])
-    client: FlaskClient = app.test_client()
+    client: TestClient = app.test_client()
     thread_id = new_thread(client, "research")
     started = run_and_wait(
         client, thread_id, {"message": "tidal power", "models": {"critic": "small"}}
@@ -125,22 +125,22 @@ def test_run_records_the_models_it_used(make_app: Any) -> None:
     )
     # The resumed run's own choice applies, and the briefing says what made it.
     assert done["result"]["metadata"]["models"] == dict.fromkeys(ROLES, "small")
-    record = client.get(f"/api/v1/runs/{done['run_id']}").get_json()
+    record = client.get(f"/api/v1/runs/{done['run_id']}").json()
     assert record["models"] == dict.fromkeys(ROLES, "small")
 
 
-def test_bad_model_request_is_a_400(client: FlaskClient) -> None:
+def test_bad_model_request_is_a_400(client: TestClient) -> None:
     thread_id = new_thread(client, "chat")
     response = client.post(
         f"/api/v1/threads/{thread_id}/runs",
         json={"message": "hi", "models": {"assistant": "claude-opus-expensive"}},
     )
     assert response.status_code == 400
-    assert "not allowed" in response.get_json()["detail"]
+    assert "not allowed" in response.json()["detail"]
 
 
-def test_agents_endpoint_lists_model_roles(client: FlaskClient) -> None:
-    agents = {a["name"]: a for a in client.get("/api/v1/agents").get_json()["agents"]}
+def test_agents_endpoint_lists_model_roles(client: TestClient) -> None:
+    agents = {a["name"]: a for a in client.get("/api/v1/agents").json()["agents"]}
     assert agents["research"]["model_roles"] == list(ROLES)
     assert agents["chat"]["model_roles"] == ["assistant"]
 

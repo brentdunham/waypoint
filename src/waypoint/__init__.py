@@ -1,110 +1,93 @@
 """Application factory.
 
-Views in this service are deliberately **synchronous**. All async work is
-submitted to the one shared event loop in :mod:`app.aio`. That is the opposite
-of what ``flask[async]`` invites you to do, and it is deliberate: Flask runs an
-``async def`` view in a brand-new event loop per request, which cannot hold a
-connection pool, a Redis subscription, or a running graph.
+Everything runs on the server's one event loop: request handlers, the
+Postgres pool, the LangGraph checkpointer and store, Redis, and every run
+task. The runtime that owns them is built in the app's lifespan, so it exists
+before the first request and is torn down (runs cancelled, pools closed)
+when the server stops.
 """
 
-import atexit
 import logging
-import time
-import uuid
-from typing import Any
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
-from flask import Flask, g, request
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from waypoint.agents.runtime import init_runtime, shutdown_runtime
-from waypoint.aio import loop
+from waypoint.agents.models import check_model_config
+from waypoint.agents.registry import roles_by_agent
+from waypoint.agents.runtime import start_runtime, stop_runtime
 from waypoint.api import api
 from waypoint.errors import register_error_handlers
-from waypoint.log_config import bind, configure_logging, unbind
+from waypoint.log_config import configure_logging
+from waypoint.middleware import RequestContext
 from waypoint.settings import Settings, get_settings
 
-__all__ = ["create_app"]
+__all__ = ["API_PREFIX", "create_app"]
 
 log = logging.getLogger(__name__)
 
+API_PREFIX = "/api/v1"
+MAX_BODY_BYTES = 8 * 1024 * 1024
 
-def create_app(settings: Settings | None = None) -> Flask:
+DESCRIPTION = """Durable, resumable, human-in-the-loop LangGraph agent runs.
+
+Authenticate with an API key: `Authorization: Bearer ak_<key_id>.<secret>`.
+Start a run with `POST /threads/{thread_id}/runs` (202 plus a `run_id`), then
+follow it on `GET /runs/{run_id}/events`, a Server-Sent Events stream that
+resumes from `Last-Event-ID`. Errors are `application/problem+json` (RFC 9457).
+"""
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(level=settings.log_level, json_output=settings.json_logs)
+    # Here as well as in the runtime: a typo in MODELS__* should stop the
+    # import, before a server binds a port, not surface in the lifespan.
+    check_model_config(settings, roles_by_agent())
 
-    app = Flask(__name__)
-    app.config.update(
-        SECRET_KEY=settings.secret_key,
-        DEBUG=settings.debug,
-        JSON_SORT_KEYS=False,
-        PROPAGATE_EXCEPTIONS=False,
-        MAX_CONTENT_LENGTH=8 * 1024 * 1024,
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        app.state.runtime = await start_runtime(settings)
+        try:
+            yield
+        finally:
+            await stop_runtime(app.state.runtime)
+            app.state.runtime = None
+
+    app = FastAPI(
+        title="Waypoint",
+        version="0.1.0",
+        description=DESCRIPTION,
+        debug=settings.debug,
+        lifespan=lifespan,
+        docs_url=f"{API_PREFIX}/docs",
+        redoc_url=None,
+        openapi_url=f"{API_PREFIX}/openapi.json",
     )
-    app.extensions["settings"] = settings
+    app.state.settings = settings
+    app.state.runtime = None
 
-    _register_hooks(app, settings)
     register_error_handlers(app)
-    app.register_blueprint(api, url_prefix="/api/v1")
+    app.include_router(api, prefix=API_PREFIX)
 
-    try:
-        init_runtime(app, settings)
-    except BaseException:
-        # A half-built runtime leaves pool workers and a running loop behind,
-        # which drown the real traceback in "Task was destroyed" noise.
-        loop.stop()
-        raise
-    atexit.register(_shutdown, app)
+    # Added last runs first: RequestContext wraps CORS, so preflight responses
+    # carry X-Request-ID and show up in the access log too.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "Last-Event-ID",
+            "X-Request-ID",
+            "X-API-Key",
+        ],
+        expose_headers=["X-Request-ID"],
+        max_age=600,
+    )
+    app.add_middleware(RequestContext, max_body_bytes=MAX_BODY_BYTES)
 
     log.info("app created", extra={"env": settings.env})
     return app
-
-
-def _register_hooks(app: Flask, settings: Settings) -> None:
-    allowed = set(settings.cors_origins)
-
-    @app.before_request
-    def _open() -> Any:
-        g.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-        g.started = time.perf_counter()
-        g.log_token = bind(request_id=g.request_id)
-        if request.method == "OPTIONS":
-            return app.make_default_options_response()
-        return None
-
-    @app.after_request
-    def _close(response: Any) -> Any:
-        response.headers["X-Request-ID"] = getattr(g, "request_id", "-")
-        origin = request.headers.get("Origin")
-        if origin and (origin in allowed or "*" in allowed):
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Vary"] = "Origin"
-            response.headers["Access-Control-Allow-Headers"] = (
-                "Authorization, Content-Type, Last-Event-ID, X-Request-ID"
-            )
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-            response.headers["Access-Control-Expose-Headers"] = "X-Request-ID"
-            response.headers["Access-Control-Max-Age"] = "600"
-        principal = getattr(g, "principal", None)
-        log.info(
-            "%s %s -> %s",
-            request.method,
-            request.path,
-            response.status_code,
-            extra={
-                "method": request.method,
-                "path": request.path,
-                "status": response.status_code,
-                "duration_ms": round((time.perf_counter() - g.started) * 1000, 2),
-                "tenant_id": getattr(principal, "tenant_id", None),
-            },
-        )
-        return response
-
-    @app.teardown_request
-    def _unbind(_exc: BaseException | None) -> None:
-        if token := getattr(g, "log_token", None):
-            unbind(token)
-
-
-def _shutdown(app: Flask) -> None:
-    shutdown_runtime(app)
-    loop.stop()

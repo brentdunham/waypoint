@@ -68,24 +68,21 @@ class RedisCache(BaseCache[Any]):
                 await self._redis.delete(key)
 
     # -- sync surface -------------------------------------------------------
-    # LangGraph only calls these when a graph is invoked synchronously, which
-    # this service never does. They bridge to the shared loop so that a future
-    # sync caller still gets correct behaviour rather than a surprise.
+    # LangGraph calls these only when a graph is invoked synchronously, which
+    # this service never does: every graph runs on the server's event loop.
+    # Blocking that loop on Redis would stall every request, so refuse loudly.
 
     @override
     def get(self, keys: Sequence[FullKey]) -> dict[FullKey, Any]:
-        from waypoint.aio import loop
-
-        return loop.run_sync(self.aget(keys), timeout=5)
+        raise NotImplementedError(_SYNC)
 
     @override
     def set(self, pairs: Mapping[FullKey, tuple[Any, int | None]]) -> None:
-        from waypoint.aio import loop
-
-        loop.run_sync(self.aset(pairs), timeout=5)
+        raise NotImplementedError(_SYNC)
 
     @override
     def clear(self, namespaces: Sequence[Namespace] | None = None) -> None:
-        from waypoint.aio import loop
+        raise NotImplementedError(_SYNC)
 
-        loop.run_sync(self.aclear(namespaces), timeout=30)
+
+_SYNC = "RedisCache is async-only; invoke graphs with ainvoke/astream."

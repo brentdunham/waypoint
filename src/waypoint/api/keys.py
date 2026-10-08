@@ -1,43 +1,34 @@
 """API key administration. Requires the ``keys:admin`` scope."""
 
-from typing import Any
+from fastapi import APIRouter, Response
 
-from flask import Blueprint, jsonify, request
-
-from waypoint.agents import get_runtime
-from waypoint.aio import loop
+from waypoint.api.deps import Admin, Runtime
 from waypoint.errors import ServiceUnavailable
-from waypoint.infra.security import requires
-from waypoint.schemas import SCOPE_ADMIN, CreateKey
+from waypoint.infra.security import KeyStore
+from waypoint.schemas import CreateKey, KeyCreated
 
-bp = Blueprint("keys", __name__, url_prefix="/keys")
+router = APIRouter(prefix="/keys", tags=["keys"])
 
 
-@bp.post("")
-@requires(SCOPE_ADMIN)
-def create() -> Any:
-    payload = CreateKey.model_validate(request.get_json(silent=True) or {})
-    runtime = get_runtime()
+def _store(runtime: Runtime) -> KeyStore:
     if runtime.keys is None:
         raise ServiceUnavailable("API keys need Postgres; DATABASE_URL is unset.")
-    raw = loop.run_sync(
-        runtime.keys.create(
-            tenant_id=payload.tenant_id,
-            user_id=payload.user_id,
-            scopes=payload.scopes,
-            label=payload.label,
-        ),
-        timeout=10,
+    return runtime.keys
+
+
+@router.post("", status_code=201)
+async def create(payload: CreateKey, runtime: Runtime, _: Admin) -> KeyCreated:
+    raw = await _store(runtime).create(
+        tenant_id=payload.tenant_id,
+        user_id=payload.user_id,
+        scopes=payload.scopes,
+        label=payload.label,
     )
     # The only time the plaintext key ever exists outside the caller's hands.
-    return jsonify(api_key=raw, tenant_id=payload.tenant_id, scopes=payload.scopes), 201
+    return KeyCreated(api_key=raw, tenant_id=payload.tenant_id, scopes=payload.scopes)
 
 
-@bp.delete("/<key_id>")
-@requires(SCOPE_ADMIN)
-def revoke(key_id: str) -> Any:
-    runtime = get_runtime()
-    if runtime.keys is None:
-        raise ServiceUnavailable("API keys need Postgres; DATABASE_URL is unset.")
-    loop.run_sync(runtime.keys.revoke(key_id), timeout=10)
-    return "", 204
+@router.delete("/{key_id}", status_code=204)
+async def revoke(key_id: str, runtime: Runtime, _: Admin) -> Response:
+    await _store(runtime).revoke(key_id)
+    return Response(status_code=204)

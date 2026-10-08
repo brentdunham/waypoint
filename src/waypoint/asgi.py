@@ -1,15 +1,11 @@
 """ASGI entrypoint -- this is the one to serve.
 
-    uvicorn waypoint.asgi:asgi_app --reload
-    gunicorn waypoint.asgi:asgi_app -k uvicorn.workers.UvicornWorker
-
-``WsgiToAsgi`` runs the WSGI app in a threadpool, so a worker blocked on a long
-SSE stream does not block the process.
+uvicorn waypoint.asgi:app --reload
+gunicorn waypoint.asgi:app -k uvicorn.workers.UvicornWorker
 """
-
-from asgiref.wsgi import WsgiToAsgi
 
 from waypoint import create_app
 
-flask_app = create_app()
-asgi_app = WsgiToAsgi(flask_app)  # type: ignore[no-untyped-call]
+app = create_app()
+asgi_app = app
+"""The name the Dockerfile and docs used before FastAPI; kept so both work."""

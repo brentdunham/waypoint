@@ -10,11 +10,12 @@ import hmac
 import logging
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from functools import wraps
-from typing import Any
+from typing import Annotated
 
-from flask import current_app, g, request
+from fastapi import Depends, Request, Security
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from waypoint.errors import Forbidden, Unauthorized
 from waypoint.infra.db import Database
@@ -129,53 +130,50 @@ class KeyStore:
         return principal
 
 
-def _bearer() -> str | None:
-    header = request.headers.get("Authorization", "")
-    if header.lower().startswith("bearer "):
-        return header[7:].strip()
-    return request.headers.get("X-API-Key") or None
+_bearer_scheme = HTTPBearer(auto_error=False, description="An API key: `ak_<key_id>.<secret>`.")
+_header_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-def authenticate() -> Principal:
-    """Resolve the caller. Cached on ``g`` for the life of the request."""
-    from waypoint.aio import loop
+async def authenticate(
+    request: Request,
+    bearer: Annotated[HTTPAuthorizationCredentials | None, Security(_bearer_scheme)],
+    header_key: Annotated[str | None, Security(_header_scheme)],
+) -> Principal:
+    """FastAPI dependency: resolve the caller. Cached on the request.
 
-    if (existing := getattr(g, "principal", None)) is not None:
+    The two ``Security`` parameters are what put the Authorize button on the
+    OpenAPI page; neither raises on its own, so the 401 below stays ours.
+    """
+    if (existing := getattr(request.state, "principal", None)) is not None:
         return existing  # type: ignore[no-any-return]
 
-    settings = current_app.extensions["settings"]
-    if not settings.auth_enabled:
-        g.principal = ANONYMOUS
+    runtime = request.app.state.runtime
+    if not runtime.settings.auth_enabled:
+        request.state.principal = ANONYMOUS
         return ANONYMOUS
 
-    raw = _bearer()
+    raw = (bearer.credentials.strip() if bearer else None) or header_key
     if not raw:
         raise Unauthorized("Provide an API key via 'Authorization: Bearer ak_...'.")
 
-    store: KeyStore = current_app.extensions["keystore"]
-    principal = loop.run_sync(store.resolve(raw), timeout=5)
+    store: KeyStore | None = runtime.keys
+    principal = await store.resolve(raw) if store is not None else None
     if principal is None:
         raise Unauthorized("Unknown or revoked API key.")
 
-    g.principal = principal
+    request.state.principal = principal
     return principal
 
 
-def current_principal() -> Principal:
-    return authenticate()
+def requires(*scopes: str) -> Callable[..., Awaitable[Principal]]:
+    """Dependency factory: authenticate, then assert every named scope.
 
+    principal: Annotated[Principal, Depends(requires(SCOPE_RUN))]
+    """
 
-def requires(*scopes: str) -> Any:
-    """Decorator: authenticate, then assert every named scope."""
+    async def dependency(principal: Annotated[Principal, Depends(authenticate)]) -> Principal:
+        for scope in scopes:
+            principal.require(scope)
+        return principal
 
-    def decorator(fn: Any) -> Any:
-        @wraps(fn)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            principal = authenticate()
-            for scope in scopes:
-                principal.require(scope)
-            return fn(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
+    return dependency

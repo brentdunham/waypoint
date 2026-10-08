@@ -57,3 +57,135 @@ SCOPE_RUN = "agents:run"
 SCOPE_READ = "threads:read"
 SCOPE_WRITE = "threads:write"
 SCOPE_ADMIN = "keys:admin"
+
+
+# -- responses ----------------------------------------------------------------------
+# What the API returns, for the OpenAPI document and for FastAPI to check on the
+# way out. Fields mirror web/src/api/types.ts, which mirrors these by hand.
+
+
+class Out(BaseModel):
+    """Responses keep unknown keys rather than drop them silently."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class Health(Out):
+    status: Literal["ok"]
+
+
+class Readiness(Out):
+    status: Literal["ready", "degraded"]
+    checks: dict[str, str]
+    """Dependency -> ``ok``, ``off`` (not configured) or ``down``."""
+
+
+class AgentInfo(Out):
+    name: str
+    title: str
+    description: str
+    input_key: str
+    model_roles: list[str]
+    supports_interrupts: bool
+    example: dict[str, Any] | None = None
+
+
+class AgentList(Out):
+    agents: list[AgentInfo]
+
+
+class Thread(Out):
+    thread_id: str
+    tenant_id: str
+    user_id: str
+    agent: str
+    title: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ThreadList(Out):
+    threads: list[Thread]
+
+
+class PendingInterrupt(Out):
+    id: str | None = None
+    value: Any = None
+
+
+class PendingTask(Out):
+    id: str
+    name: str
+    error: str | None = None
+
+
+class Snapshot(Out):
+    """One checkpoint of a thread: its values, what runs next, what is waiting."""
+
+    checkpoint_id: str | None = None
+    parent_checkpoint_id: str | None = None
+    created_at: str | None = None
+    next: list[str]
+    values: Any = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    interrupts: list[PendingInterrupt] = Field(default_factory=list)
+    tasks: list[PendingTask] = Field(default_factory=list)
+
+
+class History(Out):
+    checkpoints: list[Snapshot]
+
+
+class StateUpdated(Out):
+    checkpoint_id: str | None = None
+    thread_id: str
+
+
+class Run(Out):
+    run_id: str
+    thread_id: str
+    agent: str
+    tenant_id: str
+    user_id: str
+    status: str
+    created_at: str
+    error: str | None = None
+    models: dict[str, str] = Field(default_factory=dict)
+    """Role -> model this run used."""
+
+
+class RunStarted(Run):
+    events_url: str
+    """``GET`` it for Server-Sent Events; resumable with ``Last-Event-ID``."""
+    cancel_url: str
+
+
+class RunResult(Out):
+    """``?wait=true``: the run's terminal event, flattened. Other keys come from
+    that event (``result``, ``error``, ``interrupts``)."""
+
+    run_id: str
+    status: str
+
+
+class KeyCreated(Out):
+    api_key: str
+    """Shown once. Only its hash is stored."""
+    tenant_id: str
+    scopes: list[str]
+
+
+class Memory(Out):
+    key: str
+    value: dict[str, Any]
+    created_at: str
+
+
+class MemoryList(Out):
+    memories: list[Memory]
+
+
+class MemoryCreated(Out):
+    key: str
+    fact: str

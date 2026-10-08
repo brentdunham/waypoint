@@ -13,7 +13,7 @@ import contextlib
 import datetime as dt
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -333,7 +333,7 @@ class RunManager:
 
     async def events(
         self, run_id: str, *, last_id: str = "0", heartbeat_s: float | None = None
-    ) -> AsyncIterator[Event]:
+    ) -> AsyncGenerator[Event]:
         """Replay from ``last_id`` then follow live until a terminal event."""
         block_ms = self._settings.stream.block_ms
         heartbeat = heartbeat_s or self._settings.stream.heartbeat_s

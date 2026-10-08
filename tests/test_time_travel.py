@@ -1,24 +1,24 @@
 """Checkpoint history, forking, and resuming from an edited past."""
 
-from flask.testing import FlaskClient
+from starlette.testclient import TestClient
 from tests.conftest import new_thread, run_and_wait
 
 
-def test_every_super_step_leaves_a_checkpoint(client: FlaskClient) -> None:
+def test_every_super_step_leaves_a_checkpoint(client: TestClient) -> None:
     thread_id = new_thread(client, "chat")
     run_and_wait(client, thread_id, {"message": "first"})
 
-    checkpoints = client.get(f"/api/v1/threads/{thread_id}/history").get_json()["checkpoints"]
+    checkpoints = client.get(f"/api/v1/threads/{thread_id}/history").json()["checkpoints"]
     assert len(checkpoints) >= 3
     assert checkpoints[0]["checkpoint_id"]
     # Newest first, and each one points at its parent.
     assert checkpoints[0]["parent_checkpoint_id"] == checkpoints[1]["checkpoint_id"]
 
 
-def test_state_can_be_rewritten_into_a_new_branch(client: FlaskClient) -> None:
+def test_state_can_be_rewritten_into_a_new_branch(client: TestClient) -> None:
     thread_id = new_thread(client, "chat")
     run_and_wait(client, thread_id, {"message": "original question"})
-    checkpoints = client.get(f"/api/v1/threads/{thread_id}/history").get_json()["checkpoints"]
+    checkpoints = client.get(f"/api/v1/threads/{thread_id}/history").json()["checkpoints"]
     target = checkpoints[-2]["checkpoint_id"]
 
     response = client.post(
@@ -29,7 +29,7 @@ def test_state_can_be_rewritten_into_a_new_branch(client: FlaskClient) -> None:
         },
     )
     assert response.status_code == 201
-    forked = response.get_json()["checkpoint_id"]
+    forked = response.json()["checkpoint_id"]
     assert forked is not None
     assert forked != target
 
@@ -37,11 +37,11 @@ def test_state_can_be_rewritten_into_a_new_branch(client: FlaskClient) -> None:
     assert result["status"] == "completed"
 
 
-def test_reading_state_at_an_old_checkpoint(client: FlaskClient) -> None:
+def test_reading_state_at_an_old_checkpoint(client: TestClient) -> None:
     thread_id = new_thread(client, "chat")
     run_and_wait(client, thread_id, {"message": "hello"})
-    checkpoints = client.get(f"/api/v1/threads/{thread_id}/history").get_json()["checkpoints"]
+    checkpoints = client.get(f"/api/v1/threads/{thread_id}/history").json()["checkpoints"]
     oldest = checkpoints[-1]["checkpoint_id"]
 
-    snapshot = client.get(f"/api/v1/threads/{thread_id}/state?checkpoint_id={oldest}").get_json()
+    snapshot = client.get(f"/api/v1/threads/{thread_id}/state?checkpoint_id={oldest}").json()
     assert snapshot["checkpoint_id"] == oldest

@@ -13,15 +13,15 @@ Two tiers, on purpose:
 
 import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 
 import pytest
-from flask import Flask
-from flask.testing import FlaskClient
+from fastapi import FastAPI
+from starlette.testclient import TestClient
 
 from waypoint import create_app
-from waypoint.aio import loop
+from waypoint.agents.runtime import AgentRuntime
 from waypoint.settings import Settings
 
 BOOTSTRAP_KEY = "ak_test000000.test-key-do-not-use-in-production"
@@ -75,37 +75,71 @@ def clean_redis() -> None:
         client.close()
 
 
+class TestApp:
+    """A booted app: its lifespan has run, so the runtime exists.
+
+    One ``TestClient`` per app, entered once, because entering it is what runs
+    the lifespan; a second client would build a second runtime. Its event loop
+    lives in a portal thread for the life of the app, and so do the runs.
+    """
+
+    __test__ = False  # not a test class, whatever its name says
+
+    def __init__(self, app: FastAPI) -> None:
+        self.app = app
+        self.client = TestClient(app, raise_server_exceptions=False)
+        self.client.__enter__()
+        self._open = True
+
+    def test_client(self) -> TestClient:
+        return self.client
+
+    @property
+    def runtime(self) -> AgentRuntime:
+        runtime: AgentRuntime = self.app.state.runtime
+        return runtime
+
+    def call[T](self, fn: Callable[..., Awaitable[T]], *args: Any) -> T:
+        """Run ``await fn(*args)`` on the app's event loop."""
+        portal = self.client.portal
+        assert portal is not None
+        return portal.call(fn, *args)
+
+    def close(self) -> None:
+        """Run the lifespan's shutdown. Safe to call twice."""
+        if self._open:
+            self._open = False
+            self.client.__exit__(None, None, None)
+
+
 @pytest.fixture
 def make_app() -> Iterator[Any]:
     """Factory so a test can ask for a differently configured app."""
-    created: list[Flask] = []
+    created: list[TestApp] = []
 
-    def factory(**overrides: Any) -> Flask:
-        application = create_app(build_settings(**overrides))
+    def factory(**overrides: Any) -> TestApp:
+        application = TestApp(create_app(build_settings(**overrides)))
         created.append(application)
         return application
 
     yield factory
 
     for application in created:
-        from waypoint.agents.runtime import shutdown_runtime
-
-        shutdown_runtime(application)
-    loop.stop()
+        application.close()
 
 
 @pytest.fixture
-def app(make_app: Any) -> Flask:
-    return make_app()
+def app(make_app: Any) -> TestApp:
+    return make_app()  # type: ignore[no-any-return]
 
 
 @pytest.fixture
-def client(app: Flask) -> FlaskClient:
+def client(app: TestApp) -> TestClient:
     return app.test_client()
 
 
 @pytest.fixture
-def infra_app(make_app: Any) -> Flask:
+def infra_app(make_app: Any) -> TestApp:
     """An app wired to real Postgres and Redis, isolated per test run."""
     return make_app(
         database_url=TEST_DATABASE_URL,
@@ -119,7 +153,7 @@ def infra_app(make_app: Any) -> Flask:
 
 
 @pytest.fixture
-def infra_client(infra_app: Flask) -> FlaskClient:
+def infra_client(infra_app: TestApp) -> TestClient:
     return infra_app.test_client()
 
 
@@ -129,46 +163,42 @@ def auth() -> dict[str, str]:
 
 
 @pytest.fixture
-def thread(client: FlaskClient) -> str:
+def thread(client: TestClient) -> str:
     response = client.post("/api/v1/threads", json={"agent": "chat", "title": "t"})
     assert response.status_code == 201
-    return str(response.get_json()["thread_id"])
+    return str(response.json()["thread_id"])
 
 
-def new_thread(client: FlaskClient, agent: str, headers: dict[str, str] | None = None) -> str:
+def new_thread(client: TestClient, agent: str, headers: dict[str, str] | None = None) -> str:
     response = client.post("/api/v1/threads", json={"agent": agent}, headers=headers or {})
-    assert response.status_code == 201, response.get_json()
-    return str(response.get_json()["thread_id"])
+    assert response.status_code == 201, response.json()
+    return str(response.json()["thread_id"])
 
 
 def run_and_wait(
-    client: FlaskClient, thread_id: str, body: dict[str, Any], headers: dict[str, str] | None = None
+    client: TestClient, thread_id: str, body: dict[str, Any], headers: dict[str, str] | None = None
 ) -> dict[str, Any]:
     response = client.post(
         f"/api/v1/threads/{thread_id}/runs?wait=true", json=body, headers=headers or {}
     )
-    assert response.status_code == 200, response.get_json()
-    return dict(response.get_json())
+    assert response.status_code == 200, response.json()
+    return dict(response.json())
 
 
-def read_sse(client: FlaskClient, url: str, headers: dict[str, str] | None = None) -> list[str]:
+def read_sse(client: TestClient, url: str, headers: dict[str, str] | None = None) -> list[str]:
     """Consume an SSE response and return the ordered list of event names."""
-    response = client.get(url, headers=headers or {}, buffered=False)
-    assert response.status_code == 200
     names: list[str] = []
-    for chunk in response.response:
-        for line in chunk.decode().splitlines():
+    with client.stream("GET", url, headers=headers or {}) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines():
             if line.startswith("event: "):
                 names.append(line.removeprefix("event: "))
-        if names and names[-1] in {
-            "run.completed",
-            "run.failed",
-            "run.cancelled",
-            "run.interrupted",
-        }:
-            break
-    response.close()
+            if names and names[-1] in TERMINAL_EVENTS:
+                break
     return names
+
+
+TERMINAL_EVENTS = frozenset({"run.completed", "run.failed", "run.cancelled", "run.interrupted"})
 
 
 def a_uuid() -> str:

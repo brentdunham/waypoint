@@ -45,13 +45,13 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/healthz', timeout=3).status==200 else 1)"
 
 # One worker per core is wrong here: runs are I/O bound and concurrency comes
-# from the shared event loop, not from forking. Two workers gives you rolling
+# from each worker's event loop, not from forking. Two workers gives you rolling
 # restarts and a spare; raise it only if CPU-bound work appears.
 #
 # --no-control-socket: gunicorn 26 opens a control socket under $HOME/.gunicorn
 # by default, and nothing here uses `gunicorn ctl`. To keep it instead, point it
 # somewhere writable: --control-socket /tmp/gunicorn.ctl
-CMD ["gunicorn", "waypoint.asgi:asgi_app", \
+CMD ["gunicorn", "waypoint.asgi:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--workers", "2", \
      "--no-control-socket", \

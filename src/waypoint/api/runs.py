@@ -6,33 +6,46 @@ separately from ``GET /runs/<id>/events``, an SSE stream that supports
 rather than replaying or losing tokens.
 """
 
+import asyncio
+import contextlib
 import logging
-from collections.abc import Iterator
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Annotated, Any
 
-from flask import Blueprint, Response, g, jsonify, request
+from fastapi import APIRouter, Body, Header, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from waypoint.agents import get_runtime, get_spec
+from waypoint.agents import get_spec
 from waypoint.agents.models import ModelChoiceError
 from waypoint.agents.registry import models_for
-from waypoint.aio import loop
+from waypoint.api.deps import Reader, Runner, Runtime
 from waypoint.errors import BadRequest
 from waypoint.infra.bus import TERMINAL
-from waypoint.infra.security import current_principal, requires
-from waypoint.schemas import SCOPE_READ, SCOPE_RUN, StartRun
+from waypoint.schemas import Run, RunResult, RunStarted, StartRun
 
 log = logging.getLogger(__name__)
 
-bp = Blueprint("runs", __name__)
+router = APIRouter(tags=["runs"])
+
+WAIT_VALUES = frozenset({"1", "true", "yes"})
 
 
-@bp.post("/threads/<thread_id>/runs")
-@requires(SCOPE_RUN)
-def start(thread_id: str) -> Any:
-    payload = StartRun.model_validate(request.get_json(silent=True) or {})
-    principal = current_principal()
-    runtime = get_runtime()
-    thread = loop.run_sync(runtime.threads.require(thread_id, principal))
+@router.post(
+    "/threads/{thread_id}/runs",
+    status_code=202,
+    response_model=RunStarted,
+    responses={200: {"model": RunResult, "description": "With `?wait=true`: the finished run."}},
+)
+async def start(
+    thread_id: str,
+    *,
+    request: Request,
+    runtime: Runtime,
+    principal: Runner,
+    payload: Annotated[StartRun, Body(default_factory=StartRun)],
+    wait: Annotated[str | None, Query(description="`true` blocks until the run ends.")] = None,
+) -> RunStarted | JSONResponse:
+    thread = await runtime.threads.require(thread_id, principal)
     spec = get_spec(thread["agent"])
 
     if payload.resume is None and payload.input is None and payload.message is None:
@@ -56,58 +69,67 @@ def start(thread_id: str) -> Any:
         raise BadRequest(str(exc)) from None
 
     if runtime.limiter is not None:
-        loop.run_sync(runtime.limiter.enforce(principal.tenant_id), timeout=5)
+        await runtime.limiter.enforce(principal.tenant_id)
 
-    record = loop.run_sync(
-        runtime.runs.start(
-            agent=thread["agent"],
-            thread_id=thread_id,
-            principal=principal,
-            request_id=_request_id(),
-            payload=graph_input,
-            resume=payload.resume,
-            checkpoint_id=payload.checkpoint_id,
-            durability=payload.durability,
-            models=models,
-        ),
-        timeout=15,
+    record = await runtime.runs.start(
+        agent=thread["agent"],
+        thread_id=thread_id,
+        principal=principal,
+        request_id=str(getattr(request.state, "request_id", "-")),
+        payload=graph_input,
+        resume=payload.resume,
+        checkpoint_id=payload.checkpoint_id,
+        durability=payload.durability,
+        models=models,
     )
-    loop.run_sync(runtime.threads.touch(thread_id, title=payload.message or None), timeout=10)
+    await runtime.threads.touch(thread_id, title=payload.message or None)
 
-    if request.args.get("wait") in {"1", "true", "yes"}:
-        return jsonify(_await_terminal(record.run_id)), 200
+    if wait in WAIT_VALUES:
+        result = await _await_terminal(runtime, record.run_id)
+        return JSONResponse(
+            RunResult.model_validate(result).model_dump(mode="json"), status_code=200
+        )
 
-    body = record.public() | {
-        "events_url": f"/api/v1/runs/{record.run_id}/events",
-        "cancel_url": f"/api/v1/runs/{record.run_id}/cancel",
-    }
-    return jsonify(body), 202
-
-
-@bp.get("/runs/<run_id>")
-@requires(SCOPE_READ)
-def show(run_id: str) -> Any:
-    runtime = get_runtime()
-    record = loop.run_sync(runtime.runs.require(run_id, current_principal()), timeout=5)
-    return jsonify(record.public())
+    return RunStarted.model_validate(
+        record.public()
+        | {
+            "events_url": f"/api/v1/runs/{record.run_id}/events",
+            "cancel_url": f"/api/v1/runs/{record.run_id}/cancel",
+        }
+    )
 
 
-@bp.get("/runs/<run_id>/events")
-@requires(SCOPE_READ)
-def events(run_id: str) -> Response:
+@router.get("/runs/{run_id}")
+async def show(run_id: str, runtime: Runtime, principal: Reader) -> Run:
+    return Run.model_validate((await runtime.runs.require(run_id, principal)).public())
+
+
+@router.get(
+    "/runs/{run_id}/events",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}, "description": "Server-Sent Events."}},
+)
+async def events(
+    run_id: str,
+    runtime: Runtime,
+    principal: Reader,
+    last_event_id_header: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    last_event_id: Annotated[
+        str | None, Query(description="For clients that cannot set the Last-Event-ID header.")
+    ] = None,
+) -> StreamingResponse:
     """Server-Sent Events, resumable via ``Last-Event-ID``."""
-    runtime = get_runtime()
-    loop.run_sync(runtime.runs.require(run_id, current_principal()), timeout=5)
-    last_id = request.headers.get("Last-Event-ID") or request.args.get("last_event_id") or "0"
+    await runtime.runs.require(run_id, principal)
+    last_id = last_event_id_header or last_event_id or "0"
 
-    def generate() -> Iterator[str]:
-        # Tell proxies not to buffer, and prime the connection so the browser
-        # fires `onopen` even if the first real event is slow.
+    async def generate() -> AsyncIterator[str]:
+        # Prime the connection so the browser fires `onopen` even if the first
+        # real event is slow.
         yield ": stream open\n\n"
         try:
-            for event in loop.iter_sync(runtime.runs.events(run_id, last_id=last_id)):
+            async for event in runtime.runs.events(run_id, last_id=last_id):
                 yield event.sse()
-        except GeneratorExit:  # client hung up; iter_sync cancels the producer
+        except asyncio.CancelledError:  # client hung up; Starlette cancels us
             raise
         except Exception:
             # Following the run failed, not the run: it keeps going on its own
@@ -118,29 +140,27 @@ def events(run_id: str) -> Response:
             log.exception("sse stream failed; client should resume", extra={"run_id": run_id})
             yield ": stream lost, reconnect with Last-Event-ID\n\n"
 
-    response = Response(generate(), mimetype="text/event-stream")
-    response.headers["Cache-Control"] = "no-cache, no-transform"
-    response.headers["X-Accel-Buffering"] = "no"
-    response.headers["Connection"] = "keep-alive"
-    return response
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        # Tell proxies (nginx in compose) not to buffer or transform the stream.
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
-@bp.post("/runs/<run_id>/cancel")
-@requires(SCOPE_RUN)
-def cancel(run_id: str) -> Any:
-    runtime = get_runtime()
-    record = loop.run_sync(runtime.runs.cancel(run_id, current_principal()), timeout=10)
-    return jsonify(record.public()), 202
+@router.post("/runs/{run_id}/cancel", status_code=202)
+async def cancel(run_id: str, runtime: Runtime, principal: Runner) -> Run:
+    return Run.model_validate((await runtime.runs.cancel(run_id, principal)).public())
 
 
-def _await_terminal(run_id: str) -> dict[str, Any]:
-    """Block until the run finishes. Convenience for scripts and tests."""
-    runtime = get_runtime()
+async def _await_terminal(runtime: Runtime, run_id: str) -> dict[str, Any]:
+    """Wait for the run's terminal event. Convenience for scripts and tests."""
     last: dict[str, Any] = {"run_id": run_id, "status": "unknown"}
-    for event in loop.iter_sync(runtime.runs.events(run_id, last_id="0")):
-        if event.type in TERMINAL:
-            last = {"run_id": run_id, "status": event.type.removeprefix("run."), **event.data}
-            break
+    async with contextlib.aclosing(runtime.runs.events(run_id, last_id="0")) as stream:
+        async for event in stream:
+            if event.type in TERMINAL:
+                last = {"run_id": run_id, "status": event.type.removeprefix("run."), **event.data}
+                break
     return last
 
 
@@ -148,7 +168,3 @@ def _guard_size(payload: dict[str, Any], limit: int) -> None:
     size = len(str(payload))
     if size > limit:
         raise BadRequest(f"Input of {size} chars exceeds the {limit} char limit.")
-
-
-def _request_id() -> str:
-    return str(getattr(g, "request_id", "-"))

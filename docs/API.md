@@ -16,8 +16,16 @@ and the `request_id`, which also comes back in the `X-Request-ID` header.
 ```
 
 Slugs: `bad-request`, `unauthorized`, `forbidden`, `not-found`, `conflict`,
-`rate-limited`, `validation-failed`, `upstream-error`, `unavailable`,
-`internal-error`, `http-error`.
+`payload-too-large` (bodies over 8 MB), `rate-limited`, `validation-failed`,
+`upstream-error`, `unavailable`, `internal-error`, `http-error`, and `error`
+for anything unexpected. A `validation-failed` problem lists `errors`, each
+with a `loc`: a body field by name (`["agent"]`), a query parameter with its
+prefix (`["query", "limit"]`).
+
+The OpenAPI document is served at `/api/v1/openapi.json`, with an interactive
+page at `/api/v1/docs` (its **Authorize** button takes an API key). Both are
+on in production on purpose: they describe the API, not the data, and every
+call made from the page still needs a key.
 
 ## Health
 
