@@ -1,0 +1,198 @@
+# Testing
+
+Three suites, three costs, plus evals (section 4), which measure the agents
+rather than the code. Run them in this order; each one only exists
+because the cheaper one cannot catch what it catches.
+
+## 1. Unit tier — no infrastructure, no network, ~2 seconds
+
+```bash
+uv run pytest
+```
+
+The app boots with the in-memory checkpointer, in-memory store and
+single-process event bus, and `FAKE_MODEL=true` swaps the LLM for
+`ScriptedChatModel`. That last part is the whole trick: **the graphs are
+testable because the model is deterministic**. No API key, no cost, no flake,
+and the assertions can be exact rather than "contains something plausible".
+
+The scripted model shapes its reply to the prompt, so the planner still returns
+several questions and the worker still returns an answer — the real code paths
+run, only the intelligence is fake. If a prompt contains
+`[[tool:name({"arg":1})]]` it emits that tool call, which is how tool-loop
+tests force a specific branch.
+
+Covers: routing and validation, problem+json shapes, the interrupt/resume
+cycle, fan-out and the `operator.add` reducer, checkpoint history and forking,
+memory round-trips, serialization, and `BackgroundLoop` itself.
+
+## 2. Integration tier — real Postgres and Redis
+
+```bash
+docker compose -f compose.dev.yaml up -d
+
+export TEST_DATABASE_URL=postgresql://waypoint:waypoint@localhost:5432/waypoint_test
+export TEST_REDIS_URL=redis://localhost:6379/15     # scratch index — it gets FLUSHDB'd
+createdb -h localhost -U waypoint waypoint_test         # once
+
+uv run pytest -m integration
+```
+
+Skipped automatically when those two variables are unset, so the default run
+stays hermetic.
+
+These exist for the things that are *only* true with real infrastructure:
+
+* a thread paused on an interrupt is resumed by a **different app object**,
+  proving the pause lives in Postgres and not in the process;
+* an SSE stream replays identically from `Last-Event-ID`, and starting after
+  event *n* drops exactly *n* events;
+* the Lua token bucket and the concurrency semaphore actually refuse work;
+* API keys resolve, scope, revoke, and isolate tenants;
+* `readyz` reports both backends as `ok`.
+
+A `clean_redis` autouse fixture flushes the scratch index before every test.
+Without it a burst test poisons the next test's rate-limit budget — which is
+exactly the kind of failure that only appears in CI, at 40% of runs.
+
+Everything together:
+
+```bash
+TEST_DATABASE_URL=… TEST_REDIS_URL=… uv run pytest
+```
+
+## 3. Frontend
+
+```bash
+cd web
+npm run build      # tsc --strict (noUncheckedIndexedAccess, exactOptionalPropertyTypes) then vite build
+```
+
+The types in `web/src/api/types.ts` mirror `waypoint/schemas.py` and
+`waypoint/serialization.py` by hand. That is deliberate — it is the contract, and
+you want a compile error when the backend shape moves, not a blank pane. When
+you change a response shape, change both.
+
+## 4. Evals — real model, real cost, scores not assertions
+
+The tiers above prove the plumbing works. Evals measure whether the agents do
+their job, and which models should play which role. They call the real API
+and cost money; they are not part of `pytest`. The harness itself is tested
+offline in `tests/test_evals.py`.
+
+```bash
+uv run python -m evals run --agent research --trials 3      # scorecard per agent
+uv run python -m evals run --agent all --no-judge           # programmatic checks only
+uv run python -m evals run --agent chat --case arithmetic   # one case
+uv run python -m evals run --agent research --model critic=claude-opus-4-5
+uv run python -m evals compare --agent research --b critic=claude-opus-4-5   # A = config
+uv run python -m evals calibrate --agent all                # measure the judge
+uv run python -m evals accept --agent research evals/results/research/<run>/scorecard.json
+uv run python -m evals run --agent research --against-baseline   # exit 1 on regression
+uv run python -m evals run --fake --agent all               # harness only, no API calls
+```
+
+How it fits together (`evals/`):
+
+* **Datasets** — `datasets/<agent>.jsonl`, one case per line: input, interrupt
+  answers, seeded memories, programmatic checks, rubric criteria, what a good
+  answer covers, and the date someone last reviewed it.
+* **Driver** — runs each case in process on the same `build()` the service
+  registers, with its own in-memory store, and records every model call with
+  role, model, tokens, web searches and latency.
+* **Checks** — deterministic, run first: `[n]` citations resolve, sources are
+  used, rounds and plan size stay in bounds, a declined plan searches nothing;
+  for chat, the right tool was (or was not) called, facts were remembered and
+  seeded memories recalled.
+* **Judge** — `rubrics/<agent>.toml`, one call per criterion, reasoning before
+  a 1-4 score with written anchors, 3+ passes. It sees the findings the
+  briefing was written from but cannot browse: *grounded* means grounded in
+  what the agent retrieved.
+* **Calibration** — `calibration/<agent>.jsonl` holds hand-labelled outputs.
+  `calibrate` measures judge agreement per criterion, routes failing criteria
+  to `EVALS__JUDGE_ESCALATION_MODEL` if it does better, and otherwise marks
+  them untrusted (`calibration/routing.json`). Calibration is tied to the
+  judge model and rubric it was measured with; change either and rerun it.
+  Review the labels: they are the ground truth for the judge.
+* **Scorecards** — `results/<agent>/<time>-<fingerprint>/`: `scorecard.json`,
+  `summary.md`, `transcripts.jsonl`. The fingerprint hashes prompts, models per
+  role, agent settings, judge, rubric and dataset, so two scorecards with the
+  same fingerprint measured the same thing. Cost uses `prices.toml`; a model
+  not listed there shows tokens only.
+* **Baseline gate** — `baselines/<agent>.json`. A metric fails when it drops
+  by more than twice the baseline's spread across trials, and never less than
+  0.10 (check pass rate) or 0.25 (criterion mean). Run the baseline with
+  `--trials 3` or more so the spread means something.
+* **Compare** — runs two model configurations on the same cases and asks the
+  judge which output is better per criterion, in shuffled order. Reports win
+  rates next to cost and check pass rates.
+
+## Manual end-to-end
+
+```bash
+docker compose up --build
+open http://localhost:8080
+```
+
+Worth doing by hand at least once, because it is the only way to check the
+parts that are about *behaviour over time*:
+
+1. Pick **Research**, send a topic, watch `node` chips appear as the plan node
+   runs. The run stops with an approval card.
+2. **Reload the page.** The card is still there — it was read back from
+   Postgres, not held in React state.
+3. Edit a question, approve, watch several workers stream at once.
+4. Start another run and hit **Cancel** mid-stream. The status flips to
+   `cancelled` and, in the API logs, the graph task really stops.
+5. Open **Checkpoints**, pick one a few steps back, and "resume from here".
+   The conversation continues down a new branch.
+6. In devtools, throttle to offline for a few seconds and back. The stream
+   reconnects with `Last-Event-ID` and no tokens are lost or repeated.
+
+## Writing new tests
+
+Helpers live in `tests/conftest.py`:
+
+| Helper | Use |
+|---|---|
+| `client` | App on in-memory everything, auth off |
+| `infra_client` + `auth` | App on real Postgres/Redis, auth on, limits raised |
+| `make_app(**overrides)` | An app configured however you like — use this for limit tests |
+| `new_thread(client, agent)` | Create a thread, assert 201, return the id |
+| `run_and_wait(client, tid, body)` | Run synchronously, assert 200, return the result |
+| `read_sse(client, url)` | Consume an SSE response, return the ordered event names |
+
+Two habits worth keeping:
+
+* Assert on **event order**, not just the final value. `["run.started", …,
+  "run.completed"]` catches a stream that silently stops emitting progress.
+* When testing limits, give the app its own `limits={...}` rather than tuning
+  the shared fixture, and let `clean_redis` isolate it.
+
+## Continuous integration
+
+```yaml
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    env: { POSTGRES_USER: waypoint, POSTGRES_PASSWORD: waypoint, POSTGRES_DB: waypoint_test }
+    options: >-
+      --health-cmd "pg_isready -U waypoint" --health-interval 5s --health-retries 20
+    ports: ["5432:5432"]
+  redis:
+    image: redis:8-alpine
+    options: >-
+      --health-cmd "redis-cli ping" --health-interval 5s --health-retries 20
+    ports: ["6379:6379"]
+
+steps:
+  - run: uv sync --locked
+  - run: uv run ruff check src tests evals
+  - run: uv run ruff format --check src tests evals
+  - run: uv run mypy
+  - run: uv run pytest
+    env:
+      TEST_DATABASE_URL: postgresql://waypoint:waypoint@localhost:5432/waypoint_test
+      TEST_REDIS_URL: redis://localhost:6379/15
+  - run: npm ci --prefix web && npm run build --prefix web
+```

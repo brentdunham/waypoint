@@ -1,0 +1,45 @@
+# Rubric for the research agent. One judge call per criterion per output.
+# Scale: 1-4 with written anchors; 3 or 4 is a pass. The judge reasons first.
+# "target" picks what the judge is shown: plan, or briefing (with the findings
+# the briefing was written from). The judge cannot browse: "grounded" means
+# grounded in what the agent retrieved, not true in the world.
+
+[criteria.plan_quality]
+target = "plan"
+question = "Do the planned questions, taken together, cover what a busy reader needs to know about the topic, without overlap and within any constraint the topic states?"
+1 = "Questions are off-topic, ignore a stated constraint, or are mostly duplicates."
+2 = "On topic but a major aspect is missing, or several questions overlap heavily."
+3 = "Covers the main aspects; minor overlap or one secondary gap."
+4 = "Distinct, answerable questions that together cover the topic and respect every stated constraint."
+
+[criteria.grounded]
+target = "briefing"
+question = "Is every factual claim in the briefing supported by the findings it was written from, and attributed with an [n] citation to a source of a finding that supports it? A briefing with no [n] citations at all scores at most 2."
+1 = "Several claims have no support in the findings, or citations point to unrelated sources."
+2 = "One clear unsupported claim or misattributed citation, or most claims carry no [n] citation."
+3 = "All substantive claims are supported and cited; at most a minor detail is uncited."
+4 = "Every claim traces to a finding, and every claim carries a citation to a source of that finding."
+
+[criteria.covers]
+target = "briefing"
+question = "Does the briefing answer the topic as asked, including any scope or constraint stated in it, and cover what the case expects?"
+1 = "Misses the point of the topic or ignores a stated constraint."
+2 = "Answers part of the topic; an expected aspect is missing."
+3 = "Answers the topic; one expected point is thin."
+4 = "Answers the topic fully within its stated scope."
+
+[criteria.calibrated]
+target = "briefing"
+question = "Where findings have low confidence or a reviewer note, does the briefing say so instead of stating the claim as settled fact? Noting that evidence is limited while leaving out a weak claim's specifics (e.g. not repeating an unconfirmed figure) counts as flagging it. Only stating the weak claim as fact counts against. A finding is weak when its confidence is below 0.7 or it has a reviewer note; every other finding is strong and should be stated plainly, without hedging."
+1 = "Presents weak or contested findings as settled fact."
+2 = "Flags some weak findings but states at least one as fact."
+3 = "Flags the weak findings; the hedging is vague in places."
+4 = "Each weak or contested point is clearly marked as such; strong points are stated plainly. If every finding is strong, plain statements are correct."
+
+[criteria.useful]
+target = "briefing"
+question = "Would a busy reader get the answer from the first paragraph, without filler or repetition?"
+1 = "The answer is buried or absent; mostly filler."
+2 = "The answer is there but not up front, or there is much repetition."
+3 = "Leads with the answer; some padding."
+4 = "Leads with the answer; every sentence adds something; the first sentence states the overall conclusion."

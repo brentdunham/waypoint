@@ -1,0 +1,94 @@
+[project]
+name = "waypoint"
+version = "0.1.0"
+description = "Waypoint: durable, resumable, human-in-the-loop LangGraph agent runs"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "flask[async]>=3.1.3",
+    "asgiref>=3.12.1",
+    "anyio>=4.4",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.15",
+    "python-dotenv>=1.1",
+    "langchain>=1.3",
+    "langchain-core>=1.6",
+    "langgraph>=1.2",
+    "langgraph-checkpoint-postgres>=3.1",
+    "langchain-anthropic>=1.6",
+    "psycopg[binary,pool]>=3.2",
+    "redis>=6.4",
+    "langchain-openai>=1.0",
+]
+
+[project.optional-dependencies]
+server = ["gunicorn>=26.0; sys_platform != 'win32'", "uvicorn[standard]>=0.52"]
+
+[dependency-groups]
+dev = [
+    "uvicorn[standard]>=0.52",
+    "ruff>=0.16",
+    "mypy>=1.18",
+    "pytest>=8.4",
+    "pytest-cov>=7.0",
+    "httpx>=0.28",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/waypoint"]
+
+[tool.uv]
+package = true
+
+# ---------------------------------------------------------------- tooling ---
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF", "ASYNC", "PL", "PT"]
+ignore = ["E501", "PLR0913"]
+
+[tool.ruff.lint.per-file-ignores]
+# Deliberate: provider/driver imports are lazy so the app boots without them.
+"src/waypoint/agents/*" = ["PLC0415"]
+# Deliberate: a graph's nodes are closures over its models and settings, so
+# `build()` is long by construction. Splitting it would only move the closures.
+"src/waypoint/agents/graphs/*" = ["PLC0415", "PLR0915"]
+"src/waypoint/infra/*" = ["PLC0415"]
+# Deliberate: `timeout` mirrors the sync API; these are thin bridges, not tasks.
+"src/waypoint/aio.py" = ["ASYNC109"]
+# Deliberate: problem-details exceptions are named after their HTTP status.
+"src/waypoint/errors.py" = ["N818"]
+"tests/*" = ["PLC0415", "PLR2004", "S101"]
+# Deliberate: the CLI prints, and check functions take a uniform signature.
+"evals/*" = ["T201", "ARG001", "PLR2004", "PLR0911"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["waypoint", "evals"]
+
+[tool.mypy]
+python_version = "3.14"
+mypy_path = "src:."
+packages = ["waypoint", "evals"]
+strict = true
+warn_unreachable = true
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = ["langgraph.*", "langchain.*", "langchain_core.*", "langchain_anthropic.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-q --strict-markers"
+markers = [
+    "integration: needs a live Postgres and Redis (set TEST_DATABASE_URL / TEST_REDIS_URL)",
+]

@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.env
+.env.*
+!.env.example
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+node_modules/
+web/dist/
+*.tsbuildinfo
+.idea/
+.vscode/
+
+# eval run output; baselines/ and calibration/ are kept
+evals/results/
+
+# Local side work and scratch files; not part of Waypoint
+anyio-pr/
+langgraph-issue/
+src/waypoint/agents/trash.py

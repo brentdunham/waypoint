@@ -1,0 +1,21 @@
+# USD per million tokens, used only to put a cost on scorecards and comparisons.
+# Not verified against the live price list when written: check
+# https://www.anthropic.com/pricing and correct before trusting cost columns.
+# A model missing here shows tokens only ("cost unknown"); add it to get cost.
+# search = USD per web search request (server tool), charged on top of tokens.
+as_of = "2026-10-07 (unverified)"
+
+[models.claude-haiku-4-5]
+input = 1.0
+output = 5.0
+search = 0.01
+
+[models.claude-sonnet-4-5]
+input = 3.0
+output = 15.0
+search = 0.01
+
+[models.claude-opus-4-5]
+input = 5.0
+output = 25.0
+search = 0.01

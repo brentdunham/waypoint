@@ -1,0 +1,201 @@
+{
+  "agent": "research",
+  "cases": 8,
+  "checks": {
+    "citations_resolve": {
+      "applicable": 21,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 21
+    },
+    "completed": {
+      "applicable": 24,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 24
+    },
+    "declined_without_search": {
+      "applicable": 3,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 3
+    },
+    "distinct_questions": {
+      "applicable": 21,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 21
+    },
+    "findings_sourced": {
+      "applicable": 21,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 0.9524,
+        "stdev": 0.0825
+      },
+      "passed": 20
+    },
+    "plan_bounds": {
+      "applicable": 21,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 21
+    },
+    "rounds_bounded": {
+      "applicable": 21,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 21
+    },
+    "sources_cited": {
+      "applicable": 21,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 21
+    }
+  },
+  "criteria": {
+    "calibrated": {
+      "graded": 21,
+      "judge": "calibrated",
+      "mean": {
+        "mean": 3.2857,
+        "stdev": 0.1429
+      },
+      "pass_rate": 0.9048
+    },
+    "covers": {
+      "graded": 21,
+      "judge": "calibrated",
+      "mean": {
+        "mean": 3.9048,
+        "stdev": 0.0825
+      },
+      "pass_rate": 1.0
+    },
+    "grounded": {
+      "graded": 21,
+      "judge": "calibrated",
+      "mean": {
+        "mean": 2.7619,
+        "stdev": 0.0825
+      },
+      "pass_rate": 0.7619
+    },
+    "plan_quality": {
+      "graded": 21,
+      "judge": "calibrated",
+      "mean": {
+        "mean": 4.0,
+        "stdev": 0.0
+      },
+      "pass_rate": 1.0
+    },
+    "useful": {
+      "graded": 21,
+      "judge": "calibrated",
+      "mean": {
+        "mean": 3.9524,
+        "stdev": 0.0825
+      },
+      "pass_rate": 1.0
+    }
+  },
+  "date": "2026-10-08T13:53:17+00:00",
+  "elapsed_s_per_run": {
+    "mean": 91.8338,
+    "stdev": 35.7222
+  },
+  "errors": 0,
+  "fingerprint": "46dbb1659d0e",
+  "git_sha": null,
+  "judge_model": "claude-haiku-4-5",
+  "models": {
+    "critic": "claude-sonnet-5",
+    "planner": "claude-sonnet-5",
+    "searcher": "claude-sonnet-5",
+    "writer": "claude-sonnet-5"
+  },
+  "settings": {
+    "max_follow_ups": 3,
+    "max_rounds": 2,
+    "max_searches": 3,
+    "web_search": true
+  },
+  "trials": 3,
+  "usage": {
+    "cost_usd": null,
+    "cost_usd_per_run": null,
+    "roles": {
+      "critic": {
+        "calls": 42,
+        "input_tokens": 404973,
+        "input_tokens_per_run": 16874,
+        "latency_s_per_call": 21.37,
+        "models": [
+          "claude-sonnet-5"
+        ],
+        "output_tokens": 100028,
+        "output_tokens_per_run": 4168,
+        "searches": 0
+      },
+      "planner": {
+        "calls": 24,
+        "input_tokens": 14460,
+        "input_tokens_per_run": 602,
+        "latency_s_per_call": 6.46,
+        "models": [
+          "claude-sonnet-5"
+        ],
+        "output_tokens": 13510,
+        "output_tokens_per_run": 563,
+        "searches": 0
+      },
+      "searcher": {
+        "calls": 168,
+        "input_tokens": 4715771,
+        "input_tokens_per_run": 196490,
+        "latency_s_per_call": 15.69,
+        "models": [
+          "claude-sonnet-5"
+        ],
+        "output_tokens": 264518,
+        "output_tokens_per_run": 11022,
+        "searches": 376
+      },
+      "writer": {
+        "calls": 21,
+        "input_tokens": 220900,
+        "input_tokens_per_run": 9204,
+        "latency_s_per_call": 14.6,
+        "models": [
+          "claude-sonnet-5"
+        ],
+        "output_tokens": 31865,
+        "output_tokens_per_run": 1328,
+        "searches": 0
+      }
+    }
+  }
+}

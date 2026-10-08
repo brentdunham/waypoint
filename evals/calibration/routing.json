@@ -1,0 +1,26 @@
+{
+  "chat": {
+    "criteria": {
+      "correct": "claude-haiku-4-5",
+      "honest_tools": "claude-sonnet-4-5",
+      "uses_memory": "claude-haiku-4-5"
+    },
+    "escalation": "claude-sonnet-4-5",
+    "judge": "claude-haiku-4-5",
+    "min_agreement": 0.8,
+    "rubric": "b3417ec535a5"
+  },
+  "research": {
+    "criteria": {
+      "calibrated": "claude-haiku-4-5",
+      "covers": "claude-haiku-4-5",
+      "grounded": "claude-haiku-4-5",
+      "plan_quality": "claude-haiku-4-5",
+      "useful": "claude-haiku-4-5"
+    },
+    "escalation": "claude-sonnet-4-5",
+    "judge": "claude-haiku-4-5",
+    "min_agreement": 0.8,
+    "rubric": "2ab58a145d08"
+  }
+}

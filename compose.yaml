@@ -1,0 +1,74 @@
+name: waypoint
+
+services:
+  api:
+    build: .
+    environment:
+      ENV: production
+      JSON_LOGS: "true"
+      DATABASE_URL: postgresql://waypoint:waypoint@postgres:5432/waypoint
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
+      MODEL: ${MODEL:-claude-sonnet-4-5}
+      FAKE_MODEL: ${FAKE_MODEL:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      LIMITS__RPM: ${LIMITS__RPM:-60}
+      LIMITS__CONCURRENT_RUNS: ${LIMITS__CONCURRENT_RUNS:-4}
+      EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-}
+      EMBEDDINGS_DIMS: ${EMBEDDINGS_DIMS:-1536}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      RESEARCH__WEB_SEARCH: ${RESEARCH__WEB_SEARCH:-true}
+      RESEARCH__MAX_SEARCHES: ${RESEARCH__MAX_SEARCHES:-3}
+      RESEARCH__MAX_ROUNDS: ${RESEARCH__MAX_ROUNDS:-2}
+      RESEARCH__MAX_FOLLOW_UPS: ${RESEARCH__MAX_FOLLOW_UPS:-3}
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    ports: ["8080:80"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  postgres:
+    # pgvector, not plain postgres: the long-term store's semantic search needs
+    # the extension the moment EMBEDDINGS_MODEL is set.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: waypoint
+      POSTGRES_PASSWORD: waypoint
+      POSTGRES_DB: waypoint
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waypoint -d waypoint"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    # appendonly keeps in-flight run streams across a restart; they are also
+    # TTL'd, so the file stays small.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports: ["6379:6379"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
