@@ -12,6 +12,7 @@ the agents against a baseline.
 ├── web/             React 19 + Vite + TypeScript frontend
 ├── tests/           pytest: a unit tier with no infra, an integration tier with
 ├── evals/           datasets, checks and an LLM judge that score the agents (TESTING.md §4)
+├── .github/         scheduled eval workflow, weekly by default
 ├── compose.yaml     api + web + postgres(pgvector) + redis
 └── compose.dev.yaml just postgres + redis, for host-side development
 ```

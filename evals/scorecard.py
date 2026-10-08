@@ -302,7 +302,11 @@ def _fmt(value: Any) -> str:
     return "n/a" if value is None else str(value)
 
 
-def render_markdown(card: dict[str, Any], found: list[Regression] | None = None) -> str:
+def render_markdown(
+    card: dict[str, Any],
+    found: list[Regression] | None = None,
+    baseline: dict[str, Any] | None = None,
+) -> str:
     lines = [
         f"# {card['agent']} scorecard",
         "",
@@ -355,5 +359,19 @@ def render_markdown(card: dict[str, Any], found: list[Regression] | None = None)
     lines += ["", "Grounded means grounded in what the agent retrieved; the judge does not browse."]
     if found is not None:
         lines += ["", "## Baseline gate", ""]
+        if baseline is not None:
+            lines.append(
+                f"Baseline: fingerprint `{baseline.get('fingerprint')}`, "
+                f"accepted from a run on {baseline.get('date', 'unknown date')}"
+                + (f" at git `{baseline['git_sha']}`" if baseline.get("git_sha") else "")
+                + "."
+            )
+            if baseline.get("fingerprint") != card["fingerprint"]:
+                lines.append(
+                    "Configuration differs from the baseline (prompts, models, settings, "
+                    "judge, rubric or dataset), so this compares two different setups. "
+                    "Expected right after such a change; if it persists, accept a new baseline."
+                )
+            lines.append("")
         lines += [f"- REGRESSION {r}" for r in found] or ["- no regressions"]
     return "\n".join(lines) + "\n"

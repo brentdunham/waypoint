@@ -1,0 +1,128 @@
+# Scheduled evals: the full dataset against live models, gated on the baseline.
+#
+# Wakes every day; the `cadence` job decides whether today is a run day, so
+# the schedule changes in repo settings without editing this file:
+#
+#   Settings > Secrets and variables > Actions > Variables
+#     EVALS_CADENCE   weekly (default) | nightly | off
+#     EVALS_WEEKDAY   1-7, Monday = 1 (default 1); used when weekly
+#
+#   Settings > Secrets and variables > Actions > Secrets
+#     ANTHROPIC_API_KEY   required
+#     OPENAI_API_KEY      required while EMBEDDINGS_MODEL is openai:* (chat memory)
+#     LANGSMITH_API_KEY   optional; traces only if EVALS_LANGSMITH_TRACING=true
+#
+# Run it by hand from the Actions tab (Run workflow), with a choice of agent
+# and trials. A run fails when a metric drops past the baseline's tolerance;
+# GitHub emails the failure. Scorecards and transcripts are kept as an artifact.
+
+name: evals
+
+on:
+  schedule:
+    - cron: "23 10 * * *" # 10:23 UTC daily wake (05:23 Dallas in summer)
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: Agent to evaluate
+        type: choice
+        options: [all, research, chat]
+        default: all
+      trials:
+        description: Trials per case (3+ for the gate to mean anything)
+        type: number
+        default: 3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals
+  cancel-in-progress: false
+
+jobs:
+  cadence:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          CADENCE: ${{ vars.EVALS_CADENCE || 'weekly' }}
+          WEEKDAY: ${{ vars.EVALS_WEEKDAY || '1' }}
+        run: |
+          today=$(date -u +%u)
+          case "$EVENT:$CADENCE" in
+            workflow_dispatch:*) run=true ;;
+            *:nightly)           run=true ;;
+            *:weekly)            if [ "$today" = "$WEEKDAY" ]; then run=true; else run=false; fi ;;
+            *:off)               run=false ;;
+            *) echo "::error::EVALS_CADENCE must be weekly, nightly or off, not '$CADENCE'"; exit 1 ;;
+          esac
+          echo "event=$EVENT cadence=$CADENCE weekday=$WEEKDAY today=$today run=$run"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  evals:
+    needs: cadence
+    if: needs.cadence.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # Must match the configuration the baselines were accepted with, or the
+      # fingerprint differs and the summary says so. `python -m evals
+      # fingerprint` prints it locally. Everything not set here is the default.
+      MODEL: claude-sonnet-5
+      MAX_TOKENS: "4096"
+      EMBEDDINGS_MODEL: openai:text-embedding-3-small
+      EMBEDDINGS_DIMS: "1536"
+      EVALS__JUDGE_MODEL: claude-haiku-4-5
+      EVALS__JUDGE_ESCALATION_MODEL: claude-sonnet-4-5
+      EVALS__MIN_AGREEMENT: "0.8"
+      FAKE_MODEL: "false"
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      LANGSMITH_TRACING: ${{ vars.EVALS_LANGSMITH_TRACING || 'false' }}
+      LANGSMITH_PROJECT: waypoint-evals
+      AGENT: ${{ inputs.agent || 'all' }}
+      TRIALS: ${{ inputs.trials || 3 }}
+    steps:
+      - name: Check secrets
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::Add the ANTHROPIC_API_KEY repository secret"; exit 1
+          fi
+          if [[ "$EMBEDDINGS_MODEL" == openai:* && -z "$OPENAI_API_KEY" ]]; then
+            echo "::error::Add the OPENAI_API_KEY repository secret (EMBEDDINGS_MODEL is $EMBEDDINGS_MODEL)"; exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install
+        run: uv sync --locked --python 3.14
+
+      - name: Run evals against the baseline
+        run: |
+          uv run python -m evals run --agent "$AGENT" --trials "$TRIALS" \
+            --against-baseline --out eval-results
+
+      - name: Summary
+        if: always()
+        run: |
+          shopt -s nullglob
+          for f in eval-results/*/*/summary.md; do
+            cat "$f" >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Keep scorecards and transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evals-${{ github.run_number }}-${{ github.sha }}
+          path: eval-results/
+          if-no-files-found: ignore
+          retention-days: 90

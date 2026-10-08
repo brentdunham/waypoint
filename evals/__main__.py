@@ -95,7 +95,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         card = build_scorecard(
             settings, agent, models, results, trials=args.trials, calibration=calibration
         )
-        found = None
+        found = baseline = None
         if args.against_baseline:
             baseline = load_baseline(agent)
             if baseline is None:
@@ -103,12 +103,17 @@ def cmd_run(args: argparse.Namespace) -> int:
             else:
                 found = regressions(baseline, card)
                 failed |= bool(found)
+                if baseline.get("fingerprint") != card["fingerprint"]:
+                    print(
+                        f"  warning: configuration {card['fingerprint']} differs from "
+                        f"baseline {baseline.get('fingerprint')}"
+                    )
 
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         out = (args.out or RESULTS) / agent / f"{stamp}-{card['fingerprint']}"
         out.mkdir(parents=True, exist_ok=True)
         (out / "scorecard.json").write_text(json.dumps(card, indent=2) + "\n", encoding="utf-8")
-        summary = render_markdown(card, found)
+        summary = render_markdown(card, found, baseline)
         (out / "summary.md").write_text(summary, encoding="utf-8")
         with (out / "transcripts.jsonl").open("w", encoding="utf-8") as fh:
             for r in results:

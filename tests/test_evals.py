@@ -24,7 +24,7 @@ from evals.checks import CHECKS, run_checks
 from evals.driver import Call, Transcript, run_case
 from evals.judge import Judge, assign, load_rubric
 from evals.runner import parse_overrides, resolved, self_judging
-from evals.scorecard import fingerprint, regressions
+from evals.scorecard import fingerprint, regressions, render_markdown
 from waypoint.agents.graphs import research
 
 AGENTS = ("chat", "research")
@@ -249,6 +249,21 @@ def test_gate_fires_on_a_real_drop_but_not_on_noise() -> None:
     }
     # A noisy baseline widens the tolerance.
     assert regressions(_card(0.9, 3.5, stdev=0.3), _card(0.5, 3.0)) == []
+
+
+def test_summary_says_when_the_baseline_measured_a_different_configuration() -> None:
+    card = {
+        "agent": "research", "date": "2026-10-12T10:00:00+00:00", "fingerprint": "new",
+        "git_sha": "abc1234", "cases": 1, "trials": 1, "errors": 0, "judge_model": "j",
+        "models": {"writer": "m"}, "checks": {}, "criteria": {},
+        "usage": {"roles": {}, "cost_usd_per_run": None},
+    }  # fmt: skip
+    same = render_markdown(card, [], {**card, "fingerprint": "new"})
+    assert "fingerprint `new`" in same
+    assert "differs" not in same
+    other = render_markdown(card, [], {**card, "fingerprint": "old"})
+    assert "Configuration differs from the baseline" in other
+    assert "git `abc1234`" in other
 
 
 def test_a_prompt_change_changes_the_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:

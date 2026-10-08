@@ -246,7 +246,9 @@ claude-haiku-4-5, escalation claude-sonnet-4-5):
 Deviations from the plan, on purpose:
 * `sources_cited` passes at 30% of listed sources cited, not all of them: live
   briefings list 30-50 sources and good ones cite about half.
-* Nightly runs wait for git (Brent, 2026-10-07).
+* Scheduled runs waited for git (Brent, 2026-10-07). Added once the repo was
+  on GitHub: weekly by default, nightly or off through a repository variable
+  (`.github/workflows/evals.yml`, TESTING.md §4).
 * A tenant-level default model map is not built; per-run choice is.
 
 Tests: `test_model_routing.py`, `test_evals.py`, and a retry test in

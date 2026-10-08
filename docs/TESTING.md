@@ -127,6 +127,41 @@ How it fits together (`evals/`):
   judge which output is better per criterion, in shuffled order. Reports win
   rates next to cost and check pass rates.
 
+### Scheduled runs
+
+`.github/workflows/evals.yml` runs `evals run --agent all --trials 3
+--against-baseline` on `main`, weekly by default, against live models. The
+workflow wakes daily and a small first job decides whether today is a run
+day, so the cadence is a repository variable, not a code change:
+
+| Repository variable | Default | |
+|---|---|---|
+| `EVALS_CADENCE` | `weekly` | `weekly`, `nightly` or `off` |
+| `EVALS_WEEKDAY` | `1` | Run day when weekly, Monday = 1 |
+| `EVALS_LANGSMITH_TRACING` | `false` | `true` sends traces to the `waypoint-evals` project |
+
+Secrets: `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` while `EMBEDDINGS_MODEL`
+is `openai:*` (chat memory recall). `LANGSMITH_API_KEY` only with tracing on.
+Set them under Settings > Secrets and variables > Actions; nothing comes from
+`.env`, which is not in the repo.
+
+The run fails, and GitHub emails it, when a metric drops past the baseline's
+tolerance. Each run's summary appears on the run page and the scorecards and
+transcripts are kept for 90 days as an artifact. Scorecards carry the commit
+SHA. **Run workflow** on the Actions tab starts one by hand, for one agent or
+all, with a chosen trial count.
+
+The workflow's `env` block repeats the non-secret configuration the
+baselines were accepted with (`MODEL`, `MAX_TOKENS`, `EVALS__*`). If the two
+drift, the summary says the configuration differs from the baseline: either
+bring the workflow in line or accept a new baseline.
+
+A failure on a commit that changed nothing usually means the outside world
+moved: web search results, a model alias pointing at a new snapshot, the
+provider's tool behaviour, or a dataset case whose "recent" facts went stale.
+Read the transcripts before deciding between a fix and a new baseline. Pinning
+dated model snapshots removes the alias cause.
+
 ## Manual end-to-end
 
 ```bash

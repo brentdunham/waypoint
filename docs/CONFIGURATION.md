@@ -177,6 +177,10 @@ Read by `python -m evals` only (TESTING.md), never by the service.
 Changing `EVALS__JUDGE_MODEL` or a rubric invalidates its calibration; rerun
 `evals calibrate`.
 
+The scheduled eval workflow does not read `.env`: it takes these values from
+its own `env` block and API keys from repository secrets (TESTING.md §4,
+Scheduled runs).
+
 ## Tracing
 
 | Variable | Default | Notes |
