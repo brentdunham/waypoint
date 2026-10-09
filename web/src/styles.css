@@ -122,3 +122,9 @@ button.block { width: 100%; }
 .worker__dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-top: 0.4rem; background: var(--ok); }
 .worker--searching .worker__dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
+
+/* Which model wrote what. */
+.msg__model { display: block; font-size: 0.7rem; opacity: 0.8; overflow-wrap: anywhere; }
+.models { display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; margin: 0 0 0.5rem; }
+.models code, .worker__model { font-family: ui-monospace, monospace; font-size: 0.75rem; }
+.worker__model { margin-right: 0.4rem; }

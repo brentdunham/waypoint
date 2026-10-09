@@ -52,6 +52,8 @@ export interface ChatMessage {
   content: string;
   name?: string;
   tool_calls?: { id: string; name: string; args: Record<string, unknown> }[];
+  /** The model that wrote an AI message, as the API reported it. */
+  model?: string;
 }
 
 export interface InterruptPayload {
@@ -61,6 +63,8 @@ export interface InterruptPayload {
   /** Why the planner asked each question, index-aligned with `plan`. */
   rationale?: string[];
   web_search?: boolean;
+  /** Role -> model for the run this plan belongs to. */
+  models?: Record<string, string>;
   prompt?: string;
   [key: string]: unknown;
 }
@@ -84,7 +88,10 @@ export interface Snapshot {
 // --- SSE frames -----------------------------------------------------------
 
 export type RunEvent =
-  | { type: "run.started"; data: { run_id: string; thread_id: string; agent: string } }
+  | {
+      type: "run.started";
+      data: { run_id: string; thread_id: string; agent: string; models?: Record<string, string> };
+    }
   | { type: "token"; data: { text: string; node: string | null } }
   | { type: "node"; data: { node: string; update: unknown } }
   | { type: "custom"; data: { payload: unknown } }
@@ -111,6 +118,8 @@ export interface Finding {
   /** The critic's note on what is weak or missing; empty when nothing is. */
   issue: string;
   round: number;
+  /** The searcher model that wrote `answer`. */
+  model?: string;
 }
 
 export interface RunResult {

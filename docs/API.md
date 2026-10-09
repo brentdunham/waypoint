@@ -93,8 +93,19 @@ Optional alongside any of them:
 `models` picks a model per role for this run (`GET /agents` lists each agent's
 `model_roles`). Every name must be in `MODELS_ALLOWED`; an unknown role or a
 model outside that list is a `400`. The resolved map for every role is on the
-run record (`GET /runs/<id>` → `models`). A resumed run uses its own `models`,
-not the ones from the run that paused.
+run record (`GET /runs/<id>` → `models`), in the `run.started` event and in
+the `?wait=true` result. A resumed run uses its own `models`, not the ones from
+the run that paused.
+
+What each model produced is recorded with the output, in the checkpoint, so it
+is still there after a reload:
+
+| Where | Field |
+|---|---|
+| Every AI message in thread state | `model`: as the API reported it (a dated snapshot when the request named an alias), else the configured name |
+| Research findings | `model`: the searcher that wrote the answer |
+| The research approval interrupt | `value.models`: the run's role -> model map |
+| The research briefing's state | `metadata.models` |
 
 `?wait=true` is a convenience for scripts and tests. Real clients POST, take
 the `run_id`, and stream.
@@ -124,7 +135,7 @@ data: {"interrupts":[{"id":"6ac8…","value":{"kind":"approve_plan","plan":["…
 
 | Event | Meaning |
 |---|---|
-| `run.started` | Accepted and executing |
+| `run.started` | Accepted and executing; carries the run's `models` map |
 | `token` | An LLM token, with the node that produced it |
 | `node` | A super-step finished; carries that node's state update |
 | `custom` | Whatever a node wrote via `get_stream_writer()`. The research agent writes `{"kind":"research","phase":…}` as each step *starts*: `planning`, `searching` (once per worker, with `question` and `round`), `reviewing` (with `round`) and `writing`. `node` events say when each finished; the UI's research panel is built from both. |

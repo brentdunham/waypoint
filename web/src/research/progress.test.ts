@@ -34,8 +34,15 @@ describe("research progress", () => {
 
   it("marks a worker done from its node update, then scores it from the critic", () => {
     const p = run([
+      { type: "run.started", data: { run_id: "r", thread_id: "t", agent: "research", models: { searcher: "small" } } },
       custom({ phase: "searching", question: "What is X?", round: 1 }),
-      { type: "node", data: { node: "investigate", update: { findings: [finding("What is X?", { cited: false })] } } },
+      {
+        type: "node",
+        data: {
+          node: "investigate",
+          update: { findings: [finding("What is X?", { cited: false, model: "small-20260101" })] },
+        },
+      },
       custom({ phase: "reviewing", round: 1 }),
       {
         type: "node",
@@ -47,8 +54,26 @@ describe("research progress", () => {
     ]);
     expect(p.phase).toBe("reviewing");
     expect(p.workers).toEqual([
-      { question: "What is X?", round: 1, status: "done", sources: 1, cited: false, confidence: 0.3, issue: "thin" },
+      {
+        question: "What is X?",
+        round: 1,
+        status: "done",
+        sources: 1,
+        cited: false,
+        confidence: 0.3,
+        issue: "thin",
+        model: "small-20260101",
+      },
     ]);
+  });
+
+  it("names the searcher model while a worker is still searching", () => {
+    const p = run([
+      { type: "run.started", data: { run_id: "r", thread_id: "t", agent: "research", models: { searcher: "small" } } },
+      custom({ phase: "searching", question: "What is X?", round: 1 }),
+    ]);
+    expect(p.models).toEqual({ searcher: "small" });
+    expect(p.workers[0]?.model).toBe("small");
   });
 
   it("adds follow-up workers in a later round and finishes on completion", () => {

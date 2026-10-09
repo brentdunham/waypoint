@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { Interrupt } from "../api/types";
+import { ModelLine } from "./ResearchProgress";
 
 interface Props {
   interrupt: Interrupt;
@@ -31,6 +32,7 @@ export function ApprovalCard({ interrupt, busy, onDecide }: Props) {
         <h3>{interrupt.value.prompt ?? "Approve to continue"}</h3>
       </header>
       {interrupt.value.topic && <p className="muted">Topic: {interrupt.value.topic}</p>}
+      {interrupt.value.models && <ModelLine models={interrupt.value.models} />}
       {interrupt.value.web_search === false && (
         <p className="muted">Web search is off: answers will come from the model alone, without sources.</p>
       )}

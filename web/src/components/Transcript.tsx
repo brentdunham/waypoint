@@ -4,15 +4,20 @@ import { Markdown } from "./Markdown";
 interface Props {
   messages: ChatMessage[];
   streaming: string;
+  /** Model writing the live reply, from the run's model map. */
+  streamingModel?: string | undefined;
   activeNodes: { node: string; at: number }[];
 }
 
-export function Transcript({ messages, streaming, activeNodes }: Props) {
+export function Transcript({ messages, streaming, streamingModel, activeNodes }: Props) {
   return (
     <div className="transcript">
       {messages.map((message, index) => (
         <article key={message.id ?? index} className={`msg msg--${message.type}`}>
-          <span className="msg__role">{label(message)}</span>
+          <span className="msg__role">
+            {label(message)}
+            {message.model && <span className="msg__model">{message.model}</span>}
+          </span>
           <div className={`msg__body${message.type === "ai" ? " msg__body--md" : ""}`}>
             {!message.content ? (
               <em className="muted">(no text)</em>
@@ -32,7 +37,10 @@ export function Transcript({ messages, streaming, activeNodes }: Props) {
 
       {streaming && (
         <article className="msg msg--ai msg--live">
-          <span className="msg__role">assistant</span>
+          <span className="msg__role">
+            assistant
+            {streamingModel && <span className="msg__model">{streamingModel}</span>}
+          </span>
           <div className="msg__body msg__body--md">
             <Markdown text={streaming} />
             <span className="caret" />

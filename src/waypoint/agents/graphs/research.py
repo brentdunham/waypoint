@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from waypoint.agents.citations import answer_and_sources, number_sources, retrieved_sources
 from waypoint.agents.context import AgentContext
-from waypoint.agents.models import FINDINGS_MARKER, ModelRouter, RoleModel, structured
+from waypoint.agents.models import FINDINGS_MARKER, ModelRouter, RoleModel, model_of, structured
 from waypoint.agents.state import Finding, ResearchState, WorkerInput
 from waypoint.agents.types import Graph
 from waypoint.settings import Settings
@@ -241,7 +241,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
         }
 
     # -- 2. human approval ----------------------------------------------
-    def approve(state: ResearchState) -> dict[str, Any]:
+    def approve(state: ResearchState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
         """Stop the world and ask a person.
 
         ``interrupt`` raises out of the node after checkpointing. The next
@@ -256,6 +256,8 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
                 "plan": state.get("plan", []),
                 "rationale": state.get("rationale", []),
                 "web_search": cfg.web_search,
+                # Who planned this, and who will do the rest if it is approved.
+                "models": {role: router.name(role, runtime.context) for role in ROLES},
                 "prompt": "Approve this research plan? You may edit the questions.",
             }
         )
@@ -306,6 +308,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
                     answer=answer,
                     sources=sources,
                     cited=cited,
+                    model=model_of(reply, state["model"]),
                     confidence=None,
                     issue="",
                     round=state["round"],
@@ -399,9 +402,10 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
         )
         briefing, _ = answer_and_sources(reply)
         report = briefing + _source_list(findings, numbers)
+        written_by = model_of(reply, router.name("writer", runtime.context))
         return {
             "report": report,
-            "messages": [AIMessage(report)],
+            "messages": [AIMessage(report, response_metadata={"model_name": written_by})],
             "metadata": {
                 "finding_count": len(findings),
                 "source_count": len(numbers),

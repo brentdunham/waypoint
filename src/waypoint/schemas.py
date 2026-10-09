@@ -167,6 +167,8 @@ class RunResult(Out):
 
     run_id: str
     status: str
+    models: dict[str, str] = Field(default_factory=dict)
+    """Role -> model this run used."""
 
 
 class KeyCreated(Out):

@@ -151,7 +151,7 @@ class RunManager:
             await self._bus.append(
                 run_id,
                 "run.started",
-                {"run_id": run_id, "thread_id": thread_id, "agent": agent},
+                {"run_id": run_id, "thread_id": thread_id, "agent": agent, "models": record.models},
             )
 
             task = asyncio.create_task(

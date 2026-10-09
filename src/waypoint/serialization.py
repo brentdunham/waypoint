@@ -29,6 +29,8 @@ def message_to_dict(message: BaseMessage) -> dict[str, Any]:
         out["name"] = name
     if usage := (message.response_metadata or {}).get("usage"):
         out["usage"] = usage
+    if model := (message.response_metadata or {}).get("model_name"):
+        out["model"] = model
     return out
 
 

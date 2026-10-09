@@ -14,7 +14,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import RetryPolicy
 
 from waypoint.agents.context import AgentContext
-from waypoint.agents.models import ModelRouter
+from waypoint.agents.models import ModelRouter, stamp_model
 from waypoint.agents.state import ChatState
 from waypoint.agents.tools import CHAT_TOOLS
 from waypoint.agents.types import Graph
@@ -64,6 +64,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
         system = SYSTEM.format(locale=runtime.context.locale, memories=block)
         model = assistant(runtime.context)
         reply = await model.ainvoke([SystemMessage(system), *state.get("messages", [])])
+        stamp_model(reply, assistant.name(runtime.context))
         return {"messages": [reply], "step_count": state.get("step_count", 0) + 1}
 
     def route(state: ChatState) -> str:

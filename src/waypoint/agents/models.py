@@ -343,6 +343,23 @@ class RoleModel:
         return self._built[name]
 
 
+def stamp_model(message: BaseMessage, configured: str) -> BaseMessage:
+    """Record on a reply which model wrote it, as ``response_metadata["model_name"]``.
+
+    Anthropic replies already carry the model the API reports (which, for an
+    alias, is the dated snapshot that answered). Anything else, such as the
+    scripted test model, gets the configured name. Stored with the message in
+    the checkpoint, so the transcript shows it after a reload too.
+    """
+    message.response_metadata.setdefault("model_name", configured)
+    return message
+
+
+def model_of(message: BaseMessage, configured: str) -> str:
+    """The model that wrote ``message``: as reported, else as configured."""
+    return str((message.response_metadata or {}).get("model_name") or configured)
+
+
 def structured(model: BaseChatModel, schema: type[BaseModel], settings: Settings) -> Any:
     """``model.with_structured_output(schema)`` using ``STRUCTURED_OUTPUT``.
 

@@ -85,7 +85,7 @@ async def start(
     await runtime.threads.touch(thread_id, title=payload.message or None)
 
     if wait in WAIT_VALUES:
-        result = await _await_terminal(runtime, record.run_id)
+        result = await _await_terminal(runtime, record.run_id) | {"models": record.models}
         return JSONResponse(
             RunResult.model_validate(result).model_dump(mode="json"), status_code=200
         )

@@ -122,7 +122,12 @@ export default function App() {
           {notice && <p className="banner banner--error">{notice}</p>}
           {run.error && <p className="banner banner--error">{run.error}</p>}
 
-          <Transcript messages={messages} streaming={run.streamedText} activeNodes={run.nodes} />
+          <Transcript
+            messages={messages}
+            streaming={run.streamedText}
+            streamingModel={run.progress.models["writer"] ?? run.progress.models["assistant"]}
+            activeNodes={run.nodes}
+          />
 
           {activeAgent === "research" && <ResearchProgress progress={run.progress} />}
 
@@ -148,6 +153,7 @@ export default function App() {
                       {" · "}
                       {f.confidence === null ? "unreviewed" : `confidence ${f.confidence.toFixed(1)}`}
                       {f.round > 1 && " · follow-up"}
+                      {f.model && ` · ${f.model}`}
                     </span>
                     <p>{f.answer}</p>
                     {f.issue && <p className="muted">Reviewer: {f.issue}</p>}

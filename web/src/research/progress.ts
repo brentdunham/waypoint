@@ -30,15 +30,19 @@ export interface Worker {
   cited: boolean;
   confidence: number | null;
   issue: string;
+  /** Searcher model: from the run's model map while searching, then from the finding. */
+  model: string;
 }
 
 export interface Progress {
   phase: Phase;
   round: number;
   workers: Worker[];
+  /** Role -> model for this run, from `run.started`. */
+  models: Record<string, string>;
 }
 
-export const EMPTY_PROGRESS: Progress = { phase: "idle", round: 0, workers: [] };
+export const EMPTY_PROGRESS: Progress = { phase: "idle", round: 0, workers: [], models: {} };
 
 const ACTIVE: ReadonlySet<Phase> = new Set(["planning", "searching", "reviewing", "writing"]);
 
@@ -62,6 +66,7 @@ function upsert(workers: Worker[], question: string, patch: Partial<Worker>): Wo
       cited: true,
       confidence: null,
       issue: "",
+      model: "",
       ...patch,
     };
     return [...workers, fresh];
@@ -79,6 +84,8 @@ function findingsOf(update: unknown): Finding[] {
 
 export function applyEvent(progress: Progress, event: RunEvent): Progress {
   switch (event.type) {
+    case "run.started":
+      return { ...progress, models: event.data.models ?? {} };
     case "custom": {
       const p = event.data.payload as {
         kind?: string;
@@ -93,7 +100,11 @@ export function applyEvent(progress: Progress, event: RunEvent): Progress {
           ...progress,
           phase: "searching",
           round,
-          workers: upsert(progress.workers, p.question, { round, status: "searching" }),
+          workers: upsert(progress.workers, p.question, {
+            round,
+            status: "searching",
+            model: progress.models["searcher"] ?? "",
+          }),
         };
       }
       return { ...progress, phase: p.phase, round };
@@ -109,6 +120,7 @@ export function applyEvent(progress: Progress, event: RunEvent): Progress {
           status: "done",
           sources: f.sources.length,
           cited: f.cited ?? true,
+          ...(f.model ? { model: f.model } : {}),
           ...(node === "critique" ? { confidence: f.confidence, issue: f.issue } : {}),
         });
       }

@@ -39,6 +39,8 @@ class Finding(TypedDict):
     issue: str
     """The critic's note on what is weak or missing; empty when nothing is."""
     round: int
+    model: NotRequired[str]
+    """The searcher model that wrote ``answer``. Absent before 2026-10-09."""
 
 
 def merge_findings(left: list[Finding], right: list[Finding]) -> list[Finding]:
