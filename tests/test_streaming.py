@@ -50,3 +50,35 @@ def test_briefing_is_in_the_transcript_once(client: TestClient) -> None:
     messages = client.get(f"/api/v1/threads/{thread_id}/state").json()["values"]["messages"]
     ai = [m for m in messages if m["type"] == "ai"]
     assert len(ai) == 1
+
+
+def _progress(client: TestClient, events_url: str) -> list[dict[str, object]]:
+    """The research panel's ``custom`` events, in order."""
+    out: list[dict[str, object]] = []
+    event = ""
+    with client.stream("GET", events_url) as response:
+        for line in response.iter_lines():
+            if line.startswith("event: "):
+                event = line.removeprefix("event: ")
+            elif line.startswith("data: ") and event == "custom":
+                out.append(json.loads(line.removeprefix("data: "))["payload"])
+            if event.startswith("run.") and event != "run.started" and not line:
+                break
+    return out
+
+
+def test_research_reports_what_it_is_starting(client: TestClient) -> None:
+    """Node updates arrive only when a node ends; these say what just began."""
+    thread_id = new_thread(client, "research")
+    run = client.post(f"/api/v1/threads/{thread_id}/runs", json={"message": "tidal power"})
+    assert _progress(client, run.json()["events_url"]) == [
+        {"kind": "research", "phase": "planning"}
+    ]
+
+    run = client.post(f"/api/v1/threads/{thread_id}/runs", json={"resume": {"approved": True}})
+    events = _progress(client, run.json()["events_url"])
+    phases = [e["phase"] for e in events]
+    assert phases == ["searching"] * 3 + ["reviewing", "writing"]
+    searching = [e for e in events if e["phase"] == "searching"]
+    assert all(e["round"] == 1 and str(e["question"]).endswith("?") for e in searching)
+    assert events[3]["round"] == 1

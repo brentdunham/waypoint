@@ -332,8 +332,8 @@ worker without client-visible loss.
 * **Prompt caching.** `cache_control` on system prompts and tool definitions.
 * **Optimistic user message.** The UI shows the user's message only after the
   run settles and the thread reloads.
-* **Render markdown in the transcript.** Models emit `**bold**` and lists; the
-  UI shows them raw. The research writer is told "plain text"; in live runs
-  it uses markdown anyway, so this belongs in the UI.
+* ~~**Render markdown in the transcript.**~~ Done 2026-10-09: assistant
+  messages render as GitHub-flavoured Markdown (react-markdown, raw HTML
+  shown as text), with single newlines kept for the briefing's source list.
 * **Research critic loop cost.** Follow-ups re-search from scratch; passing the
   critic's issue into the follow-up worker's prompt would make round 2 sharper.

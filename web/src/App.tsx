@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "./api/client";
-import type { ChatMessage } from "./api/types";
+import type { ChatMessage, Finding } from "./api/types";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { ConnectionBar } from "./components/ConnectionBar";
+import { ResearchProgress } from "./components/ResearchProgress";
 import { Sidebar } from "./components/Sidebar";
 import { TimeTravel } from "./components/TimeTravel";
 import { Transcript } from "./components/Transcript";
@@ -33,7 +34,16 @@ export default function App() {
     () => (snapshot?.values.messages ?? []) as ChatMessage[],
     [snapshot],
   );
-  const pending = snapshot?.interrupts?.[0] ?? run.interrupts[0] ?? null;
+  // While a run is going, the snapshot is the one fetched before it started:
+  // after "Approve and run" it still holds the interrupt that was just
+  // answered. Only a settled thread can be waiting for a decision.
+  const pending = run.busy ? null : (run.interrupts[0] ?? snapshot?.interrupts?.[0] ?? null);
+  const thread = threads.find((t) => t.thread_id === threadId);
+  // The open thread decides which agent a message goes to, not the picker.
+  const activeAgent = thread?.agent ?? agent;
+  const findings: Finding[] = run.busy
+    ? []
+    : (run.result?.findings ?? (snapshot?.values["findings"] as Finding[] | undefined) ?? []);
 
   const guard = useCallback(async (fn: () => Promise<void>) => {
     try {
@@ -46,8 +56,8 @@ export default function App() {
 
   const newThread = () =>
     void guard(async () => {
-      const thread = await api.createThread(agent);
-      setThreadId(thread.thread_id);
+      const created = await api.createThread(agent);
+      setThreadId(created.thread_id);
       run.reset();
       await refreshThreads();
     });
@@ -86,9 +96,16 @@ export default function App() {
           threads={threads}
           selected={threadId}
           agent={agent}
-          onAgent={setAgent}
+          onAgent={(name) => {
+            setAgent(name);
+            // A thread belongs to one agent; picking another starts fresh.
+            if (thread && thread.agent !== name) setThreadId(null);
+            run.reset();
+          }}
           onSelect={(id) => {
             setThreadId(id);
+            const picked = threads.find((t) => t.thread_id === id);
+            if (picked) setAgent(picked.agent);
             run.reset();
           }}
           onNew={newThread}
@@ -107,15 +124,24 @@ export default function App() {
 
           <Transcript messages={messages} streaming={run.streamedText} activeNodes={run.nodes} />
 
-          {pending && <ApprovalCard interrupt={pending} busy={run.busy} onDecide={decide} />}
+          {activeAgent === "research" && <ResearchProgress progress={run.progress} />}
+
+          {pending && (
+            <ApprovalCard
+              key={pending.id ?? JSON.stringify(pending.value.plan)}
+              interrupt={pending}
+              busy={run.busy}
+              onDecide={decide}
+            />
+          )}
 
           {/* The briefing itself is the last assistant message in the transcript;
               this card adds what the transcript does not show. */}
-          {run.result?.findings && run.result.findings.length > 0 && (
+          {findings.length > 0 && (
             <section className="card">
               <h3>Findings</h3>
               <ul className="findings">
-                {run.result.findings.map((f) => (
+                {findings.map((f) => (
                   <li key={f.question}>
                     <strong>{f.question}</strong>
                     <span className="muted">
@@ -125,6 +151,11 @@ export default function App() {
                     </span>
                     <p>{f.answer}</p>
                     {f.issue && <p className="muted">Reviewer: {f.issue}</p>}
+                    {f.cited === false && f.sources.length > 0 && (
+                      <p className="muted small">
+                        Not cited: these are the pages its searches returned, not sources for a specific claim.
+                      </p>
+                    )}
                     {f.sources.length > 0 ? (
                       <ul className="sources">
                         {f.sources.map((s) => (
@@ -154,7 +185,7 @@ export default function App() {
             <textarea
               value={draft}
               placeholder={
-                agent === "research" ? "Topic to research…" : "Ask something…"
+                activeAgent === "research" ? "Topic to research…" : "Ask something…"
               }
               rows={2}
               onChange={(event) => setDraft(event.target.value)}

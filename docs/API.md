@@ -127,7 +127,7 @@ data: {"interrupts":[{"id":"6ac8…","value":{"kind":"approve_plan","plan":["…
 | `run.started` | Accepted and executing |
 | `token` | An LLM token, with the node that produced it |
 | `node` | A super-step finished; carries that node's state update |
-| `custom` | Whatever a node wrote via `get_stream_writer()` |
+| `custom` | Whatever a node wrote via `get_stream_writer()`. The research agent writes `{"kind":"research","phase":…}` as each step *starts*: `planning`, `searching` (once per worker, with `question` and `round`), `reviewing` (with `round`) and `writing`. `node` events say when each finished; the UI's research panel is built from both. |
 | `heartbeat` | Keep-alive; ignore |
 | `run.interrupted` | Paused for a human — **terminal for this run** |
 | `run.completed` / `run.failed` / `run.cancelled` | Terminal |

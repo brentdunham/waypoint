@@ -24,6 +24,7 @@ from typing import Any
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.config import get_stream_writer
 from langgraph.constants import TAG_NOSTREAM
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime, get_runtime
@@ -220,6 +221,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
     # -- 1. plan --------------------------------------------------------
     async def plan(state: ResearchState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
         topic = state.get("topic") or _topic_from_messages(state)
+        _progress(phase="planning")
         result = await planner(runtime.context).ainvoke(
             [HumanMessage(PLANNER.format(n=MAX_QUESTIONS, topic=topic, today=_today()))]
         )
@@ -273,6 +275,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
 
     # -- 3. fan-out worker ------------------------------------------------
     async def investigate(state: WorkerInput) -> dict[str, list[Finding]]:
+        _progress(phase="searching", question=state["question"], round=state["round"])
         prompt = WORKER.format(
             today=_today(),
             topic=state["topic"],
@@ -314,6 +317,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
     async def critique(state: ResearchState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
         findings = state.get("findings", [])
         round_ = state.get("round", 1)
+        _progress(phase="reviewing", round=round_)
         last = round_ >= cfg.max_rounds or cfg.max_follow_ups == 0
         payload = json.dumps(
             [
@@ -382,6 +386,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
     # -- 5. write it up ----------------------------------------------------
     async def synthesize(state: ResearchState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
         findings = state.get("findings", [])
+        _progress(phase="writing")
         numbers = number_sources(findings)
         rendered = "\n\n".join(_render_finding(f, numbers) for f in findings)
         reply = await writer(runtime.context).ainvoke(
@@ -455,6 +460,16 @@ def _sends(
         )
         for q in questions
     ]
+
+
+def _progress(**payload: Any) -> None:
+    """A ``custom`` stream event saying what the graph is starting now.
+
+    ``updates`` only arrive when a node finishes, so without this a client sees
+    nothing while five workers search for a minute. The UI's research panel is
+    built from these plus the node updates. A no-op outside a streamed run.
+    """
+    get_stream_writer()({"kind": "research", **payload})
 
 
 def _render_finding(finding: Finding, numbers: dict[str, int]) -> str:

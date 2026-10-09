@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { streamRun } from "../api/sse";
 import type { Interrupt, RunEvent, RunResult, RunStatus } from "../api/types";
+import { applyEvent, EMPTY_PROGRESS, type Progress } from "../research/progress";
 
 export interface RunState {
   runId: string | null;
@@ -12,6 +13,8 @@ export interface RunState {
   interrupts: Interrupt[];
   result: RunResult | null;
   error: string | null;
+  /** Research runs only: workers and phase, rebuilt from the stream. */
+  progress: Progress;
 }
 
 const IDLE: RunState = {
@@ -22,15 +25,16 @@ const IDLE: RunState = {
   interrupts: [],
   result: null,
   error: null,
+  progress: EMPTY_PROGRESS,
 };
 
 /**
  * Owns one run at a time: start it, follow its events, cancel it.
  *
- * The abort controller is the important part. Unmounting or starting a new run
- * aborts the fetch, which closes the SSE connection, which makes the server's
- * generator raise `GeneratorExit`, which cancels the graph task. A cancel in
- * the browser really does stop work in the backend.
+ * Unmounting or starting a new run aborts the fetch, which closes the SSE
+ * connection. That stops *following* the run, not the run: it keeps going
+ * server-side and can be reattached. Stopping it is `cancel`, which asks the
+ * server to cancel the task.
  */
 export function useRun(onSettled?: () => void | Promise<void>) {
   const [state, setState] = useState<RunState>(IDLE);
@@ -41,7 +45,8 @@ export function useRun(onSettled?: () => void | Promise<void>) {
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const consume = useCallback((event: RunEvent) => {
-    setState((prev) => {
+    setState((current) => {
+      const prev = { ...current, progress: applyEvent(current.progress, event) };
       switch (event.type) {
         case "run.started":
           return { ...prev, status: "running", runId: event.data.run_id };
