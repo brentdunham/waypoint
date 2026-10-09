@@ -23,7 +23,7 @@ Two parsing rules worth knowing, because both bite in Docker:
 | `ENV` | `development` | `development` \| `production` \| `test` |
 | `DEBUG` | `false` | FastAPI debug mode. Error responses never carry tracebacks either way (the request middleware answers every unhandled error with a problem+json 500); keep it `false` in production. |
 | `SECRET_KEY` | `dev-only-change-me` | Reserved for signing cookies or sessions. Unused today (the API is stateless, and since the move to FastAPI nothing reads it), but must be set, stable, and identical on every replica the moment you add a session. `python -c "import secrets;print(secrets.token_urlsafe(32))"` |
-| `LOG_LEVEL` | `INFO` | Root logger level. |
+| `LOG_LEVEL` | `INFO` | Root logger level. Each request is logged once, by `waypoint.access`, with request id, tenant and duration; successful `/healthz` and `/readyz` probes only at `DEBUG`. uvicorn's own access log is off. |
 | `JSON_LOGS` | `false` | One JSON object per line. Turn on in production. |
 | `CORS_ORIGINS` | `http://localhost:5173` | **Comma-separated, not JSON** — `http://a,http://b`. Only needed when the browser talks to the API cross-origin; the Vite proxy and the nginx `/api` route both make it same-origin, so in Docker this rarely matters. |
 

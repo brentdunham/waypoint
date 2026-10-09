@@ -88,6 +88,9 @@ def configure_logging(*, level: str = "INFO", json_output: bool = False) -> None
                 "httpcore": {"level": "WARNING"},
                 "psycopg.pool": {"level": "WARNING"},
                 "asyncio": {"level": "WARNING"},
+                # waypoint.access (middleware.py) logs each request once, with
+                # request id and tenant; uvicorn's line would be a duplicate.
+                "uvicorn.access": {"level": "WARNING"},
             },
         }
     )

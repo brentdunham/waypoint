@@ -20,6 +20,11 @@ from waypoint.log_config import bind, unbind
 
 log = logging.getLogger("waypoint.access")
 
+PROBES = frozenset({"/api/v1/healthz", "/api/v1/readyz"})
+"""Hit every 30 s by Docker's healthcheck and by orchestrators. A successful
+probe is logged at DEBUG, so the access log shows traffic; a failing one is
+still logged at INFO, since that is the line you go looking for."""
+
 
 class RequestContext:
     def __init__(self, app: ASGIApp, *, max_body_bytes: int) -> None:
@@ -114,7 +119,9 @@ class RequestContext:
     def _log(scope: Scope, status: int, started: float) -> None:
         principal = scope.get("state", {}).get("principal")
         method, path = scope.get("method", "-"), scope.get("path", "-")
-        log.info(
+        quiet = path in PROBES and status < 400  # noqa: PLR2004
+        log.log(
+            logging.DEBUG if quiet else logging.INFO,
             "%s %s -> %s",
             method,
             path,

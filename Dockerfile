@@ -48,6 +48,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
 # from each worker's event loop, not from forking. Two workers gives you rolling
 # restarts and a spare; raise it only if CPU-bound work appears.
 #
+# No --access-logfile: waypoint.middleware logs every request once, as JSON,
+# with request id and tenant. uvicorn's own access line would duplicate it.
+#
 # --no-control-socket: gunicorn 26 opens a control socket under $HOME/.gunicorn
 # by default, and nothing here uses `gunicorn ctl`. To keep it instead, point it
 # somewhere writable: --control-socket /tmp/gunicorn.ctl
@@ -58,5 +61,4 @@ CMD ["gunicorn", "waypoint.asgi:app", \
      "--bind", "0.0.0.0:8000", \
      "--timeout", "600", \
      "--graceful-timeout", "30", \
-     "--keep-alive", "75", \
-     "--access-logfile", "-"]
+     "--keep-alive", "75"]

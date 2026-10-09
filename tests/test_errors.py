@@ -108,3 +108,16 @@ def test_openapi_documents_every_route_and_the_api_key(client: TestClient) -> No
     started = spec["paths"]["/api/v1/threads/{thread_id}/runs"]["post"]["responses"]
     assert {"200", "202"} <= set(started)
     assert client.get("/api/v1/docs").status_code == 200
+
+
+def test_access_log_has_traffic_not_healthchecks(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    caplog.set_level(logging.INFO, logger="waypoint.access")
+    client.get("/api/v1/healthz")
+    client.get("/api/v1/readyz")
+    client.get("/api/v1/agents")
+    logged = [r.getMessage() for r in caplog.records if r.name == "waypoint.access"]
+    assert logged == ["GET /api/v1/agents -> 200"]
