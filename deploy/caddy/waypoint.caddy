@@ -1,0 +1,15 @@
+# Caddy site for the Waypoint demo. Copy to /etc/caddy/sites/ on the host;
+# /etc/caddy/Caddyfile imports that directory (docs/DEPLOY.md). Caddy obtains
+# and renews the certificate on its own.
+waypoint.brentdunham.com {
+	# No `encode` here: nginx in the web container already compresses, and
+	# compressing again can hold back server-sent events.
+	reverse_proxy 127.0.0.1:8080
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}

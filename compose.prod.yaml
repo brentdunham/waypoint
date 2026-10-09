@@ -1,0 +1,32 @@
+# Production overrides for a single host behind a reverse proxy.
+#
+#   docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+#
+# compose.yaml publishes the API, Postgres and Redis on every interface, which
+# is right on a laptop and wrong on a server: Docker's port rules bypass ufw,
+# so a published 5432 is reachable from the internet whatever the firewall
+# says. Here nothing is published except the web container, and that only on
+# 127.0.0.1, for the host's reverse proxy (Caddy) to reach. See docs/DEPLOY.md.
+
+services:
+  api:
+    ports: !reset []
+    environment:
+      DATABASE_URL: postgresql://waypoint:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/waypoint
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+      MODELS_ALLOWED: ${MODELS_ALLOWED:-}
+      LIMITS__RUN_TIMEOUT_S: ${LIMITS__RUN_TIMEOUT_S:-300}
+
+  web:
+    # WEB_PORT differs per demo on a shared host: 8080 here, 8081 for the next.
+    ports: !override ["127.0.0.1:${WEB_PORT:-8080}:80"]
+
+  postgres:
+    ports: !reset []
+    environment:
+      # Applied when the volume is first created. Changing it later needs an
+      # ALTER ROLE inside the database as well.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+
+  redis:
+    ports: !reset []

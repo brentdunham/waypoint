@@ -21,6 +21,7 @@ the agents against a baseline.
 |---|---|
 | [docs/guide/](docs/guide/README.md) | Design guide: diagrams, definitions (evals, rubrics, judges, calibration), and a decision log with alternatives |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The design decisions and why each one is there |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | Running it as a public demo on one host: Compose, Caddy, keys, backups |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every environment variable, what it does, what to set it to |
 | [docs/API.md](docs/API.md) | Every endpoint, with curl |
 | [docs/TESTING.md](docs/TESTING.md) | How to run and extend each test tier |
