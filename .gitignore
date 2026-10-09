@@ -7,6 +7,8 @@ dist/
 .env
 .env.*
 !.env.example
+# Templates are documentation, never secrets: keep every *.example tracked.
+!.env.*.example
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/

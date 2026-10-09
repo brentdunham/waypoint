@@ -39,7 +39,7 @@ below only shape it.
 sudo mkdir -p /srv && sudo chown "$USER" /srv
 git clone https://github.com/brentdunham/waypoint.git /srv/waypoint
 cd /srv/waypoint
-cp deploy/production.env.example .env
+cp deploy/.env.production.example .env
 chmod 600 .env
 ```
 
