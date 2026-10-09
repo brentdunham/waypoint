@@ -19,6 +19,7 @@ the agents against a baseline.
 
 | Doc | What is in it |
 |---|---|
+| [docs/guide/](docs/guide/README.md) | Design guide: diagrams, definitions (evals, rubrics, judges, calibration), and a decision log with alternatives |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The design decisions and why each one is there |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every environment variable, what it does, what to set it to |
 | [docs/API.md](docs/API.md) | Every endpoint, with curl |

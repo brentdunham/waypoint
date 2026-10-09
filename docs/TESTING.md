@@ -23,8 +23,9 @@ run, only the intelligence is fake. If a prompt contains
 tests force a specific branch.
 
 Covers: routing and validation, problem+json shapes, the interrupt/resume
-cycle, fan-out and the `operator.add` reducer, checkpoint history and forking,
-memory round-trips, serialization, and `BackgroundLoop` itself.
+cycle, fan-out and the `merge_findings` reducer, checkpoint history and
+forking, memory round-trips, serialization, the citation verifier, and stream
+resilience.
 
 ## 2. Integration tier — real Postgres and Redis
 

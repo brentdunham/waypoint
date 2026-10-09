@@ -1,8 +1,9 @@
 """API-key authentication and the principal it resolves to.
 
 A key looks like ``ak_<key_id>.<secret>``. Only the SHA-256 of the whole string
-is stored, so the database is useless to an attacker who reads it. The key id
-travels in cleartext purely so lookups are an index hit rather than a scan.
+is stored, and keys are looked up by that hash, so the database is useless to
+an attacker who reads it. The key id names a key for revocation and logs
+without revealing it.
 """
 
 import hashlib
