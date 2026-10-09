@@ -35,6 +35,36 @@ flowchart LR
 
 ## 6.2 Tenant isolation
 
+### Tenants and users
+
+A **tenant** is the organisation or customer account a group of users
+belongs to: a company using the service, such as `acme`. A **user** is one
+person within it. The tenant is the outer isolation boundary and the user an
+inner one.
+
+A tenant is a label on an API key, not a managed entity: there is no tenants
+table. An admin names both when creating a key
+(`POST /keys {"tenant_id": "acme", "user_id": "alice", ...}`), and every
+request with that key resolves to a principal of tenant `acme`, user `alice`.
+The bootstrap key belongs to tenant `bootstrap`; with auth off every caller is
+tenant `public`.
+
+| | Per tenant | Per user within the tenant |
+|---|---|---|
+| Threads | Another tenant's thread is 404, as if it did not exist | Another user's thread is 403, unless the key has `tenant:admin` |
+| Long-term memory | Part of the namespace | Also part of it: `("memories", tenant, user)` |
+| Rate and concurrency limits | Yes: 60 run starts per minute, 4 concurrent runs | No: users share their tenant's quota |
+| Node cache (search answers) | Never shared across tenants | Shared between users of one tenant |
+| Run audit and traces | Tagged by tenant | Recorded with the user |
+
+The two levels have different jobs. The tenant is the boundary you would sell
+and bill against: one customer's data, quota and cached results must never
+touch another's. The user boundary is privacy within a customer: colleagues
+share a quota and cached search answers, but not conversations or memories.
+The same user id in two tenants is two unrelated users.
+
+### Where isolation is enforced
+
 Isolation is enforced at each place data could cross between tenants:
 
 | Surface | Mechanism |

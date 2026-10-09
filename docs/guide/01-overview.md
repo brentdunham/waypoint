@@ -12,6 +12,8 @@ Two agents ship with it, chosen because between them they exercise the hard
 parts:
 
 * **chat**: a tool-using assistant with long-term memory per tenant and user.
+  A tenant is the customer organisation a user belongs to, and the outer
+  isolation boundary ([6.2](06-security-and-operations.md#62-tenant-isolation)).
 * **research**: plans a topic into questions, **stops for a person to
   approve or edit the plan**, searches the web with parallel workers, has a
   critic review the findings and ask follow-ups, writes a cited briefing, and

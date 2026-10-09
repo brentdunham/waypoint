@@ -58,7 +58,7 @@ definition gives the general meaning first, then what it means here.
 | **Problem (RFC 9457)** | The error body format: `type` slug, title, status, detail, request id. |
 | **Scope** | A permission on an API key: `threads:read`, `threads:write`, `agents:run`, `keys:admin`, `tenant:admin` (other users' threads in the tenant), or `*`. |
 | **SSE** | Server-Sent Events: a long HTTP response of `id`/`event`/`data` frames. |
-| **Tenant** | The unit of isolation: data, memory, cache entries and limits are per tenant. |
+| **Tenant** | The customer organisation a group of users belongs to, and the outer unit of isolation: threads, memory, cache entries and limits are per tenant. A label on each API key (`tenant_id`), not a managed entity. See [6.2](06-security-and-operations.md#62-tenant-isolation). |
 | **Terminal event** | `run.completed`, `run.failed`, `run.cancelled` or `run.interrupted`. A stream that closes without one was dropped. |
 | **Token bucket** | A rate limit that refills continuously up to a capacity; allows short bursts, enforces an average. |
 
