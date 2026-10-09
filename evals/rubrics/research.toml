@@ -14,11 +14,14 @@ question = "Do the planned questions, taken together, cover what a busy reader n
 
 [criteria.grounded]
 target = "briefing"
-question = "Is every factual claim in the briefing supported by the findings it was written from, and attributed with an [n] citation to a source of a finding that supports it? A briefing with no [n] citations at all scores at most 2."
-1 = "Several claims have no support in the findings, or citations point to unrelated sources."
-2 = "One clear unsupported claim or misattributed citation, or most claims carry no [n] citation."
-3 = "All substantive claims are supported and cited; at most a minor detail is uncited."
-4 = "Every claim traces to a finding, and every claim carries a citation to a source of that finding."
+question = """Is every factual claim in the briefing supported by the findings, and does each [n] point to a source that supports that claim?
+Each finding lists its sources with the global number n used in the briefing and, where available, quotes: text from that page the finding drew on. A citation is correct when the claim is in that source's finding and the source's quotes (if any) carry it. Quotes are excerpts, not the whole page: a source whose quotes simply don't mention the claim, while another source of the same finding does, is a less specific citation; a source whose quotes are about something else entirely is a wrong citation. A source marked retrieved_only was returned by a search but tied to no claim; citing it is weak attribution.
+Judge support and attribution only. Whether a source is primary or reputable, and whether uncertain findings are hedged, are judged by other criteria; do not lower this score for them. A statement about the research itself (e.g. "no study comparing X was found") is supported when the findings say so, and needs no [n].
+A briefing with no [n] citations at all scores at most 2."""
+1 = "Several claims have no support in the findings, or several citations point to sources whose finding or quotes say something else."
+2 = "One clear unsupported claim, or a citation to a source whose finding or quotes are about something else, or most factual claims carry no [n]."
+3 = "Every substantive claim is supported and cited; a minor detail may be uncited, or a citation may be to the right finding but a less specific source than the one that quotes the claim."
+4 = "Every factual claim is supported, carries an [n], and each [n] points to a source whose finding (and quotes, where present) supports that claim."
 
 [criteria.covers]
 target = "briefing"

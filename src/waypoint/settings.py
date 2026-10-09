@@ -64,6 +64,13 @@ class ResearchSettings(BaseModel):
         description="Investigation waves, counting the first. 1 disables critic follow-ups.",
     )
     max_follow_ups: int = Field(default=3, ge=0, le=5, description="New questions per round.")
+    verify_citations: bool = Field(
+        default=True,
+        description=(
+            "Check every briefing sentence against the quotes of the sources it cites, fix "
+            "wrong or missing citations, and have the writer revise unsupported sentences."
+        ),
+    )
 
 
 class EvalSettings(BaseModel):

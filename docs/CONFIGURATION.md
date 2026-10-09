@@ -92,7 +92,9 @@ cost on claude-sonnet-5 (2026-10-08 evals: 4.6M of 5.6M input tokens per
 8-case, 3-trial run). Haiku 5.5 is $0.10 / $0.50 per million input / output
 tokens for prompts up to 100k tokens, against $2 / $10 for Sonnet 5. Planner,
 critic and writer stay on `MODEL`; they judge and write, which is where the
-larger model earns its price.
+larger model earns its price. It also sets `MODELS__RESEARCH__VERIFIER=claude-haiku-5-5`:
+the verifier sorts each briefing sentence into supported, wrong source, needs
+a citation or unsupported, against short source quotes, and Haiku does that.
 
 The resolved map is fixed when a run starts and recorded on the run
 (`GET /runs/<id>` → `models`) and in the research briefing's metadata.
@@ -139,6 +141,7 @@ stored vectors were made by the old model.
 | `RESEARCH__MAX_SEARCHES` | `2` | Web searches per worker call (the tool's `max_uses`). Each search's results are input again for every later search in the same call: in the 2026-10-08 evals, calls that made a third search averaged 48k input tokens against 21k for two. |
 | `RESEARCH__MAX_ROUNDS` | `2` | Investigation waves, counting the first. `1` disables critic follow-ups. |
 | `RESEARCH__MAX_FOLLOW_UPS` | `3` | New questions the critic may add per round. |
+| `RESEARCH__VERIFY_CITATIONS` | `true` | After the writer, check every sentence of the briefing against the sources' quoted text. A wrong or missing `[n]` is replaced in code; sentences no source supports go back to the writer's model once, and the revision is kept only if every number it cites is a source. One verifier call per run, plus one writer call when something is unsupported. The briefing's `metadata.verification` counts what changed. |
 
 Cost bound per run: at most `(5 + MAX_FOLLOW_UPS x (MAX_ROUNDS - 1)) x
 MAX_SEARCHES` searches, 16 with the defaults. Web search is billed per search

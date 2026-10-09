@@ -346,7 +346,7 @@ def test_replay_answers_a_repeat_run_from_the_store(tmp_path: Path) -> None:
     assert first.replayed == {}
     second = _run(settings, store)
     assert second.error is None
-    assert set(second.replayed) == {"planner", "searcher", "critic", "writer"}
+    assert set(second.replayed) == {"planner", "searcher", "critic", "writer", "verifier"}
     assert second.values["report"] == first.values["report"]
     assert second.values["findings"] == first.values["findings"]
 
@@ -359,7 +359,9 @@ def test_replay_reruns_only_what_changed(tmp_path: Path, monkeypatch: pytest.Mon
     _run(settings, store)
     monkeypatch.setattr(research, "SYNTH", research.SYNTH.replace("No filler.", "Be brief."))
     changed = _run(settings, store)
-    assert set(changed.replayed) == {"planner", "searcher", "critic"}  # the writer ran live
+    # The writer ran live. The scripted writer's text does not depend on its
+    # prompt, so the verifier saw the same briefing and replayed.
+    assert set(changed.replayed) == {"planner", "searcher", "critic", "verifier"}
 
 
 def test_replay_keeps_trials_apart_and_fresh_does_not_read(tmp_path: Path) -> None:
@@ -489,3 +491,46 @@ def test_retrieved_sources_skip_errors_and_duplicates() -> None:
     ]
     assert len(retrieved_sources(reply, 1)) == 1
     assert retrieved_sources(AIMessage(content="plain"), 5) == []
+
+
+def test_claims_cited_counts_claim_sentences_and_moves_trailing_citations_back() -> None:
+    from evals.checks import claim_sentences
+
+    body = (
+        "Sodium-ion cells cost about the same as LFP cells in 2025 [1]. "
+        "Projections put them ten to twenty percent lower at scale. [2][3]\n"
+        "Energy density is lower, at roughly 150 Wh per kilogram for current cells.\n"
+        "In short: it depends."
+    )
+    sentences = claim_sentences(body)
+    assert len(sentences) == 3  # "In short: it depends." is too short to count
+    assert sentences[1].endswith("[2][3]")
+    transcript = Transcript(agent="research", case_id="c", trial=0, models={})
+    transcript.values = {"report": body + "\n\nSources\n[1] A - u\n[2] B - u\n[3] C - u"}
+    result = CHECKS["claims_cited"](transcript, True, build_settings())
+    assert result.passed is False
+    assert result.detail == "2/3 claim sentences cited"
+    assert CHECKS["claims_cited"](transcript, 0.6, build_settings()).passed is True
+
+
+def test_judge_sees_citation_numbers_quotes_and_retrieved_only_sources() -> None:
+    from evals.judge import material_for
+
+    a = {"url": "https://a", "title": "A", "quotes": ["sodium is abundant"]}
+    b = {"url": "https://b", "title": "B"}
+    transcript = Transcript(agent="research", case_id="c", trial=0, models={})
+    transcript.values = {
+        "topic": "t",
+        "report": "r",
+        "findings": [
+            {"question": "q1", "answer": "x", "sources": [a], "confidence": 0.8, "issue": ""},
+            {"question": "q2", "answer": "y", "sources": [b, a], "confidence": 0.3, "issue": "",
+             "cited": False},
+        ],
+    }  # fmt: skip
+    findings = material_for("briefing", transcript, _case())["findings"]
+    assert findings[0]["sources"] == [{"n": 1, "title": "A", "quotes": ["sodium is abundant"]}]
+    assert findings[1]["sources"] == [
+        {"n": 2, "title": "B", "retrieved_only": True},
+        {"n": 1, "title": "A", "quotes": ["sodium is abundant"], "retrieved_only": True},
+    ]

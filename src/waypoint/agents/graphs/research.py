@@ -20,7 +20,7 @@ import datetime as dt
 import json
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -31,7 +31,14 @@ from langgraph.runtime import Runtime, get_runtime
 from langgraph.types import CachePolicy, RetryPolicy, Send, interrupt
 from pydantic import BaseModel, Field, ValidationError
 
-from waypoint.agents.citations import answer_and_sources, number_sources, retrieved_sources
+from waypoint.agents.citations import (
+    CITATION,
+    answer_and_sources,
+    cite,
+    number_sources,
+    retrieved_sources,
+    split_sentences,
+)
 from waypoint.agents.context import AgentContext
 from waypoint.agents.models import FINDINGS_MARKER, ModelRouter, RoleModel, model_of, structured
 from waypoint.agents.state import Finding, ResearchState, WorkerInput
@@ -40,7 +47,7 @@ from waypoint.settings import Settings
 
 log = logging.getLogger(__name__)
 
-ROLES = ("planner", "searcher", "critic", "writer")
+ROLES = ("planner", "searcher", "critic", "writer", "verifier")
 """Each model call site. ``MODELS__RESEARCH__<ROLE>`` picks its model."""
 
 MAX_QUESTIONS = 5
@@ -91,6 +98,52 @@ class Critique(BaseModel):
             "question already asked."
         )
     )
+
+
+class SentenceCheck(BaseModel):
+    index: int = Field(description="The sentence's index, copied from the input.")
+    verdict: Literal["wrong_source", "needs_citation", "unsupported"]
+    sources: list[int] = Field(
+        default_factory=list,
+        description="For wrong_source and needs_citation: the source numbers that support "
+        "the sentence, best first, at most three. Otherwise empty.",
+    )
+    note: str = Field(default="", description="For unsupported: what no finding supports.")
+
+
+class Verification(BaseModel):
+    """Only the sentences that need a change.
+
+    The first version asked for a verdict on every sentence. On a 40-sentence
+    briefing Haiku 5.5's reasoning plus 40 verdicts ran past ``max_tokens`` and
+    returned empty or truncated JSON in 4 of 7 eval cases. Most sentences are
+    fine, so listing only the exceptions is most of the saving.
+    """
+
+    issues: list[SentenceCheck] = Field(
+        description="One entry per sentence that is not supported as cited. "
+        "Empty when every sentence is."
+    )
+
+
+class Rewrite(BaseModel):
+    index: int = Field(description="The sentence's index, copied from the input.")
+    text: str = Field(
+        default="",
+        description="The sentence rewritten to say only what the findings support, with "
+        "[n] citations. Empty to delete the sentence.",
+    )
+
+
+class Revision(BaseModel):
+    """Replacements for the flagged sentences, spliced in by code.
+
+    The first version asked the writer for the whole revised briefing. In the
+    eval it returned only the rewritten sentences, and coverage fell from 4 to 1.
+    Asking for replacements means a revision cannot touch anything else.
+    """
+
+    rewrites: list[Rewrite]
 
 
 # -- prompts -----------------------------------------------------------------
@@ -164,6 +217,59 @@ Findings:
 {findings}"""
 
 
+VERIFY = """Check the citations in a research briefing against the evidence.
+
+{today}
+
+FINDINGS lists what the research found. SOURCES lists every source with its
+number n, the finding it belongs to, and quotes: text from that page the
+finding drew on. Quotes are excerpts, not the whole page. A source marked
+retrieved_only was returned by a search but tied to no claim; prefer others.
+
+Read every numbered briefing sentence. A sentence is fine when its claims are
+in the cited sources' findings and the cited sources are the right ones, or
+when it makes no factual claim. List only the sentences that are not, each
+with one verdict:
+- wrong_source: the claims are supported, but by other sources than the ones
+  cited. Give the right source numbers.
+- needs_citation: a factual claim with no citation that the sources support.
+  Give the source numbers.
+- unsupported: a claim no finding supports, or one that contradicts a finding.
+  Say what is unsupported in the note.
+A statement about the research itself ("no study comparing X was found") is
+supported when a finding says so. Prefer the source whose quotes state the
+claim. Judge support only, not whether a source is reputable.
+
+FINDINGS (JSON):
+{findings}
+
+SOURCES (JSON):
+{sources}
+
+{marker}
+{sentences}"""
+
+SENTENCES_MARKER = "BRIEFING SENTENCES (JSON):"
+VERIFIER_MAX_TOKENS = 32_000
+
+REVISE = """Some sentences in this research briefing make claims the findings
+do not support. Rewrite each flagged sentence so it says only what the findings
+support, citing sources as [n], or return empty text to delete it. Return one
+rewrite per flagged sentence, by index. The whole briefing is there for
+context; do not rewrite anything else.
+
+{today}
+
+Flagged sentences (JSON), each with the reviewer's note:
+{problems}
+
+Findings:
+{findings}
+
+Briefing:
+{briefing}"""
+
+
 def retry_malformed_output(exc: Exception) -> bool:
     """LangGraph's default retry predicate, plus structured output that failed
     to parse or validate.
@@ -206,6 +312,19 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
         lambda m: structured(m, Critique, settings).with_config(tags=[TAG_NOSTREAM]),
     )
     writer = router.bind("writer")
+    # Room for the model's reasoning as well as the answer: Haiku 5.5 thinks by
+    # default, and that counts against max_tokens.
+    verifier = router.bind(
+        "verifier",
+        lambda m: structured(m, Verification, settings).with_config(tags=[TAG_NOSTREAM]),
+        max_tokens=VERIFIER_MAX_TOKENS,
+    )
+    # The revision is not streamed: the draft already was, and the client
+    # reloads the final text when the run ends.
+    reviser = router.bind(
+        "writer",
+        lambda m: structured(m, Revision, settings).with_config(tags=[TAG_NOSTREAM]),
+    )
 
     def _searcher(model: Any) -> Any:
         if cfg.web_search:
@@ -416,6 +535,111 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
             },
         }
 
+    # -- 6. check every citation against the quotes -------------------------
+    async def verify(state: ResearchState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+        """Fix wrong or missing citations in code; have the writer revise only
+        the sentences no finding supports. The briefing message keeps its id,
+        so this replaces the draft rather than adding a second reply."""
+        _progress(phase="verifying")
+        findings = state.get("findings", [])
+        numbers = number_sources(findings)
+        report = state.get("report", "")
+        body, sep, listing = report.partition("\n\nSources\n")
+        paragraphs = [split_sentences(p) for p in body.split("\n")]
+        flat = [(pi, si, s) for pi, para in enumerate(paragraphs) for si, s in enumerate(para)]
+        if not flat or not numbers:
+            return {}
+
+        prompt = [
+            HumanMessage(
+                VERIFY.format(
+                    today=_today(),
+                    findings=json.dumps(
+                        [
+                            {"finding": i, "question": f["question"], "answer": f["answer"]}
+                            for i, f in enumerate(findings)
+                        ],
+                        indent=1,
+                    ),
+                    sources=json.dumps(_verify_sources(findings, numbers), indent=1),
+                    marker=SENTENCES_MARKER,
+                    sentences=json.dumps(
+                        [{"index": i, "sentence": s} for i, (_, _, s) in enumerate(flat)],
+                        indent=1,
+                    ),
+                )
+            )
+        ]
+        result = await _parsed(verifier(runtime.context), prompt, "verifier")
+        if result is None:
+            # Verification improves a briefing; it must never cost the user one.
+            return {
+                "metadata": {
+                    **state.get("metadata", {}),
+                    "verification": {"sentences": len(flat), "skipped": "unparseable output"},
+                }
+            }
+        assert isinstance(result, Verification)
+
+        valid = set(numbers.values())
+        counts = {"sentences": len(flat), "recited": 0, "unsupported": 0, "revised": 0}
+        flagged: dict[int, dict[str, Any]] = {}
+        for check in result.issues:
+            if not 0 <= check.index < len(flat):
+                continue
+            pi, si, sentence = flat[check.index]
+            chosen = [n for n in check.sources if n in valid][:3]
+            if check.verdict in {"wrong_source", "needs_citation"} and chosen:
+                paragraphs[pi][si] = cite(sentence, chosen)
+                counts["recited"] += 1
+            elif check.verdict == "unsupported":
+                counts["unsupported"] += 1
+                flagged[check.index] = {
+                    "index": check.index,
+                    "sentence": sentence,
+                    "note": check.note or "not supported",
+                }
+
+        if flagged:
+            revision = await _parsed(
+                reviser(runtime.context),
+                [
+                    SystemMessage("You write briefings for busy people."),
+                    HumanMessage(
+                        REVISE.format(
+                            today=_today(),
+                            problems=json.dumps(list(flagged.values()), indent=1),
+                            findings="\n\n".join(_render_finding(f, numbers) for f in findings),
+                            briefing="\n".join(" ".join(p) for p in paragraphs),
+                        )
+                    ),
+                ],
+                "reviser",
+            )
+            assert revision is None or isinstance(revision, Revision)
+            for rewrite in revision.rewrites if revision else []:
+                text = rewrite.text.strip()
+                # A rewrite citing a number with no source is worse than none.
+                if rewrite.index not in flagged or {int(n) for n in CITATION.findall(text)} - valid:
+                    continue
+                pi, si, _ = flat[rewrite.index]
+                paragraphs[pi][si] = text
+                counts["revised"] += 1
+
+        fixed = "\n".join(" ".join(s for s in p if s) for p in paragraphs)
+        final = fixed + (sep + listing if sep else "")
+        last = state["messages"][-1]
+        return {
+            "report": final,
+            "messages": [
+                AIMessage(final, id=last.id, response_metadata=dict(last.response_metadata))
+            ],
+            "metadata": {
+                **state.get("metadata", {}),
+                "verification": counts,
+            },
+        }
+
     def declined(state: ResearchState) -> dict[str, Any]:
         message = "Research plan was declined; nothing was run."
         return {"report": message, "messages": [AIMessage(message)]}
@@ -436,6 +660,9 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
     # defer -> runs once per wave, after every fanned-out worker has finished.
     builder.add_node("critique", critique, defer=True, retry_policy=STRUCTURED_RETRY)
     builder.add_node("synthesize", synthesize)
+    # Malformed output is handled inside the node (see ``_parsed``); this
+    # retries the rest, such as a rate limit.
+    builder.add_node("verify", verify, retry_policy=RetryPolicy(max_attempts=3))
     builder.add_node("declined", declined)
 
     builder.add_edge(START, "plan")
@@ -443,7 +670,11 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
     builder.add_conditional_edges("approve", dispatch, ["investigate", "declined"])
     builder.add_edge("investigate", "critique")
     builder.add_conditional_edges("critique", after_critique, ["investigate", "synthesize"])
-    builder.add_edge("synthesize", END)
+    if cfg.verify_citations:
+        builder.add_edge("synthesize", "verify")
+        builder.add_edge("verify", END)
+    else:
+        builder.add_edge("synthesize", END)
     builder.add_edge("declined", END)
 
     return builder.compile(name="research", **compile_kwargs)
@@ -494,6 +725,48 @@ def _render_finding(finding: Finding, numbers: dict[str, int]) -> str:
     if finding["issue"]:
         lines.append(f"Reviewer note: {finding['issue']}")
     return "\n".join(lines)
+
+
+VERIFY_ATTEMPTS = 2
+
+
+async def _parsed(model: Any, prompt: list[Any], role: str) -> BaseModel | None:
+    """Structured output, or None after ``VERIFY_ATTEMPTS`` malformed replies.
+
+    Haiku 5.5 reasons before it answers, and on a long briefing the reasoning
+    can use up ``max_tokens`` and leave no JSON. One perovskite eval case did
+    so on four attempts in a row, failing the whole run under node retries.
+    """
+    for attempt in range(1, VERIFY_ATTEMPTS + 1):
+        try:
+            result: BaseModel = await model.ainvoke(prompt)
+        except (OutputParserException, ValidationError) as exc:
+            log.warning(
+                "%s output unparseable, attempt %d of %d: %s",
+                role,
+                attempt,
+                VERIFY_ATTEMPTS,
+                str(exc)[:200],
+            )
+        else:
+            return result
+    return None
+
+
+def _verify_sources(findings: list[Finding], numbers: dict[str, int]) -> list[dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    for i, f in enumerate(findings):
+        for s in f["sources"]:
+            n = numbers[s["url"]]
+            if n in out:
+                continue
+            entry: dict[str, Any] = {"n": n, "title": s["title"], "finding": i}
+            if quotes := s.get("quotes"):
+                entry["quotes"] = quotes
+            if f.get("cited") is False:
+                entry["retrieved_only"] = True
+            out[n] = entry
+    return [out[n] for n in sorted(out)]
 
 
 def _source_list(findings: list[Finding], numbers: dict[str, int]) -> str:

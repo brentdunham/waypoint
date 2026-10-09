@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from evals.cases import ROOT, Case
 from evals.driver import Transcript
+from waypoint.agents.citations import number_sources
 from waypoint.agents.models import ScriptedChatModel, build_model, structured
 from waypoint.settings import Settings
 
@@ -71,6 +72,20 @@ def load_rubric(agent: str) -> dict[str, Criterion]:
 # -- what the judge sees -----------------------------------------------------------
 
 
+def _source(source: Any, numbers: dict[str, int], finding: Any) -> dict[str, Any]:
+    """``n``, title, and what the answer quoted from it, if the API said.
+
+    A source of an uncited finding (``cited: false``) was only retrieved: no
+    claim in that answer is tied to it, and the judge is told so.
+    """
+    out: dict[str, Any] = {"n": numbers.get(source["url"]), "title": source["title"]}
+    if quotes := source.get("quotes"):
+        out["quotes"] = quotes
+    if finding.get("cited") is False:
+        out["retrieved_only"] = True
+    return out
+
+
 def material_for(target: Target, transcript: Transcript, case: Case) -> dict[str, Any]:
     """The judge's input for one target, in the same shape calibration files use."""
     values = transcript.values
@@ -81,6 +96,10 @@ def material_for(target: Target, transcript: Transcript, case: Case) -> dict[str
             "rationale": values.get("rationale", []),
         }
     if target == "briefing":
+        findings = values.get("findings") or []
+        # The same global [n] numbering the writer was given, so the judge can
+        # follow a citation straight to its source and that source's quotes.
+        numbers = number_sources(findings)
         return {
             "topic": values.get("topic", ""),
             "expect": case.expect,
@@ -88,11 +107,11 @@ def material_for(target: Target, transcript: Transcript, case: Case) -> dict[str
                 {
                     "question": f["question"],
                     "answer": f["answer"],
-                    "sources": [s["title"] for s in f["sources"]],
+                    "sources": [_source(s, numbers, f) for s in f["sources"]],
                     "confidence": f["confidence"],
                     "reviewer_note": f["issue"],
                 }
-                for f in values.get("findings") or []
+                for f in findings
             ],
             "briefing": values.get("report", ""),
         }

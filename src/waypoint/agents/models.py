@@ -178,8 +178,23 @@ def _scripted_critique(text: str) -> dict[str, Any]:
 FINDINGS_MARKER = "FINDINGS (JSON):"
 """Where the critic prompt puts its findings, so the scripted critic can read them."""
 
+
+def _scripted_verification(text: str) -> dict[str, Any]:
+    """Every sentence supported: offline, verification changes nothing."""
+    return {"issues": []}
+
+
+def _scripted_revision(text: str) -> dict[str, Any]:
+    return {"rewrites": []}
+
+
 ScriptedChatModel.structured_scripts.update(
-    {"ResearchPlan": _scripted_plan, "Critique": _scripted_critique}
+    {
+        "ResearchPlan": _scripted_plan,
+        "Critique": _scripted_critique,
+        "Verification": _scripted_verification,
+        "Revision": _scripted_revision,
+    }
 )
 
 

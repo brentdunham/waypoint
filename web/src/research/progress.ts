@@ -16,6 +16,7 @@ export type Phase =
   | "searching"
   | "reviewing"
   | "writing"
+  | "verifying"
   | "done"
   | "declined"
   | "failed"
@@ -44,7 +45,13 @@ export interface Progress {
 
 export const EMPTY_PROGRESS: Progress = { phase: "idle", round: 0, workers: [], models: {} };
 
-const ACTIVE: ReadonlySet<Phase> = new Set(["planning", "searching", "reviewing", "writing"]);
+const ACTIVE: ReadonlySet<Phase> = new Set([
+  "planning",
+  "searching",
+  "reviewing",
+  "writing",
+  "verifying",
+]);
 
 export function isActive(phase: Phase): boolean {
   return ACTIVE.has(phase);

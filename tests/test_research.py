@@ -80,6 +80,25 @@ def test_sources_come_from_citation_metadata_not_prose() -> None:
     ]
 
 
+def test_sources_keep_the_quoted_text_the_answer_drew_on() -> None:
+    from waypoint.agents.citations import MAX_QUOTE_CHARS, MAX_QUOTES
+
+    cite = lambda text: {"url": "https://a.example", "title": "A", "cited_text": text}  # noqa: E731
+    message = AIMessage(
+        content=[
+            {"type": "text", "text": "One.", "citations": [cite("  first\n quote ")]},
+            {"type": "text", "text": "Two.", "citations": [cite("first quote"), cite("x" * 900)]},
+            {"type": "text", "text": "More.", "citations": [cite("third"), cite("fourth")]},
+        ]
+    )
+    _, sources = answer_and_sources(message)
+    quotes = sources[0]["quotes"]
+    assert quotes[0] == "first quote"  # whitespace collapsed, duplicate dropped
+    assert len(quotes[1]) == MAX_QUOTE_CHARS
+    assert quotes[1].endswith("…")
+    assert len(quotes) == MAX_QUOTES
+
+
 def test_plain_string_reply_has_no_sources() -> None:
     assert answer_and_sources(AIMessage(content=" just text ")) == ("just text", [])
 

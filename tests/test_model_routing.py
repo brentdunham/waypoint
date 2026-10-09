@@ -29,7 +29,7 @@ from waypoint.agents.models import (
 )
 from waypoint.agents.registry import models_for, roles_by_agent
 
-ROLES = ("planner", "searcher", "critic", "writer")
+ROLES = research.ROLES
 
 
 # -- resolution ----------------------------------------------------------------
@@ -50,6 +50,7 @@ def test_most_specific_setting_wins() -> None:
         "searcher": "agent",
         "critic": "role",
         "writer": "agent",
+        "verifier": "agent",
     }
 
 
@@ -63,6 +64,7 @@ def test_run_override_beats_config_and_default_covers_the_rest() -> None:
         "searcher": "run-all",
         "critic": "run-all",
         "writer": "run-writer",
+        "verifier": "run-all",
     }
 
 

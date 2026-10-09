@@ -11,6 +11,15 @@
       },
       "passed": 21
     },
+    "claims_cited": {
+      "applicable": 21,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 0.9524,
+        "stdev": 0.0825
+      },
+      "passed": 20
+    },
     "completed": {
       "applicable": 24,
       "not_applicable": 0,
@@ -89,28 +98,28 @@
       "graded": 21,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.3333,
-        "stdev": 0.2182
+        "mean": 3.1429,
+        "stdev": 0.1429
       },
-      "pass_rate": 0.9048
+      "pass_rate": 0.8571
     },
     "covers": {
       "graded": 21,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.7619,
-        "stdev": 0.165
+        "mean": 3.4762,
+        "stdev": 0.2182
       },
-      "pass_rate": 1.0
+      "pass_rate": 0.9524
     },
     "grounded": {
       "graded": 21,
-      "judge": "calibrated",
+      "judge": "escalated",
       "mean": {
-        "mean": 2.4762,
-        "stdev": 0.3595
+        "mean": 3.8571,
+        "stdev": 0.0
       },
-      "pass_rate": 0.4762
+      "pass_rate": 1.0
     },
     "plan_quality": {
       "graded": 21,
@@ -125,78 +134,68 @@
       "graded": 21,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.9524,
+        "mean": 3.9048,
         "stdev": 0.0825
       },
       "pass_rate": 1.0
     }
   },
-  "date": "2026-10-08T20:23:29+00:00",
+  "date": "2026-10-09T18:15:08+00:00",
   "elapsed_s_per_run": {
-    "mean": 47.2717,
-    "stdev": 41.1588
+    "mean": 23.0979,
+    "stdev": 11.6918
   },
   "errors": 0,
-  "fingerprint": "5aa3aef3056b",
-  "git_sha": "75eea33",
+  "fingerprint": "c4b1b6c10283",
+  "git_sha": "2cdcba5",
   "judge_model": "claude-haiku-4-5",
   "models": {
     "critic": "claude-sonnet-5",
     "planner": "claude-sonnet-5",
     "searcher": "claude-haiku-5-5",
+    "verifier": "claude-haiku-5-5",
     "writer": "claude-sonnet-5"
   },
   "settings": {
     "max_follow_ups": 3,
     "max_rounds": 2,
     "max_searches": 2,
+    "verify_citations": true,
     "web_search": true
   },
   "trials": 3,
   "usage": {
-    "cost_usd": 3.8749,
-    "cost_usd_per_run": 0.1615,
+    "cost_usd": 0.4426,
+    "cost_usd_per_run": 0.0184,
     "replayed": {
-      "critic": 14,
+      "critic": 42,
       "planner": 24,
-      "searcher": 56,
-      "writer": 7
+      "searcher": 168,
+      "writer": 21
     },
     "roles": {
-      "critic": {
-        "calls": 28,
-        "input_tokens": 172357,
-        "input_tokens_per_run": 7182,
-        "latency_s_per_call": 19.94,
-        "models": [
-          "claude-sonnet-5"
-        ],
-        "output_tokens": 57525,
-        "output_tokens_per_run": 2397,
-        "searches": 0
-      },
-      "searcher": {
-        "calls": 112,
-        "input_tokens": 2401904,
-        "input_tokens_per_run": 100079,
-        "latency_s_per_call": 10.59,
+      "verifier": {
+        "calls": 21,
+        "input_tokens": 259800,
+        "input_tokens_per_run": 10825,
+        "latency_s_per_call": 21.22,
         "models": [
           "claude-haiku-5-5"
         ],
-        "output_tokens": 222708,
-        "output_tokens_per_run": 9280,
-        "searches": 221
+        "output_tokens": 101111,
+        "output_tokens_per_run": 4213,
+        "searches": 0
       },
       "writer": {
-        "calls": 14,
-        "input_tokens": 93435,
-        "input_tokens_per_run": 3893,
-        "latency_s_per_call": 15.4,
+        "calls": 15,
+        "input_tokens": 136144,
+        "input_tokens_per_run": 5673,
+        "latency_s_per_call": 7.09,
         "models": [
           "claude-sonnet-5"
         ],
-        "output_tokens": 20655,
-        "output_tokens_per_run": 861,
+        "output_tokens": 9378,
+        "output_tokens_per_run": 391,
         "searches": 0
       }
     }

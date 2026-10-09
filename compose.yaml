@@ -13,6 +13,7 @@ services:
       BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
       MODEL: ${MODEL:-claude-sonnet-4-5}
       MODELS__RESEARCH__SEARCHER: ${MODELS__RESEARCH__SEARCHER:-}
+      MODELS__RESEARCH__VERIFIER: ${MODELS__RESEARCH__VERIFIER:-}
       FAKE_MODEL: ${FAKE_MODEL:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
       LIMITS__RPM: ${LIMITS__RPM:-60}
@@ -24,6 +25,7 @@ services:
       RESEARCH__MAX_SEARCHES: ${RESEARCH__MAX_SEARCHES:-2}
       RESEARCH__MAX_ROUNDS: ${RESEARCH__MAX_ROUNDS:-2}
       RESEARCH__MAX_FOLLOW_UPS: ${RESEARCH__MAX_FOLLOW_UPS:-3}
+      RESEARCH__VERIFY_CITATIONS: ${RESEARCH__VERIFY_CITATIONS:-true}
     ports: ["8000:8000"]
     depends_on:
       postgres: { condition: service_healthy }

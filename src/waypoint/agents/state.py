@@ -24,6 +24,10 @@ class Source(TypedDict):
 
     url: str
     title: str
+    quotes: NotRequired[list[str]]
+    """What the API says the answer drew from this page: the ``cited_text`` of
+    each citation to it, deduplicated and capped (``citations.MAX_QUOTES``).
+    Absent for retrieved-only sources and for findings made before 2026-10-09."""
 
 
 class Finding(TypedDict):

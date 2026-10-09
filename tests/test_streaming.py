@@ -78,7 +78,7 @@ def test_research_reports_what_it_is_starting(client: TestClient) -> None:
     run = client.post(f"/api/v1/threads/{thread_id}/runs", json={"resume": {"approved": True}})
     events = _progress(client, run.json()["events_url"])
     phases = [e["phase"] for e in events]
-    assert phases == ["searching"] * 3 + ["reviewing", "writing"]
+    assert phases == ["searching"] * 3 + ["reviewing", "writing", "verifying"]
     searching = [e for e in events if e["phase"] == "searching"]
     assert all(e["round"] == 1 and str(e["question"]).endswith("?") for e in searching)
     assert events[3]["round"] == 1

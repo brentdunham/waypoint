@@ -37,7 +37,7 @@ on:
         description: Trials per case (1 to check; 3 for a scorecard to accept as baseline)
         type: number
         default: 1
-        
+
 permissions:
   contents: read
 
@@ -79,6 +79,7 @@ jobs:
       # fingerprint` prints it locally. Everything not set here is the default.
       MODEL: claude-sonnet-5
       MODELS__RESEARCH__SEARCHER: claude-haiku-5-5
+      MODELS__RESEARCH__VERIFIER: claude-haiku-5-5
       RESEARCH__MAX_SEARCHES: "2"
       MAX_TOKENS: "4096"
       EMBEDDINGS_MODEL: openai:text-embedding-3-small

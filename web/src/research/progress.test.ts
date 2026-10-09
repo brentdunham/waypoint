@@ -81,6 +81,7 @@ describe("research progress", () => {
       custom({ phase: "searching", question: "What is X?", round: 1 }),
       custom({ phase: "searching", question: "Is Y still true?", round: 2 }),
       custom({ phase: "writing" }),
+      custom({ phase: "verifying" }),
       { type: "run.completed", data: { result: {} } },
     ]);
     expect(p.round).toBe(2);

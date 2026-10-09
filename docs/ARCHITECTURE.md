@@ -111,7 +111,7 @@ Two consequences worth internalising:
 ```
 plan -> approve (interrupt) -> investigate x N (Send) -> critique (defer)
                                     ^                        |
-                                    +---- follow-ups --------+--> synthesize
+                                    +---- follow-ups --------+--> synthesize -> verify
 ```
 
 `Send("investigate", payload)` fans out one worker per question, concurrently.
@@ -156,6 +156,29 @@ Two rules are enforced in code, not left to the critic's judgment: a finding
 with no sources, or only uncited ones, is capped at 0.3 confidence, and the source list at the end of
 the briefing is built from metadata and appended, so the writer cannot add a
 source that was never retrieved.
+
+## 4c. Verify: check each sentence against the quotes
+
+The search API returns, with each citation, the text the answer quoted
+(`cited_text`); findings keep up to three quotes per source. After the writer,
+`verify` splits the briefing into sentences and asks the verifier role
+(Haiku 5.5 by default) which ones are not supported as cited, with one of
+three verdicts. The two common ones are fixed in code, not by a model:
+`wrong_source` and `needs_citation` replace the sentence's `[n]` marks with the
+numbers the verifier gives, if they are real sources. Only `unsupported`
+sentences go back to the writer's model, which returns a replacement per
+sentence (or an empty one to delete it). The replacement is spliced in by
+index, so a revision cannot touch any other sentence. The first version
+asked for the whole revised briefing, and coverage fell from 4 to 1 when the
+model returned only the rewritten sentences.
+
+The briefing message keeps its id, so the verified text replaces the draft in
+the thread instead of adding a second reply. `metadata.verification` counts
+sentences checked, re-cited, unsupported and rewritten. Verification must
+never cost the user a briefing: malformed verifier output (Haiku can spend its
+whole token budget reasoning) is retried once, and then the draft ships with
+`verification.skipped`. `RESEARCH__VERIFY_CITATIONS=false` removes the node.
+The evidence for it is in [case-studies/grounded.md](case-studies/grounded.md).
 
 ## 4b. A model per role, resolved once per run
 

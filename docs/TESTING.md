@@ -104,14 +104,18 @@ How it fits together (`evals/`):
   role, model, tokens, web searches and latency.
 * **Checks** — deterministic, run first: `[n]` citations resolve, sources are
   used, every finding has sources (`findings_sourced`) and they came from
-  citations rather than the search-results fallback (`findings_cited`),
+  citations rather than the search-results fallback (`findings_cited`), at
+  least 80% of the briefing's claim-length sentences carry an `[n]`
+  (`claims_cited`),
   rounds and plan size stay in bounds, a declined plan searches nothing;
   for chat, the right tool was (or was not) called, facts were remembered and
   seeded memories recalled.
 * **Judge** — `rubrics/<agent>.toml`, one call per criterion, reasoning before
   a 1-4 score with written anchors, 3+ passes. It sees the findings the
-  briefing was written from but cannot browse: *grounded* means grounded in
-  what the agent retrieved.
+  briefing was written from, each source with its `[n]` and the text the
+  search API says the answer quoted from it (`cited_text`, up to three
+  excerpts). It cannot browse: *grounded* means grounded in what the agent
+  retrieved, and it judges support and attribution, not source quality.
 * **Calibration** — `calibration/<agent>.jsonl` holds hand-labelled outputs.
   `calibrate` measures judge agreement per criterion, routes failing criteria
   to `EVALS__JUDGE_ESCALATION_MODEL` if it does better, and otherwise marks
@@ -128,7 +132,8 @@ How it fits together (`evals/`):
   0.10 (check pass rate) or 0.25 (criterion mean). `accept` refuses a
   scorecard with fewer than 3 trials (`--min-trials` overrides), because one
   trial has no spread. Iterate on one trial; run three only to accept.
-* **Replay** — `results/replay.sqlite` (beside `--out`). Every model call is
+* **Replay** — `results/replay.sqlite`, or beside `--out` if you pass one: a
+  new `--out` directory starts an empty store and pays for every call. Every model call is
   stored under its case, trial, role, model, bound setup (tools, `max_uses`,
   output schema, `max_tokens`) and input messages, with today's date masked.
   A rerun answers stored calls from the file and pays only for calls whose

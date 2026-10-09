@@ -12,12 +12,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from evals.driver import Transcript
+from waypoint.agents.citations import split_sentences
 from waypoint.agents.graphs.research import MAX_QUESTIONS
 from waypoint.settings import Settings
 
 CITATION = re.compile(r"\[(\d+)\]")
 RANGE = re.compile(r"\[\d+\s*[-\u2013]\s*\d+\]")
 SOURCE_LINE = re.compile(r"^\[(\d+)\] ", re.MULTILINE)
+MIN_CLAIM_WORDS = 8
+"""Shorter sentences are mostly transitions and headings, not claims."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +105,32 @@ def _sources_cited(t: Transcript, arg: Any, s: Settings) -> CheckResult:
     ratio = len(cited) / len(listed)
     detail = f"{len(cited)}/{len(listed)} sources cited"
     return CheckResult("sources_cited", ratio >= share, detail)
+
+
+def claim_sentences(body: str) -> list[str]:
+    """The briefing's sentences of ``MIN_CLAIM_WORDS`` or more, citations attached."""
+    sentences = [x for paragraph in body.split("\n") for x in split_sentences(paragraph)]
+    return [x for x in sentences if len(CITATION.sub("", x).split()) >= MIN_CLAIM_WORDS]
+
+
+@check("claims_cited")
+def _claims_cited(t: Transcript, arg: Any, s: Settings) -> CheckResult:
+    """Share of the briefing's claim-length sentences that carry an [n] (default 0.8).
+
+    The deterministic half of ``grounded``: it cannot tell whether a citation
+    is the right one, only whether there is one. Summary and "nothing was
+    found" sentences legitimately go uncited, hence a share, not all.
+    """
+    if not s.research.web_search:
+        return CheckResult("claims_cited", None, "web search off")
+    body, _ = _briefing(t)
+    sentences = claim_sentences(body)
+    if not sentences:
+        return CheckResult("claims_cited", False, "no claim-length sentences")
+    share = 0.8 if arg is True else float(arg)
+    cited = sum(bool(CITATION.search(x)) for x in sentences)
+    detail = f"{cited}/{len(sentences)} claim sentences cited"
+    return CheckResult("claims_cited", cited / len(sentences) >= share, detail)
 
 
 @check("findings_sourced")

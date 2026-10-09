@@ -14,13 +14,13 @@
     "criteria": {
       "calibrated": "claude-haiku-4-5",
       "covers": "claude-haiku-4-5",
-      "grounded": "claude-haiku-4-5",
+      "grounded": "claude-opus-4-5",
       "plan_quality": "claude-haiku-4-5",
       "useful": "claude-haiku-4-5"
     },
-    "escalation": "claude-sonnet-4-5",
+    "escalation": "claude-opus-4-5",
     "judge": "claude-haiku-4-5",
     "min_agreement": 0.8,
-    "rubric": "2ab58a145d08"
+    "rubric": "910a50db13ed"
   }
 }

@@ -7,13 +7,14 @@ const LABEL: Record<Progress["phase"], string> = {
   searching: "searching",
   reviewing: "critic reviewing findings",
   writing: "writing the briefing",
+  verifying: "checking citations",
   done: "done",
   declined: "plan declined",
   failed: "failed",
   cancelled: "cancelled",
 };
 
-const ROLE_ORDER = ["planner", "searcher", "critic", "writer"];
+const ROLE_ORDER = ["planner", "searcher", "critic", "writer", "verifier"];
 
 /** Role -> model, in pipeline order, as "planner claude-x · searcher claude-y …". */
 export function ModelLine({ models }: { models: Record<string, string> }) {
