@@ -251,16 +251,34 @@ worker that dies mid-run cannot leak a slot forever. And the slot is taken
 *before* the POST returns, so an over-quota caller gets a clean `429` instead
 of a run that mysteriously fails later.
 
-## 8. Postgres carries four things on one pool
+## 8. Postgres carries five things on one pool
 
-The checkpointer, the long-term store, our own tables, and the audit log all
-share one `AsyncConnectionPool`. One place to size, one number to reason about
-against `max_connections`, and no surprise second pool appearing under load.
+The checkpointer, the long-term store, our own tables, the audit log and the
+RAG corpora all share one `AsyncConnectionPool`. One place to size, one
+number to reason about against `max_connections`, and no surprise second pool
+appearing under load.
 
 `pgvector/pgvector:pg17` rather than plain `postgres` because the store's
 semantic search needs the extension the moment `EMBEDDINGS_MODEL` is set —
 and discovering that in production is a worse afternoon than pulling a
-slightly larger image today.
+slightly larger image today. Since the RAG tables it is required outright:
+every boot creates the `vector` extension.
+
+### 8a. Corpora are isolated by row-level security, through a role
+
+Corpora, documents and chunks (design: [design/rag.md](design/rag.md)) carry
+a `tenant_id`, and every query in `rag/store.py` filters on it. That is one
+guard. The second is Postgres row-level security, and it needs more than
+policies: the service connects as the tables' owner (a superuser in the
+compose images), and both bypass RLS. So each store call opens a transaction
+that does `set local role waypoint_tenant` and
+`set_config('app.tenant_id', ..., true)`. The role owns nothing and cannot
+bypass RLS, so the policies filter every row it touches even if a `where`
+clause is wrong. Both settings are transaction-local, which is what makes them
+safe on a pooled connection. Writes are allowed only into the tenant's own
+*private* corpora, checked with `exists` against `corpora`, because foreign
+keys are checked without RLS. `tests/test_rag_pg.py` tests each guard on its
+own, including that the owner sees everything (the reason for the role).
 
 ## 9. The cache is Redis, not a dict
 

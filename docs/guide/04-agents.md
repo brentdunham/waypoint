@@ -23,6 +23,10 @@ flowchart LR
 Adding an agent is one entry in this table and one module under `graphs/`.
 Nothing else lists agents, so there is no second place to forget.
 
+An entry with `listed=False` is an agent another endpoint starts: `GET
+/agents` leaves it out, `POST /threads` refuses it, and the eval CLI does not
+offer it. `ingest` is the one such agent ([4.10](#410-the-ingest-agent)).
+
 ## 4.2 The chat agent
 
 `src/waypoint/agents/graphs/chat.py`. One role, `assistant`.
@@ -249,3 +253,29 @@ citation metadata, so source extraction runs offline too. A prompt containing
 `[[tool:name({...})]]` makes it emit that tool call. Structured calls are
 answered from `structured_scripts`. The graphs are testable because the model
 is deterministic: assertions can be exact.
+
+## 4.10 The ingest agent
+
+`src/waypoint/agents/graphs/ingest.py`, with `src/waypoint/rag/`.
+
+```mermaid
+flowchart LR
+    up[POST /corpora/id/documents<br/>store bytes, status pending] --> run[ingest run<br/>input: document ids]
+    run --> d1[ingest_document<br/>one per document, via Send]
+    d1 --> p[parse<br/>Markdown, HTML, PDF, text<br/>to heading path + paragraphs]
+    p --> c[chunk<br/>~400 tokens, one-paragraph overlap,<br/>never across a heading]
+    c --> e[embed<br/>RAG__EMBEDDINGS_MODEL, 3 attempts]
+    e --> w[write chunks + ready<br/>one transaction]
+    w --> s[summarize<br/>run.completed metadata]
+```
+
+Ingestion is a run so that a long upload gets what every run has: a
+`202`, an event stream with a `custom` event per stage of each document,
+cancellation, audit and per-tenant limits. The upload endpoint stores the
+files first and passes only their ids, so nothing large enters graph state or
+checkpoints. A document that cannot be indexed is marked `failed` with the
+reason and the rest carry on. A chunk keeps its paragraphs as separate
+strings because the research worker (phase 3 of the RAG design) will send
+each as its own text block, and Claude cites whole blocks.
+
+No node is cached: every node writes to the database.

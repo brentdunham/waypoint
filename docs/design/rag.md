@@ -1,6 +1,8 @@
 # Design: retrieval over tenant documents (RAG)
 
-Status: **approved for implementation**, not started. Written 2026-10-10.
+Status: **in progress.** Phase 0 decided and phase 1 built on 2026-10-10;
+see [Implementation log](#implementation-log) for what changed from this
+design and why. Written 2026-10-10.
 This note is the hand-off for the coding sessions: what to build, what is
 decided, what is still open, and in what order. Read it with
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [guide/04-agents.md](../guide/04-agents.md).
@@ -78,7 +80,9 @@ Constraints that matter here:
 
 ## Open decisions (settle in phase 0)
 
-1. **Embedding provider.** Anthropic has no embedding model and points to
+1. **Embedding provider.** *Decided 2026-10-10: `voyageai:voyage-4` at 1024
+   dims, configured as `RAG__EMBEDDINGS_MODEL` / `RAG__EMBEDDINGS_DIMS`. See the
+   implementation log.* Anthropic has no embedding model and points to
    Voyage AI; `build_embeddings` already supports `openai:*`. Voyage's current
    generation is `voyage-4` / `voyage-4-large` (seen 2026-10-10); confirm
    models, dimensions and prices at implementation time, then add a
@@ -238,6 +242,113 @@ already the next portfolio item.
   includes retrieved passages, so re-chunking or re-embedding correctly
   invalidates downstream calls. Expect the first run after any retrieval
   change to be live.
+
+## Implementation log
+
+### Phase 0: embedding provider (2026-10-10)
+
+Prices and models checked on <https://docs.voyageai.com/docs/pricing> and
+<https://docs.voyageai.com/docs/embeddings> that day:
+
+| Model | $ / M tokens | Widths | Notes |
+|---|---|---|---|
+| voyage-4-large | 0.12 | 256, 512, 1024, 2048 | Voyage's best general retrieval |
+| **voyage-4** | **0.06** | 256, 512, **1024**, 2048 | general purpose; chosen |
+| voyage-4-lite | 0.02 | 256, 512, 1024, 2048 | latency and cost |
+| voyage-context-4 | 0.12 | same | contextualized chunk embeddings |
+| openai text-embedding-3-small (memory store today) | 0.02 | 1536 | |
+
+Every Voyage model includes 200M free tokens, and the 4 series shares one
+embedding space. This repository's `docs/` is 207 KB in 17 files, about 52k
+tokens (236 chunks at the 400-token target), so price does not decide:
+embedding all of it costs under a cent with any model. voyage-4 is the
+general-purpose default; large and voyage-context-4 become phase 4 ablation
+rows, each kept only if the retrieval eval shows the gain. voyage-context-4 is
+worth a row of its own because it does what the LLM-preamble contextual
+retrieval does, without a model call per chunk. 1024, not 2048, because
+pgvector's HNSW index on `vector` stops at 2000 dims.
+
+Deviation: RAG has its own settings (`RAG__EMBEDDINGS_MODEL`,
+`RAG__EMBEDDINGS_DIMS`, `VOYAGE_API_KEY`) instead of reusing
+`EMBEDDINGS_MODEL`, which indexes long-term memory with OpenAI at 1536.
+Sharing one setting would force re-indexing the LangGraph store to adopt
+Voyage, and tie two unrelated lifecycles together. `build_embeddings` and the
+new `build_rag_embeddings` share one provider switch, which now builds
+`VoyageAIEmbeddings` directly so the requested `output_dimension` is the
+configured width.
+
+Done-when check, against the real provider: the boot probe embeds with
+voyage-4 and gets 1024 dims back (0.8 to 1.7 s). A query about resuming a
+dropped stream scored 0.55 cosine against a passage about `Last-Event-ID`
+and 0.11 against one about Caddy TLS. The same run found a bug: Voyage's SDK
+reports the status as `http_status`, not `status_code`, so a rejected key was
+only logged as a network warning and the boot went on. `models.http_status`
+now reads both, and a bad key stops the boot with a 401.
+
+An account without a payment method is limited to 3 requests and 10K tokens
+per minute (the free tokens apply either way). Ingesting `docs/` (about 52k
+tokens in 17 parallel requests) needs the standard limits. With a payment
+method added, a live ingest of `docs/` through the API (in-process app,
+in-memory store, real voyage-4) indexed 17 of 17 files into 251 chunks in
+1.1 s, 2026-10-10.
+
+### Phase 1: schema, parse, chunk, store, ingest, API (2026-10-10)
+
+Built as designed, with these differences:
+
+* **RLS needs a role, not only policies.** The service connects as the
+  tables' owner, and in the compose images that user is a superuser. Both
+  bypass row-level security, so the policies as written would filter nothing.
+  The migration creates `waypoint_tenant` (`nologin`, no `BYPASSRLS`), and
+  every store query runs in a transaction that does `set local role
+  waypoint_tenant` and `set_config('app.tenant_id', ..., true)`. Ingestion
+  runs this way too, not as the owner: it acts on tenant input, so it gets the
+  same guard. A test shows the owner still sees every row, which is why the
+  role exists.
+* **Write policies are separate from read policies.** Reads: own rows or a
+  public corpus. Writes: only rows of your own *private* corpus, checked with
+  `exists` against `corpora` because foreign keys are checked without RLS (a
+  document naming another tenant's corpus would otherwise insert). Public
+  corpora are written only by the owner role, so seeding (phase 5) runs as
+  the owner.
+* **The generated `tsv` column uses an immutable wrapper.** The design's
+  expression fails: `array_to_string` is marked stable, and generated columns
+  need immutable expressions. `chunk_search_text(context, heading,
+  paragraphs)` is declared immutable; for `text[]` it is.
+* **`documents` keeps the uploaded bytes** (`content bytea`) and its
+  `media_type`. The ingest run's input is then only document ids, so nothing
+  large goes through graph state or checkpoints, and the chunk-size ablations
+  in phase 4 can re-chunk without re-uploading. `chunks` gains
+  `unique (document_id, ordinal)`.
+* **One `ingest_document` task per document** (a `Send` fan-out), each doing
+  parse, chunk, embed and write and reporting each stage as a `custom` event.
+  A document that fails (unreadable, no text, embedding errors after three
+  attempts) is marked `failed` with the reason and the others continue.
+  Chunks are written in one transaction per document. The run summary is in
+  `run.completed`'s `result.metadata`.
+* **`ingest` is an unlisted agent.** `GET /agents` does not show it and
+  `POST /threads` refuses it; `POST /corpora/{id}/documents` creates its
+  thread and run. The eval CLI only offers listed agents.
+* **Uploads** are multipart with any number of `files` (up to 100). The
+  filename as sent (`docs/DEPLOY.md`) becomes the title and the first part of
+  every heading. Identical bytes already in the corpus are not ingested again;
+  identical bytes of a failed document are retried.
+* **Each corpus checks its model.** A document is not embedded if the corpus
+  was created with a different `embed_model` than the service now uses.
+* **Token counts are estimated** as characters / 4 (no tokenizer
+  dependency). The chunk-size ablation measures the effect of the target, not
+  of the estimator.
+* **Settings arrive with the phase that reads them.** Phase 1 adds
+  `RAG__CHUNK_TOKENS` and `RAG__MAX_UPLOAD_MB`; `RAG__TOP_K`, `RAG__MODE`,
+  `RAG__CONTEXTUAL` and `RAG__RERANK` come with retrieval (phase 2), and go
+  into the eval fingerprint then.
+* **Every boot creates the `vector` extension**, so plain `postgres` no longer
+  boots; the compose and deploy images are `pgvector/pgvector` already.
+
+Done-when check: uploading this repository's `docs/` creates a corpus with
+every file `ready` (unit tier with `HashEmbeddings`, and integration tier
+against Postgres), and a cross-tenant query returns nothing (store, raw SQL
+under RLS, and the API).
 
 ## References
 

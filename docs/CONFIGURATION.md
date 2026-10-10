@@ -108,8 +108,12 @@ The resolved map is fixed when a run starts and recorded on the run
 | `REDIS_SOCKET_TIMEOUT_S` | `30` | Read timeout for every Redis command, including the blocking `XREAD` behind SSE. Must exceed `STREAM__BLOCK_MS` by at least 1s; startup refuses otherwise. |
 | `DB_POOL_MIN` / `DB_POOL_MAX` | `1` / `10` | One pool serves the checkpointer, the store and this service's own tables. Size it for `max_connections` divided by replicas. |
 
-The Postgres image must be `pgvector/pgvector` if you set `EMBEDDINGS_MODEL`;
-plain `postgres` is fine otherwise.
+The Postgres image must be `pgvector/pgvector`. Since the RAG tables
+(2026-10-10), every boot runs `create extension if not exists vector`, so plain
+`postgres` no longer boots. The migration also creates a cluster-wide role,
+`waypoint_tenant` (`nologin`), so the service's database user needs
+`CREATEROLE` or superuser on first boot; the compose images' user is a
+superuser.
 
 ## Long-term memory
 
@@ -128,10 +132,45 @@ network error is only logged. The `vector` extension and the `store_vectors`
 table are created by `store.setup()` on first boot, so there is nothing to do
 in Postgres beyond using the `pgvector/pgvector` image.
 
-Only `openai:` ships installed (`langchain-openai`). Another provider means
-adding its package, e.g. `uv add langchain-voyageai` for `voyageai:voyage-3.5`.
-Changing model or dims after memories exist requires re-embedding them: the
-stored vectors were made by the old model.
+`openai:` and `voyageai:` ship installed (`langchain-openai`,
+`langchain-voyageai`). Another provider means adding its package. Changing
+model or dims after memories exist requires re-embedding them: the stored
+vectors were made by the old model.
+
+## Document retrieval (RAG)
+
+Corpora of tenant documents, ingested by the `ingest` agent and (from phase 3)
+searched by the research agent. Design: [design/rag.md](design/rag.md).
+Configured apart from long-term memory, so the two can use different embedders
+and neither change forces re-embedding the other.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `RAG__EMBEDDINGS_MODEL` | — | The chosen model is `voyageai:voyage-4` (commented in `.env.example`, like memory's). Unset → RAG is off: `/corpora` answers 503. |
+| `RAG__EMBEDDINGS_DIMS` | `1024` | Width of `chunks.embedding`. Voyage 4 offers 256, 512, 1024 and 2048; pgvector's HNSW index stops at 2000 for `vector`, so 2048 is out. |
+| `VOYAGE_API_KEY` | — | Required when either embeddings model starts with `voyageai:`. From <https://dashboard.voyageai.com/>. |
+| `RAG__CHUNK_TOKENS` | `400` | Target chunk size, estimated as characters / 4. Takes effect for documents ingested afterwards. |
+| `RAG__MAX_UPLOAD_MB` | `5` | Per file. A whole upload request is also capped at 8 MB by the middleware. |
+
+Why `voyage-4` at 1024 (decided 2026-10-10, prices from
+<https://docs.voyageai.com/docs/pricing> that day): Anthropic has no embedding
+model and points to Voyage. voyage-4-large is $0.12, voyage-4 $0.06 and
+voyage-4-lite $0.02 per million tokens, each with 200M free tokens. This
+repository's `docs/` is about 52k tokens (236 chunks at 400 tokens), so
+embedding it costs well under a cent with any of them and price does not
+decide. voyage-4 is the general-purpose model; large and the contextualized
+`voyage-context-4` are phase 4 ablations, kept only if the retrieval eval says
+so. The 4 series shares one embedding space. 1024 rather than 2048 keeps the
+HNSW index on plain `vector`.
+
+Startup checks run as for memory: a missing key, a width Voyage does not
+offer, or a provider that returns a different width stops the boot, and so
+does a `chunks.embedding` column whose width differs from
+`RAG__EMBEDDINGS_DIMS`. The column is sized when the table is first created.
+To change the width afterwards, drop `chunks` (documents keep their content)
+and re-ingest. Each corpus records the model its chunks were embedded with;
+ingesting into a corpus made with another model fails that document rather
+than mixing vectors from two models.
 
 ## Research agent
 

@@ -290,6 +290,18 @@ without depending on it. Full design, decisions and phases:
 **Done when.** A briefing over this repo's docs cites passages; a cross-tenant
 query returns nothing; the case study reports the ablations.
 
+**Progress.** Phase 0 (2026-10-10): `voyageai:voyage-4` at 1024 dims, in its
+own `RAG__*` settings; the boot probe passes against the real provider.
+Phase 1 (2026-10-10): corpora, documents and chunks with row-level security
+through a `waypoint_tenant` role, Markdown/HTML/PDF parsing, structure-aware
+chunking, the `ingest` agent and the `/corpora` API.
+Uploading `docs/` indexes all 17 files (251 chunks, live with voyage-4 in
+1.1 s), and cross-tenant reads
+and writes return nothing in the store, in raw SQL and through the API. The
+deviations from the design, with reasons, are in
+[design/rag.md](design/rag.md#implementation-log). Next: phase 2, retrieval
+and the retrieval eval.
+
 ### 4. Observability and cost
 
 **What.** OpenTelemetry spans for HTTP request, run, node and model call,

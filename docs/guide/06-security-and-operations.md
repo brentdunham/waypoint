@@ -73,12 +73,15 @@ Isolation is enforced at each place data could cross between tenants:
 | Runs | The run record carries the tenant; reading, streaming or cancelling another tenant's run is 404 |
 | Graph state | Identity is in context, never state or `configurable`, so it is never checkpointed ([3.5](03-state-and-persistence.md#35-context-state-and-config)) |
 | Memories | Namespace `("memories", tenant_id, user_id)`, from one function used by both graph and API |
+| Corpora | Two guards: every query in `rag/store.py` filters `tenant_id`, and each runs as the `waypoint_tenant` role with `app.tenant_id` set, so Postgres row-level security filters again. The role is needed because the service's own user owns the tables (and is a superuser in compose), and owners bypass RLS. Public corpora are readable by all and writable only by the owner role ([ARCHITECTURE.md §8a](../ARCHITECTURE.md)) |
 | Node cache | Keys hash node input only, so cached nodes carry `tenant_id` in their input; per-user nodes are not cached ([3.8](03-state-and-persistence.md#38-the-node-cache)) |
 | Limits | Buckets and slots are per tenant |
 | Traces | Each run is tagged `tenant:<id>` and `agent:<name>` |
 
 `tests/test_isolation.py` covers the cache cases; the integration tier covers
-keys and tenants against real Postgres and Redis.
+keys and tenants against real Postgres and Redis, and `tests/test_rag_pg.py`
+covers corpora: the store, raw SQL under RLS with no or the wrong tenant, and
+the API with a second tenant's key.
 
 ## 6.3 Rate and concurrency limits
 

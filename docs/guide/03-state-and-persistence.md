@@ -14,6 +14,7 @@ flowchart LR
         th[threads<br/>owner tenant + user, agent, title]
         ak[api_keys<br/>SHA-256 only]
         au[run_audit<br/>one row per run]
+        rg[corpora, documents, chunks<br/>pgvector + full text, RLS]
     end
     subgraph rd[Redis]
         ev["run:{id}:events streams<br/>1 h TTL after end"]
@@ -30,6 +31,7 @@ flowchart LR
 | Long-term memories | Postgres store | until deleted | Cross-thread; semantic search needs pgvector |
 | Thread ownership | `threads` table | as long as the thread | The checkpointer has no notion of an owner |
 | API keys | `api_keys` table | until revoked | Hashed; the plaintext exists only in the create response |
+| Corpora (RAG) | `corpora`, `documents` (with the uploaded bytes), `chunks` (with embeddings) | until the corpus is deleted | Retrieval in the same database and transactions as everything else; row-level security per tenant ([design/rag.md](../design/rag.md)) |
 | Run events | Redis Streams | 1 h after the run ends | Ordered, replayable from any id, shared by workers |
 | Run records | Redis, plus `run_audit` | Redis: same as events; audit: permanent | Fast status reads; durable history |
 | Limits, cancel signals, node cache | Redis | seconds to minutes | Cross-worker and atomic |

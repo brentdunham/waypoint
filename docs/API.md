@@ -200,6 +200,38 @@ which controls where execution picks up.
 Namespaced `("memories", tenant_id, user_id)` and cross-thread: what the agent
 learns in one conversation is loaded into the next.
 
+## Corpora
+
+Named sets of a tenant's documents for retrieval (design:
+[design/rag.md](design/rag.md)). `503` on every route when
+`RAG__EMBEDDINGS_MODEL` is unset.
+
+| Method | Path | Scope | Notes |
+|---|---|---|---|
+| POST | `/corpora` | `threads:write` | `{"name":"waypoint-docs"}`; `409` if the tenant has one by that name |
+| GET | `/corpora` | `threads:read` | Your corpora, then public ones, with document and chunk counts |
+| GET | `/corpora/<id>` | `threads:read` | |
+| DELETE | `/corpora/<id>` | `threads:write` | Deletes its documents and chunks. Public corpora: `404` |
+| POST | `/corpora/<id>/documents` | `threads:write` + `agents:run` | Multipart `files` (`.md`, `.html`, `.pdf`, `.txt`). `202` with an `ingest` run |
+| GET | `/corpora/<id>/documents` | `threads:read` | Each with `status` (`pending`, `ready`, `failed`), `error` and `chunks` |
+
+```bash
+CORPUS=$(curl -s -X POST $BASE/corpora -H "$AUTH" -d '{"name":"waypoint-docs"}' | jq -r .corpus_id)
+
+# The filename as sent is the document's title and the start of every chunk's
+# heading ("docs/DEPLOY.md › 4. Caddy"), so send the path you want shown.
+args=(); for f in $(git ls-files 'docs/*.md'); do args+=(-F "files=@$f;filename=$f"); done
+curl -s -X POST $BASE/corpora/$CORPUS/documents -H "$AUTH" "${args[@]}" | jq '{run_id, events_url}'
+```
+
+Follow the run on its `events_url`: one `custom` event per document and stage
+(`parsed`, `chunked`, `embedded`, `stored`, or `failed` with the reason), then
+`run.completed` with a summary in `result.metadata`. A file whose bytes are
+already in the corpus is listed with `queued: false` and not ingested again;
+if every file was a duplicate, `run_id` is `null`. Another tenant's corpus is
+`404` on every route. Limits: `RAG__MAX_UPLOAD_MB` per file (`413`), 8 MB per
+request, 100 files per request.
+
 ## Keys
 
 | Method | Path | Scope | Notes |
