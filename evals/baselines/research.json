@@ -1,33 +1,51 @@
 {
   "agent": "research",
-  "cases": 8,
+  "cases": 13,
   "checks": {
     "citations_resolve": {
-      "applicable": 21,
+      "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
         "mean": 1.0,
         "stdev": 0.0
       },
-      "passed": 21
+      "passed": 36
+    },
+    "cites_documents": {
+      "applicable": 15,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 15
+    },
+    "cites_web": {
+      "applicable": 6,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 6
     },
     "claims_cited": {
-      "applicable": 21,
+      "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
-        "mean": 0.9524,
-        "stdev": 0.0825
+        "mean": 0.9167,
+        "stdev": 0.0833
       },
-      "passed": 20
+      "passed": 33
     },
     "completed": {
-      "applicable": 24,
+      "applicable": 39,
       "not_applicable": 0,
       "pass_rate": {
         "mean": 1.0,
         "stdev": 0.0
       },
-      "passed": 24
+      "passed": 39
     },
     "declined_without_search": {
       "applicable": 3,
@@ -39,90 +57,90 @@
       "passed": 3
     },
     "distinct_questions": {
-      "applicable": 21,
+      "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
         "mean": 1.0,
         "stdev": 0.0
       },
-      "passed": 21
+      "passed": 36
     },
     "findings_cited": {
-      "applicable": 21,
+      "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
-        "mean": 0.8095,
-        "stdev": 0.165
+        "mean": 0.6944,
+        "stdev": 0.2406
       },
-      "passed": 17
+      "passed": 25
     },
     "findings_sourced": {
-      "applicable": 21,
+      "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
         "mean": 1.0,
         "stdev": 0.0
       },
-      "passed": 21
+      "passed": 36
     },
     "plan_bounds": {
-      "applicable": 21,
+      "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
         "mean": 1.0,
         "stdev": 0.0
       },
-      "passed": 21
+      "passed": 36
     },
     "rounds_bounded": {
-      "applicable": 21,
+      "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
         "mean": 1.0,
         "stdev": 0.0
       },
-      "passed": 21
+      "passed": 36
     },
     "sources_cited": {
-      "applicable": 21,
+      "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
         "mean": 1.0,
         "stdev": 0.0
       },
-      "passed": 21
+      "passed": 36
     }
   },
   "criteria": {
     "calibrated": {
-      "graded": 21,
+      "graded": 36,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.1429,
-        "stdev": 0.1429
+        "mean": 3.0,
+        "stdev": 0.2205
       },
-      "pass_rate": 0.8571
+      "pass_rate": 0.7222
     },
     "covers": {
-      "graded": 21,
+      "graded": 36,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.4762,
-        "stdev": 0.2182
+        "mean": 3.5278,
+        "stdev": 0.1273
       },
-      "pass_rate": 0.9524
+      "pass_rate": 1.0
     },
     "grounded": {
-      "graded": 21,
+      "graded": 36,
       "judge": "escalated",
       "mean": {
-        "mean": 3.8571,
-        "stdev": 0.0
+        "mean": 3.75,
+        "stdev": 0.0833
       },
       "pass_rate": 1.0
     },
     "plan_quality": {
-      "graded": 21,
+      "graded": 36,
       "judge": "calibrated",
       "mean": {
         "mean": 4.0,
@@ -131,23 +149,23 @@
       "pass_rate": 1.0
     },
     "useful": {
-      "graded": 21,
+      "graded": 36,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.9048,
-        "stdev": 0.0825
+        "mean": 3.8056,
+        "stdev": 0.1273
       },
       "pass_rate": 1.0
     }
   },
-  "date": "2026-10-09T18:15:08+00:00",
+  "date": "2026-10-10T22:22:13+00:00",
   "elapsed_s_per_run": {
-    "mean": 23.0979,
-    "stdev": 11.6918
+    "mean": 35.7212,
+    "stdev": 46.5936
   },
   "errors": 0,
-  "fingerprint": "c4b1b6c10283",
-  "git_sha": "2cdcba5",
+  "fingerprint": "1e4e092a685f",
+  "git_sha": "16809d0",
   "judge_model": "claude-haiku-4-5",
   "models": {
     "critic": "claude-sonnet-5",
@@ -155,6 +173,15 @@
     "searcher": "claude-haiku-5-5",
     "verifier": "claude-haiku-5-5",
     "writer": "claude-sonnet-5"
+  },
+  "rag": {
+    "candidates": 50,
+    "chunk_tokens": 400,
+    "embeddings_dims": 1024,
+    "embeddings_model": "voyageai:voyage-4",
+    "mode": "vector",
+    "rrf_k": 60,
+    "top_k": 8
   },
   "settings": {
     "max_follow_ups": 3,
@@ -165,37 +192,62 @@
   },
   "trials": 3,
   "usage": {
-    "cost_usd": 0.4426,
-    "cost_usd_per_run": 0.0184,
+    "cost_usd": 2.8345,
+    "cost_usd_per_run": 0.0727,
     "replayed": {
       "critic": 42,
-      "planner": 24,
+      "planner": 39,
       "searcher": 168,
-      "writer": 21
+      "verifier": 21,
+      "writer": 36
     },
     "roles": {
-      "verifier": {
-        "calls": 21,
-        "input_tokens": 259800,
-        "input_tokens_per_run": 10825,
-        "latency_s_per_call": 21.22,
-        "models": [
-          "claude-haiku-5-5"
-        ],
-        "output_tokens": 101111,
-        "output_tokens_per_run": 4213,
-        "searches": 0
-      },
-      "writer": {
-        "calls": 15,
-        "input_tokens": 136144,
-        "input_tokens_per_run": 5673,
-        "latency_s_per_call": 7.09,
+      "critic": {
+        "calls": 30,
+        "input_tokens": 165385,
+        "input_tokens_per_run": 4241,
+        "latency_s_per_call": 19.84,
         "models": [
           "claude-sonnet-5"
         ],
-        "output_tokens": 9378,
-        "output_tokens_per_run": 391,
+        "output_tokens": 60344,
+        "output_tokens_per_run": 1547,
+        "searches": 0
+      },
+      "searcher": {
+        "calls": 108,
+        "input_tokens": 2257754,
+        "input_tokens_per_run": 57891,
+        "latency_s_per_call": 10.31,
+        "models": [
+          "claude-haiku-5-5"
+        ],
+        "output_tokens": 213567,
+        "output_tokens_per_run": 5476,
+        "searches": 109
+      },
+      "verifier": {
+        "calls": 15,
+        "input_tokens": 148321,
+        "input_tokens_per_run": 3803,
+        "latency_s_per_call": 15.15,
+        "models": [
+          "claude-haiku-5-5"
+        ],
+        "output_tokens": 51525,
+        "output_tokens_per_run": 1321,
+        "searches": 0
+      },
+      "writer": {
+        "calls": 21,
+        "input_tokens": 129607,
+        "input_tokens_per_run": 3323,
+        "latency_s_per_call": 9.12,
+        "models": [
+          "claude-sonnet-5"
+        ],
+        "output_tokens": 17792,
+        "output_tokens_per_run": 456,
         "searches": 0
       }
     }

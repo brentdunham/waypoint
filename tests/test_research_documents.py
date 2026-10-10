@@ -203,3 +203,29 @@ def test_uncited_answers_fall_back_to_the_passages() -> None:
         "title": "a.md",
         "kind": "document",
     }
+
+
+def test_critic_and_writer_see_documents_marked_and_web_sources_unchanged() -> None:
+    doc: Any = {"url": "doc://d1#3", "title": "DEPLOY.md > 4. Caddy", "kind": "document"}
+    web: Any = {"url": "https://example.com/proxies", "title": "Proxies"}
+    finding: Any = {
+        "question": "q",
+        "answer": "a",
+        "sources": [doc, web],
+        "confidence": 0.9,
+        "issue": "",
+    }
+    numbers = number_sources([finding])
+    assert research._critic_source(doc) == "document: DEPLOY.md > 4. Caddy"
+    assert research._critic_source(web) == "https://example.com/proxies"
+    assert "[1] DEPLOY.md > 4. Caddy (document); [2] Proxies\n" in research._render_finding(
+        finding, numbers
+    )
+
+
+def test_document_rules_only_reach_runs_with_a_corpus() -> None:
+    # Web-only prompts must stay byte-identical so recorded calls still replay.
+    for template in (research.WORKER, research.CRITIC, research.SYNTH):
+        assert "{document_rule}" in template
+    for rule in (research.DOCUMENT_RULE, research.CRITIC_DOCUMENTS, research.SYNTH_DOCUMENTS):
+        assert rule.startswith("\n")

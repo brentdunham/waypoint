@@ -492,8 +492,50 @@ citations with quotes. Two things to watch in the eval: the model sometimes
 repeated a cited passage verbatim after paraphrasing it, and it ran web
 searches the passages had already answered.
 
-Done-when check: pending the live 3-trial research baseline with the new
-cases.
+Not seen in the eval: across the 108 corpus-case findings and 15 briefings of
+the accepted run, no sentence or quote appears twice.
+
+**Tuning after the first baseline.** The first 3-trial run (scorecard
+`d468946136e0`, 13 cases) met the done-when but failed the gate on `useful`
+(3.90 to 3.56, tolerance 0.25). Two causes:
+
+* *The corpus cases were weaker:* `useful` 3.40 and `calibrated` 2.93 on
+  them. The critic saw document sources only as `doc://` URLs and the writer
+  could not tell them from web pages, so findings from the docs were marked
+  down as "not independently verified" and briefings hedged them. For a
+  question about the user's own system, the user's docs are the record.
+* *Judge variance:* on the web cases' trials 1 and 2, which replayed
+  byte-identical briefings, the judge's `useful` mean was 3.64 against 3.93 in
+  the baseline run. The judge's calls are not replayed.
+
+The fix, all of it present only when a run has a corpus so web-only prompts
+stay byte-identical (the rerun replayed every web-case call): the critic sees
+a document source as `document: <heading>` and gets `CRITIC_DOCUMENTS` (a claim
+a document states is supported; no follow-up only for lack of web
+confirmation); the writer sees `(document)` beside the source and gets
+`SYNTH_DOCUMENTS` (state what the docs say as fact, keep hedges for real gaps,
+answer in the first two sentences); and `DOCUMENT_RULE` tells the searcher not
+to search the web to confirm the user's own docs.
+
+Done-when check, on the accepted baseline (scorecard `1e4e092a685f`, 13 cases
+x 3 trials, 2026-10-10, $2.84 for the live corpus cases):
+
+| | before (`c4b1b6c10283`) | first run | accepted | corpus cases only |
+|---|---|---|---|---|
+| `grounded` | 3.86 | 3.75 | 3.75 | 3.87 |
+| `claims_cited` | 0.95 | 0.94 | 0.92 | |
+| `useful` | 3.90 | 3.56 | 3.81 | 3.87 |
+| `calibrated` | 3.14 | 2.92 | 3.00 | 3.13 |
+| `cites_documents` | | 15/15 | 15/15 | |
+| `cites_web` (mixed cases) | | 6/6 | 6/6 | |
+
+`grounded` and `claims_cited` hold within the gate's tolerance. Searches per
+run fell from 161 to 109 across the corpus cases and searcher input from 80k to
+58k tokens per run. One cost: uncited findings on corpus cases rose from 4 of
+119 to 7 of 108. In them the searcher answered from passages without
+attaching citations (once typing markers like `[3-2]` into its prose), and on a
+web question the fallback listed passages ahead of the web results it used.
+Within the gate's tolerance; worth a look in phase 4.
 
 ## References
 
