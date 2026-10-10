@@ -181,7 +181,7 @@ async def corpus_index(settings: Settings, name: str) -> tuple[CorpusStore, str]
     _INDEX_LOCK = _INDEX_LOCK or asyncio.Lock()
     async with _INDEX_LOCK:
         if key not in _INDEXES:
-            store = MemoryCorpusStore()
+            store = MemoryCorpusStore(stable_ids=True)  # doc:// ids in prompts must replay
             index = await build_index(
                 settings,
                 store,

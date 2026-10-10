@@ -381,6 +381,7 @@ facts went stale. The transcripts say which.
 | Fresh 1-trial research run | $0.27 per run, $2.16 for 8 cases | 2026-10-09 scorecard |
 | Retrieval eval, ten configurations, index reused or rebuilt | about $0.05 (Haiku preambles); Voyage calls inside the free tier | 2026-10-10 scorecards |
 | Research corpus cases live, 5 cases x 3 trials, web cases replayed | $2.84 to $3.04 | 2026-10-10 scorecards |
+| Citation retry, 13 cases x 3 trials, corpus cases live | $3.97 | 2026-10-10 scorecard |
 
 Judge calls are not priced on scorecards. `evals/prices.toml` holds the rates
 used, with the date they were checked.

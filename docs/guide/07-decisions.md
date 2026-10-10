@@ -237,6 +237,9 @@ code. The source list is appended from metadata, so the writer cannot add one.
 
 **Consequences.** Every listed source was retrieved. Uncited findings are
 visible to the critic, the writer and the evals instead of silently passing.
+Since 2026-10-10 a reply that cites nothing although it had material to cite
+is asked once more first; that took uncited findings from 20 of 277 to 1 of
+281 in the eval, for one extra Haiku call in about one worker in twenty.
 
 ### D16. Verify citations after writing; fix in code where possible
 
@@ -354,8 +357,8 @@ rephrasing-heavy questions is poor.
 
 **Consequences.** One model call per worker, retrieval deterministic and
 replayable. The searcher must attach citations to what it read; when it does
-not, the finding is uncited, which is now the limit on `grounded` for corpus
-cases (phase 4).
+not, the finding is uncited, which became the limit on `grounded` for corpus
+cases in phase 4 and is now handled by a retry (D15).
 
 ### D23. Measure retrieval on quoted spans, before any answer
 

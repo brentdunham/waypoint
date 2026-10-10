@@ -556,12 +556,24 @@ class _Doc:
 
 
 class MemoryCorpusStore:
-    """Same contract, in a dict. Visibility rules mirror the RLS policies."""
+    """Same contract, in a dict. Visibility rules mirror the RLS policies.
 
-    def __init__(self) -> None:
+    ``stable_ids`` derives corpus and document ids from tenant, corpus name and
+    document title instead of drawing random ones. The research eval needs it:
+    a passage's ``doc://<document_id>`` is part of the worker's input, so a
+    random id per process made every corpus-case call miss the replay store.
+    """
+
+    def __init__(self, *, stable_ids: bool = False) -> None:
+        self._stable_ids = stable_ids
         self._corpora: dict[str, Corpus] = {}
         self._docs: dict[str, _Doc] = {}
         self._chunks: dict[str, list[StoredChunk]] = {}
+
+    def _new_id(self, *parts: str) -> str:
+        if self._stable_ids:
+            return str(uuid.uuid5(uuid.NAMESPACE_URL, "waypoint-memory:" + "/".join(parts)))
+        return str(uuid.uuid4())
 
     def _visible(self, tenant_id: str, corpus_id: str) -> Corpus | None:
         corpus = self._corpora.get(corpus_id)
@@ -594,7 +606,9 @@ class MemoryCorpusStore:
         """``visibility`` exists for tests; the API only ever creates private corpora."""
         if any(c.tenant_id == tenant_id and c.name == name for c in self._corpora.values()):
             raise Conflict(f"A corpus named {name!r} already exists.")
-        corpus = Corpus(str(uuid.uuid4()), tenant_id, name, visibility, embed_model, _now())
+        corpus = Corpus(
+            self._new_id(tenant_id, name), tenant_id, name, visibility, embed_model, _now()
+        )
         self._corpora[corpus.corpus_id] = corpus
         return corpus
 
@@ -637,7 +651,7 @@ class MemoryCorpusStore:
                 added.append(Added(self._doc_info(existing), queued))
                 continue
             info = DocumentInfo(
-                document_id=str(uuid.uuid4()),
+                document_id=self._new_id(tenant_id, self._corpora[corpus_id].name, new.title),
                 corpus_id=corpus_id,
                 title=new.title,
                 source_uri=new.source_uri,

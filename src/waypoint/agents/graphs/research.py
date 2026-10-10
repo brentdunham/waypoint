@@ -27,7 +27,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 from langchain_core.exceptions import OutputParserException
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.config import get_stream_writer
 from langgraph.constants import TAG_NOSTREAM
 from langgraph.graph import END, START, StateGraph
@@ -43,6 +43,7 @@ from waypoint.agents.citations import (
     number_sources,
     retrieved_sources,
     split_sentences,
+    strip_typed_markers,
 )
 from waypoint.agents.context import AgentContext
 from waypoint.agents.models import (
@@ -209,6 +210,18 @@ confirm it."""
 """Design decision R8: documents are untrusted input. Retrieval always returns
 its top k passages, relevant or not; the retrieval eval found no similarity
 threshold that separates the two, so the model is told to ignore misses."""
+
+RECITE_RULE = """
+
+Your previous answer to this question attached no citations, so none of its
+claims can be checked. Answer again. Draw every claim from the search results
+so that a citation attaches to it, and do not type markers such as [1] or [2-1]."""
+"""Sent once, after a reply with no citations although there was something to
+cite. In the phase 4 eval (2026-10-10) 14 of 109 corpus-case replies came back
+as one text block with no citations at all, 9 of them after web searches;
+every corpus briefing the judge marked down on `grounded` cited one of those
+findings. A second sample usually cites. Only the retry carries this text, so
+the first call, and its recording, is unchanged."""
 
 CRITIC_SYSTEM = "You review research findings before they go into a briefing. Be strict."
 
@@ -501,10 +514,40 @@ def build(
             if passages
             else prompt
         )
+        reply = await ask(state["model"], content)
+        answer, sources = answer_and_sources(reply)
+        cited = bool(sources)
+        retried = False
+        if not cited and (passages or retrieved_sources(reply, 1)):
+            # Material to cite, and no citation: one more sample (RECITE_RULE).
+            retried = True
+            reply = await ask(state["model"], _with_recite(content))
+            answer, sources = answer_and_sources(reply)
+            cited = bool(sources)
+        if not cited and (cfg.web_search or passages):
+            sources = [
+                *(passage_source(h) for h in passages[:RETRIEVED_SOURCES]),
+                *retrieved_sources(reply, RETRIEVED_SOURCES),
+            ][:RETRIEVED_SOURCES]
+        finding = Finding(
+            question=state["question"],
+            answer=strip_typed_markers(answer),
+            sources=sources,
+            cited=cited,
+            model=model_of(reply, state["model"]),
+            confidence=None,
+            issue="",
+            round=state["round"],
+        )
+        if retried:  # absent otherwise, so findings without a retry are unchanged
+            finding["retried"] = True
+        return {"findings": [finding]}
+
+    async def ask(model: str, content: str | list[str | dict[Any, Any]]) -> BaseMessage:
         try:
             # By the name in the input, not the context: the node cache keys on
             # input, so the model that answers must be the one in the key.
-            reply = await searcher.named(state["model"]).ainvoke([HumanMessage(content)])
+            reply: BaseMessage = await searcher.named(model).ainvoke([HumanMessage(content)])
         except Exception as exc:
             if cfg.web_search and type(exc).__name__ == "BadRequestError":
                 raise ResearchConfigError(
@@ -514,27 +557,7 @@ def build(
                     f"Provider said: {exc}"
                 ) from exc
             raise
-        answer, sources = answer_and_sources(reply)
-        cited = bool(sources)
-        if not cited and (cfg.web_search or passages):
-            sources = [
-                *(passage_source(h) for h in passages[:RETRIEVED_SOURCES]),
-                *retrieved_sources(reply, RETRIEVED_SOURCES),
-            ][:RETRIEVED_SOURCES]
-        return {
-            "findings": [
-                Finding(
-                    question=state["question"],
-                    answer=answer,
-                    sources=sources,
-                    cited=cited,
-                    model=model_of(reply, state["model"]),
-                    confidence=None,
-                    issue="",
-                    round=state["round"],
-                )
-            ]
-        }
+        return reply
 
     # -- 4. review: score, and maybe go round again ----------------------
     async def critique(state: ResearchState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
@@ -905,6 +928,15 @@ def _verify_sources(findings: list[Finding], numbers: dict[str, int]) -> list[di
                 entry["retrieved_only"] = True
             out[n] = entry
     return [out[n] for n in sorted(out)]
+
+
+def _with_recite(content: str | list[str | dict[Any, Any]]) -> str | list[str | dict[Any, Any]]:
+    """The worker's message with RECITE_RULE after the prompt."""
+    if isinstance(content, str):
+        return content + RECITE_RULE
+    *passages, prompt = content
+    assert isinstance(prompt, dict)
+    return [*passages, {**prompt, "text": prompt["text"] + RECITE_RULE}]
 
 
 def _critic_source(source: Source) -> str:

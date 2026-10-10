@@ -149,6 +149,7 @@ the defaults.
 | The source list is built from metadata and appended; the writer cannot add a source | `synthesize`, `_source_list` |
 | An edited plan is capped at 5 questions | `approve`, `MAX_QUESTIONS` |
 | A rejected web-search request fails with the fix in the message | `investigate` |
+| A reply that cites nothing although it had passages or search results is asked once more (`RECITE_RULE`); typed marks like `[2-1]` are stripped from answers | `investigate`, `strip_typed_markers` |
 | A run that names a corpus the tenant cannot read, or names one while RAG is off, fails before planning | `plan`, `CorpusUnavailableError` |
 
 **Documents.** With a `corpus_id` in the input, `plan` checks the corpus
@@ -199,7 +200,9 @@ passage from a corpus), `cited`, `confidence`,
 flowchart TD
     reply[Searcher reply: content blocks] --> blocks{Text blocks carry<br/>citations?}
     blocks -- yes --> src[Sources from each citation:<br/>web: url, title; document: source, title<br/>cited_text as quotes<br/>max 3 per source, 400 chars each]
-    blocks -- no --> fb[Fallback: retrieved passages, then<br/>pages the searches returned,<br/>first 5, cited = false]
+    blocks -- no --> again[Asked once more:<br/>RECITE_RULE after the prompt]
+    again -- cites --> src
+    again -- still none --> fb[Fallback: retrieved passages, then<br/>pages the searches returned,<br/>first 5, cited = false]
     src & fb --> finding[Finding]
     finding --> num[number_sources: one global #91;n#93;<br/>per URL, in finding order]
     num --> writer[Writer sees findings with #91;n#93;]
@@ -221,6 +224,10 @@ share one `[n]` numbering; the appended source list shows a document as
 paragraph of a passage is its own text block, because Claude cites whole
 blocks, so a citation can be narrower than the passage.
 
+The retry exists because a reply sometimes comes back as one block of prose
+with no citations at all, from material it could have cited: 20 of 277
+findings in the phase 4 eval (2026-10-10). Asked once more, 14 of 15 came back
+cited ([retrieval case study](../case-studies/retrieval.md#6-follow-up-asking-again-when-nothing-is-cited)).
 The fallback exists because Haiku 5.5 searched but attached no citations in
 about a quarter of findings (2026-10-08). Its search results are still real
 pages, so they are kept, marked `cited: false`, capped at 0.3 confidence, and

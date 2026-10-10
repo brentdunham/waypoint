@@ -314,8 +314,10 @@ contextual retrieval, voyage-4-large, voyage-context-4, a reranker, chunk
 size and top-k, only the reranker earned its place (vector MRR 0.80 to 0.90,
 recall@5 0.88 to 0.96, $0.0007 and 0.2 s per query) and is on by default.
 At the answer level the bottleneck is now the searcher attaching citations,
-not retrieval ([case study](case-studies/retrieval.md)). Next: phase 5, the
-public demo corpus.
+not retrieval ([case study](case-studies/retrieval.md)). Fixed the same day:
+a worker whose reply cites nothing is asked once more, which took uncited
+findings from 20 of 277 to 1 of 281 and `grounded` from 3.67 to 3.83. Next:
+phase 5, the public demo corpus.
 
 ### 4. Observability and cost
 

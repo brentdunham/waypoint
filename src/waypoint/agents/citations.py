@@ -61,6 +61,21 @@ def answer_and_sources(message: BaseMessage) -> tuple[str, list[Source]]:
     return "".join(parts).strip(), list(seen.values())
 
 
+_TYPED_MARKERS = re.compile(r"[ \t]*\(?(?:\[\d+(?:-\d+)?\])+\)?")
+
+
+def strip_typed_markers(answer: str) -> str:
+    """A worker answer without citation marks the model typed into its prose.
+
+    Workers are told not to type them; sources come only from citation
+    metadata. When a searcher writes ``[2-1]`` anyway, the mark points at
+    nothing, and the writer copied such marks into a briefing on 2026-10-10,
+    where they failed ``citations_resolve``. Not for briefings: their ``[n]``
+    marks are the real ones.
+    """
+    return _TYPED_MARKERS.sub("", answer)
+
+
 def is_document(source: Source) -> bool:
     return source.get("kind") == "document"
 

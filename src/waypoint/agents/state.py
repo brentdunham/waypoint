@@ -53,6 +53,10 @@ class Finding(TypedDict):
     round: int
     model: NotRequired[str]
     """The searcher model that wrote ``answer``. Absent before 2026-10-09."""
+    retried: NotRequired[bool]
+    """True when the first answer attached no citations and the searcher was
+    asked again (``RECITE_RULE``); ``answer`` and ``sources`` are the second
+    reply's. Absent otherwise."""
 
 
 def merge_findings(left: list[Finding], right: list[Finding]) -> list[Finding]:

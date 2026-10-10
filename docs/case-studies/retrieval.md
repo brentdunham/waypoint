@@ -144,6 +144,49 @@ reranking), and what decides `grounded` is whether Haiku attaches citations
 to what it read. That is the next thing to fix, and the retrieval eval will
 not see it.
 
+## 6. Follow-up: asking again when nothing is cited
+
+The replay store keeps every searcher reply, so the 14 uncited ones could be
+read. All 14 had the same shape: the whole answer in one text block, no
+citations at all, a normal stop. Nine had run web searches as well, so this
+was not about documents: Haiku 5.5 sometimes answers without using the
+citation mechanism, from material it could have cited. The 7 uncited replies
+of the run before reranking look the same.
+
+The fix is in the worker: when a reply has no citations although it had
+something to cite (passages, or results from its own searches), the searcher
+is asked once more, with one added paragraph saying the first answer could
+not be checked and to draw every claim from the search results
+(`RECITE_RULE`). The first call is unchanged, so its recording still
+replays: on the web cases this run was a paired comparison on exactly the
+replies that had failed. Typed marks such as `[2-1]` are also stripped from
+worker answers, after one survived into a briefing.
+
+13 cases x 3 trials, scorecards `279fd17627bc` (before) and `3bd69055c49a`
+(with the retry), $3.97:
+
+| | before | with the retry |
+|---|---|---|
+| uncited findings, web cases | 6 of 168 | 0 of 168 (6 retried) |
+| uncited findings, corpus cases | 14 of 109 | 1 of 113 (9 retried) |
+| `findings_cited` (all cases) | 0.64 | 0.97 |
+| `grounded`, web cases | 3.67 | 3.81 |
+| `grounded`, corpus cases | 3.67 | 3.87 |
+| `grounded` (all cases) | 3.67 | 3.83 |
+
+Every retry but one came back cited; the one that did not had typed marks in
+its prose, which the writer copied into the briefing (the only
+`citations_resolve` failure). On the corpus cases `useful` and `covers` moved
+by 0.13 each (3.87 to 3.73, 3.60 to 3.47): two briefings of fifteen, within
+what the same unchanged briefings have moved between judge runs. The retry
+cost is one Haiku call, with its searches, for about one worker in twenty.
+
+Also found here: the research eval's in-memory corpus gave documents random
+ids, so a passage's `doc://` source, which is part of the worker's prompt,
+changed in every process, and corpus-case calls never replayed. Ids are now
+derived from the corpus and document names (`MemoryCorpusStore(stable_ids=True)`),
+so after one more live run those cases replay like the rest.
+
 ## How to reproduce
 
 ```bash

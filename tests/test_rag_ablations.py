@@ -279,3 +279,16 @@ def test_new_settings_enter_the_research_fingerprint_only_when_they_change_behav
         "research",
         models,
     )
+
+
+def test_stable_ids_repeat_across_stores_so_eval_prompts_replay() -> None:
+    async def ids(stable: bool) -> tuple[str, str]:
+        store = MemoryCorpusStore(stable_ids=stable)
+        corpus = await store.create_corpus("evals", "waypoint-docs-abc", "m")
+        [added] = await store.add_documents(
+            "evals", corpus.corpus_id, [NewDocument("docs/API.md", "text/markdown", b"x")]
+        )
+        return corpus.corpus_id, added.document.document_id
+
+    assert asyncio.run(ids(True)) == asyncio.run(ids(True))
+    assert asyncio.run(ids(False)) != asyncio.run(ids(False))

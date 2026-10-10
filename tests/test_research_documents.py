@@ -16,9 +16,10 @@ from langgraph.store.memory import InMemoryStore
 from starlette.testclient import TestClient
 from tests.conftest import TestApp, build_settings, new_thread, read_sse, run_and_wait
 
-from waypoint.agents.citations import answer_and_sources, number_sources
+from waypoint.agents.citations import answer_and_sources, number_sources, strip_typed_markers
 from waypoint.agents.context import AgentContext
 from waypoint.agents.graphs import research
+from waypoint.agents.models import ScriptedChatModel
 from waypoint.rag.retrieve import Hit
 from waypoint.rag.store import MemoryCorpusStore, NewDocument, StoredChunk
 
@@ -229,3 +230,93 @@ def test_document_rules_only_reach_runs_with_a_corpus() -> None:
         assert "{document_rule}" in template
     for rule in (research.DOCUMENT_RULE, research.CRITIC_DOCUMENTS, research.SYNTH_DOCUMENTS):
         assert rule.startswith("\n")
+
+
+def _uncited_first(monkeypatch: pytest.MonkeyPatch, *, searched: bool) -> list[str]:
+    """Worker replies carry no citations unless the prompt is the retry."""
+    original = ScriptedChatModel._next
+    prompts: list[str] = []
+
+    def scripted(self: ScriptedChatModel, messages: Any) -> AIMessage:
+        content = messages[-1].content
+        blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
+        text = "\n".join(
+            str(b["text"]) for b in blocks if isinstance(b, dict) and b.get("type") == "text"
+        )
+        if not text.startswith("Answer this research question"):
+            return original(self, messages)
+        prompts.append(text)
+        if "attached no citations" in text:
+            return original(self, messages)
+        reply: list[dict[str, Any]] = [{"type": "text", "text": "An answer with no citations."}]
+        if searched:
+            reply.insert(
+                0,
+                {
+                    "type": "web_search_tool_result",
+                    "tool_use_id": "s1",
+                    "content": [
+                        {"type": "web_search_result", "url": "https://a.example", "title": "A"}
+                    ],
+                },
+            )
+        return AIMessage(content=reply)
+
+    monkeypatch.setattr(ScriptedChatModel, "_next", scripted)
+    return prompts
+
+
+def test_an_uncited_answer_over_passages_is_asked_again(
+    rag: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    corpus_id = corpus_with_doc(rag)
+    prompts = _uncited_first(monkeypatch, searched=False)
+    thread_id, _ = start(rag, corpus_id)
+    done = run_and_wait(rag, thread_id, {"resume": {"approved": True}})
+    findings = done["result"]["findings"]
+    assert findings
+    assert all(f.get("retried") for f in findings)
+    assert all(f["cited"] for f in findings)
+    assert all(any(s.get("kind") == "document" for s in f["sources"]) for f in findings)
+    retries = [p for p in prompts if "attached no citations" in p]
+    assert len(retries) == len(findings) == len(prompts) - len(retries)
+
+
+def test_an_answer_with_nothing_to_cite_is_not_asked_again(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prompts = _uncited_first(monkeypatch, searched=False)
+    thread_id, _ = start(client, None)
+    done = run_and_wait(client, thread_id, {"resume": {"approved": True}})
+    findings = done["result"]["findings"]
+    assert findings
+    assert not any(f.get("retried") for f in findings)
+    assert not any(f["cited"] for f in findings)
+    assert not any("attached no citations" in p for p in prompts)
+
+
+def test_an_uncited_answer_after_web_searches_is_asked_again(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _uncited_first(monkeypatch, searched=True)
+    thread_id, _ = start(client, None)
+    done = run_and_wait(client, thread_id, {"resume": {"approved": True}})
+    findings = done["result"]["findings"]
+    assert findings
+    assert all(f.get("retried") for f in findings)
+    assert all(f["cited"] for f in findings)
+
+
+def test_the_retry_adds_the_rule_after_the_prompt_and_keeps_the_passages() -> None:
+    assert research._with_recite("prompt") == "prompt" + research.RECITE_RULE
+    passage = {"type": "search_result", "source": "doc://d#0"}
+    out = research._with_recite([passage, {"type": "text", "text": "prompt"}])
+    assert out == [passage, {"type": "text", "text": "prompt" + research.RECITE_RULE}]
+
+
+def test_typed_markers_are_stripped_from_worker_answers() -> None:
+    typed = "EventSource has no auth header ([3-1]). It cannot abort [2][4-2]. Fine."
+    assert strip_typed_markers(typed) == "EventSource has no auth header. It cannot abort. Fine."
+    assert (
+        strip_typed_markers("No marks, and a list [a] stays.") == "No marks, and a list [a] stays."
+    )

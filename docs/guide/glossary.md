@@ -29,7 +29,7 @@ definition gives the general meaning first, then what it means here.
 | **Planner** | The research role that turns a topic into up to five questions, each with a reason. |
 | **Quote** | Text from a source page that the searcher's answer drew on, taken from the citation's `cited_text`. Up to three per source. |
 | **Reducer** | A function that merges a node's update into a state key, for example `add_messages` or `merge_findings`. Keys without one are last-write-wins. |
-| **Retrieved-only source** | A page a search returned when the searcher cited nothing. Kept, marked `cited: false`, confidence capped at 0.3. |
+| **Retrieved-only source** | A page or passage given to the searcher when it cited nothing, even after being asked once more. Kept, marked `cited: false`, confidence capped at 0.3. |
 | **Role** | A model call site in an agent: `planner`, `searcher`, `critic`, `writer`, `verifier`, `assistant`. Each can use a different model. |
 | **Round / wave** | One pass of parallel workers followed by one critique. At most `RESEARCH__MAX_ROUNDS`. |
 | **Run** | One execution of a graph on a thread, from a start request to a terminal state. |

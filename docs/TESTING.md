@@ -103,7 +103,9 @@ How it fits together (`evals/`):
   `"corpus": "waypoint-docs"` also searches that corpus: the driver indexes
   the pinned corpus (see Retrieval eval) in memory once per run, so it needs
   `RAG__EMBEDDINGS_MODEL`, `VOYAGE_API_KEY` and `RAG__MODE=vector`, but no
-  database. Under `--fake` it uses hash vectors.
+  database. Under `--fake` it uses hash vectors. Document ids in that index
+  are derived from the names, so the `doc://` sources in worker prompts, and
+  with them the recorded calls, are the same in every process.
 * **Driver** — runs each case in process on the same `build()` the service
   registers, with its own in-memory store, and records every model call with
   role, model, tokens, web searches and latency.

@@ -587,6 +587,19 @@ from 3.87 to 3.67, all through citations to uncited findings, which doubled
 (7 to 14 of about 108). The gate passed over all cases. Retrieval is no longer
 what limits these briefings; citation attachment by the searcher is.
 
+### After phase 4: a retry when nothing is cited (2026-10-10)
+
+The uncited replies were all one text block with no citations, after
+passages or web searches. The worker now asks once more when a reply cites
+nothing although it had material to cite (`RECITE_RULE`), and strips typed
+marks such as `[2-1]` from worker answers. Uncited findings went from 20 of
+277 to 1 of 281, `findings_cited` from 0.64 to 0.97, and `grounded` from 3.67
+to 3.83 (3.87 on the corpus cases); new research baseline `3bd69055c49a`
+([case study, section 6](../case-studies/retrieval.md#6-follow-up-asking-again-when-nothing-is-cited)).
+The research eval's in-memory corpus now has stable document ids, so
+corpus-case calls replay; before, the random `doc://` ids in every prompt
+made each of those runs pay in full.
+
 ## References
 
 * [Claude docs: search results](https://platform.claude.com/docs/en/build-with-claude/search-results)
