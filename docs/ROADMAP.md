@@ -273,6 +273,23 @@ reports the background loop it no longer has (ARCHITECTURE.md §1).
 
 ## Next
 
+### Retrieval over tenant documents (RAG)
+
+**What.** Tenants upload documents into corpora; the research agent searches a
+chosen corpus alongside the web and cites passages with the same `[n]`
+machinery. Hybrid retrieval (pgvector plus Postgres full-text, fused with
+RRF) in the existing database, row-level security per tenant, passages handed
+to the model as `search_result` blocks so citations come back with the quoted
+text. Measured by a retrieval eval (recall@k, MRR) before any answer eval.
+
+**Why here.** It is the most-asked-for agent capability, it reuses the
+citation verifier and the eval harness, and it can be done before step 4
+without depending on it. Full design, decisions and phases:
+[design/rag.md](design/rag.md).
+
+**Done when.** A briefing over this repo's docs cites passages; a cross-tenant
+query returns nothing; the case study reports the ablations.
+
 ### 4. Observability and cost
 
 **What.** OpenTelemetry spans for HTTP request, run, node and model call,
