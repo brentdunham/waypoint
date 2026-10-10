@@ -350,6 +350,96 @@ every file `ready` (unit tier with `HashEmbeddings`, and integration tier
 against Postgres), and a cross-tenant query returns nothing (store, raw SQL
 under RLS, and the API).
 
+### Phase 2: retrieval and the retrieval eval (2026-10-10)
+
+Built: `rag/retrieve.py` (vector, keyword, hybrid with RRF), the store's
+`vector_search` and `keyword_search`, `rag/index.py` (the per-document
+pipeline, now shared by the ingest agent and the eval), and
+`python -m evals retrieval` (TESTING.md, Retrieval eval). Brent reviewed the
+gold set; the baseline is `evals/baselines/retrieval.json`.
+
+Baseline (scorecard `23fc0bddc032`, 34 answerable and 6 no-answer queries,
+`docs/` at `1777465`, voyage-4 at 1024 dims, 400-token chunks, 251 chunks):
+
+| mode | recall@5 | recall@8 | recall@20 | MRR | p50 latency |
+|---|---|---|---|---|---|
+| vector | **0.88** | **0.93** | **0.97** | **0.80** | 188 ms |
+| keyword | 0.51 | 0.59 | 0.72 | 0.41 | 7 ms |
+| hybrid | 0.74 | 0.79 | 0.94 | 0.62 | 188 ms |
+
+By kind, recall@8 / MRR: vector 1.00 / 0.67 on identifiers, 0.81 / 0.83 on
+multi-hop, 0.94 / 0.86 on paraphrase; hybrid 1.00 / 0.74, 0.75 / 0.59,
+0.69 / 0.56; keyword 0.90 / 0.71, 0.50 / 0.46, 0.44 / 0.19.
+
+What it says, and what changed because of it:
+
+* **Hybrid loses to vector, so the default is now `vector`** (decided by
+  Brent, 2026-10-10). R3 assumed fusion would win. Here RRF gives the keyword
+  ranking an equal vote, and that ranking is weak on paraphrase (MRR 0.19)
+  and only marginally better than vector even on identifiers (MRR 0.71 vs
+  0.67, both finding all of them by rank 8). Hybrid stays available
+  (`RAG__MODE=hybrid`) for the phase 4 ablations: a weighted fusion, a better
+  keyword ranking, and contextual retrieval may change the answer.
+* **No vector-score threshold separates "nothing relevant".** No-answer
+  queries' best match scores up to 0.52 cosine; answerable queries' best
+  relevant match can be as low as 0.36. A cutoff would drop real answers or
+  keep non-answers, so phase 3 will not filter on score; the worker prompt
+  has to cope with irrelevant passages.
+* **Latency is the query embedding.** About 185 ms is the Voyage round trip;
+  the SQL takes single-digit milliseconds.
+* **Docs repeat themselves, so spans got alternatives.** The first run
+  (`60cfbf2051d4`, vector recall@8 0.90, MRR 0.73) counted q01, q03 and q15 as
+  misses although the top hits answered them from another document. A span
+  now has `alternatives`: any of them satisfies that need (OR), while a
+  query's separate spans must all be found (AND). Brent approved the five
+  alternatives added to those three queries; the other low ranks are real
+  retrieval misses and kept their labels.
+
+Decisions and differences from the design:
+
+* **Keyword search ORs the query's terms.** `plainto_tsquery` ANDs them, and a
+  natural-language question almost never has every word in one chunk. The
+  ranking is `ts_rank_cd` (cover density). It is not BM25: Postgres has no
+  corpus-wide term weighting, so common words in the corpus are not
+  discounted. If keyword recall disappoints, that is the first suspect.
+* **The HNSW scan gets two transaction-local settings.** `hnsw.ef_search` is
+  raised to the number of results asked for (default 40 caps a scan), and
+  `hnsw.iterative_scan = relaxed_order` (pgvector 0.8; the images run 0.8.6)
+  keeps scanning when the `corpus_id` filter discards candidates, so a small
+  corpus beside large ones is not returned short. Results are re-sorted
+  because relaxed order may be slightly out of order.
+* **The eval corpus is pinned to a commit** (`evals/corpora/waypoint-docs.toml`,
+  docs at `1777465`), read with `git cat-file`. Spans are checked against the
+  chunks at that commit, so later doc edits cannot silently break the gold
+  set, and moving the pin is an explicit step.
+* **The eval indexes into Postgres, not memory** (`EVALS__DATABASE_URL`, a
+  database of its own), under tenant `evals`, in a corpus named after a
+  fingerprint of files, model, width, chunk size and the parse/chunk/index
+  source. Measuring keyword search on anything but Postgres full text would
+  measure the wrong thing. Same fingerprint, same index: a rerun pays only
+  for query embeddings.
+* **Metrics:** recall@5, recall@`RAG__TOP_K`, recall@20 and MRR (over the top
+  20), per mode and per kind, p50/p95 latency, and the best vector score of
+  no-answer queries beside answerable ones. Recall is the share of a query's
+  spans found, so multi-hop queries get partial credit.
+* **Gate:** retrieval is deterministic for a fixed index, so the floor (a drop
+  of 0.05 in recall@k or MRR) is the whole tolerance, and one run can be
+  accepted, but only from the reviewed `retrieval.jsonl`.
+* **Gold set:** 40 queries (16 paraphrase, 10 identifier, 8 multi-hop, 6
+  no-answer) drafted by Claude with spans from all 17 files, no more than 5
+  per file. `evals retrieval --check` confirms every span is in a chunk;
+  `tests/test_retrieval.py` keeps it that way.
+* **Settings:** `RAG__TOP_K`, `RAG__MODE`, `RAG__CANDIDATES`, `RAG__RRF_K`.
+  The retrieval scorecard's fingerprint covers them; the research eval's will
+  when phase 3 makes the research agent read them.
+
+Found while smoke-testing against Postgres and Voyage: `langchain-voyageai`
+counts tokens to size its batches with `voyageai`'s tokenizer, which it
+downloads from the Hugging Face Hub on first use. So the service needs
+outbound access to huggingface.co the first time it embeds, and tokenizing
+runs synchronously on the event loop. Neither matters at this corpus size; a
+small direct client for Voyage's REST API would remove both.
+
 ## References
 
 * [Claude docs: search results](https://platform.claude.com/docs/en/build-with-claude/search-results)

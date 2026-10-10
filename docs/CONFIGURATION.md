@@ -151,6 +151,10 @@ and neither change forces re-embedding the other.
 | `VOYAGE_API_KEY` | — | Required when either embeddings model starts with `voyageai:`. From <https://dashboard.voyageai.com/>. |
 | `RAG__CHUNK_TOKENS` | `400` | Target chunk size, estimated as characters / 4. Takes effect for documents ingested afterwards. |
 | `RAG__MAX_UPLOAD_MB` | `5` | Per file. A whole upload request is also capped at 8 MB by the middleware. |
+| `RAG__TOP_K` | `8` | Chunks per question for the research worker (phase 3). Each is input on every web search in that worker call; the design measures 5, 8, 12 and 20. |
+| `RAG__MODE` | `vector` | `vector`, `keyword` (Postgres full text) or `hybrid` (both, fused with reciprocal rank fusion). `vector` because it measured best: on the retrieval baseline (2026-10-10) recall@8 was 0.93 for vector, 0.79 for hybrid and 0.59 for keyword, MRR 0.80, 0.62 and 0.41 (design/rag.md, Phase 2). |
+| `RAG__CANDIDATES` | `50` | Chunks each method ranks before fusion. |
+| `RAG__RRF_K` | `60` | RRF constant: a chunk at rank r scores 1/(60 + r) per method that found it. 60 is the value from the original RRF paper and the design. |
 
 Why `voyage-4` at 1024 (decided 2026-10-10, prices from
 <https://docs.voyageai.com/docs/pricing> that day): Anthropic has no embedding
@@ -223,6 +227,7 @@ Read by `python -m evals` only (TESTING.md), never by the service.
 | `EVALS__JUDGE_ESCALATION_MODEL` | *unset* | Grades the criteria where calibration found the judge below `EVALS__MIN_AGREEMENT`, if it does better. Unset → those criteria are reported as untrusted and left ungraded. A Sonnet model is the usual choice. |
 | `EVALS__JUDGE_TEMPERATURE` | `0` | Makes grades repeatable. At the API default Haiku scored one briefing 3, 2, 2, 2, 2 across five identical calls; at 0 it gave 2 every time. Haiku 4.5 and Sonnet 4.5 accept it; leave it empty for a judge model that rejects `temperature`. |
 | `EVALS__MIN_AGREEMENT` | `0.8` | Share of hand-labelled examples where judge and label must agree on pass/fail. |
+| `EVALS__DATABASE_URL` | *unset* | Postgres for the retrieval eval's index (`evals retrieval`), so it measures the SQL the service runs. A database of its own (`waypoint_evals`), never the service's. Not needed for `--check` or `--fake`. |
 
 Changing `EVALS__JUDGE_MODEL` or a rubric invalidates its calibration; rerun
 `evals calibrate`.

@@ -299,8 +299,11 @@ Uploading `docs/` indexes all 17 files (251 chunks, live with voyage-4 in
 1.1 s), and cross-tenant reads
 and writes return nothing in the store, in raw SQL and through the API. The
 deviations from the design, with reasons, are in
-[design/rag.md](design/rag.md#implementation-log). Next: phase 2, retrieval
-and the retrieval eval.
+[design/rag.md](design/rag.md#implementation-log). Phase 2 (2026-10-10):
+vector, keyword and hybrid search and `python -m evals retrieval`, with a
+reviewed 40-query gold set and a baseline: recall@8 / MRR 0.93 / 0.80 for
+vector, 0.79 / 0.62 for hybrid, 0.59 / 0.41 for keyword. Hybrid lost, so
+`RAG__MODE` defaults to `vector`. Next: phase 3, research integration.
 
 ### 4. Observability and cost
 

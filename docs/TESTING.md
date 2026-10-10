@@ -211,6 +211,54 @@ provider's tool behaviour, or a dataset case whose "recent" facts went stale.
 Read the transcripts before deciding between a fix and a new baseline. Pinning
 dated model snapshots removes the alias cause.
 
+### Retrieval eval
+
+Measures corpus search on its own, before any model writes an answer from it
+(design: [design/rag.md](design/rag.md), decision R7). No LLM at query time,
+so a run costs only the query embeddings once the index exists.
+
+```bash
+# once: a database of its own, never the service's
+docker compose exec postgres createdb -U waypoint waypoint_evals
+# in .env: EVALS__DATABASE_URL=postgresql://waypoint:waypoint@localhost:5432/waypoint_evals
+
+uv run python -m evals retrieval --check            # every gold span findable? no DB, no cost
+uv run python -m evals retrieval                     # vector, keyword and hybrid
+uv run python -m evals retrieval --mode hybrid --case q17-payload-too-large
+uv run python -m evals retrieval --fake --dataset evals/datasets/retrieval.proposed.jsonl
+uv run python -m evals accept --agent retrieval evals/results/retrieval/<run>/scorecard.json
+uv run python -m evals retrieval --against-baseline  # exit 1 on a drop > 0.05
+```
+
+* **Corpus** — `corpora/waypoint-docs.toml` names `docs/**/*.md` at a pinned
+  commit, read with `git cat-file`, so the gold set's spans stay true while
+  the docs change. Moving the pin means `--check` and a new baseline.
+* **Gold set** — `datasets/retrieval.jsonl`: per query a `kind`
+  (`paraphrase`, `identifier`, `multi-hop`, `no-answer`) and the exact
+  `span`s of text that answer it. A retrieved chunk counts when it comes from
+  the span's document and contains the span, whitespace-normalised, so labels
+  survive any change of chunking. A span may list `alternatives`, other
+  passages that say the same thing: any one satisfies it. Separate spans are
+  all needed (multi-hop). Claude drafts into
+  `retrieval.proposed.jsonl`; a person reviews it and renames it. Scorecards
+  from the proposed file are marked unreviewed and `accept` refuses them.
+  `tests/test_retrieval.py` fails when any span stops being findable.
+* **Index** — built by `rag/index.py`, the ingest agent's own code, under
+  tenant `evals`, in a corpus named after a fingerprint of the files, the
+  embedding model and width, the chunk size and the parse/chunk/index source.
+  A rerun with the same fingerprint reuses it; anything else builds a new one
+  (about 60k tokens for `docs/`, $0.004 at voyage-4's price, inside the free
+  tier).
+* **Metrics** — per mode: recall@5, recall@`RAG__TOP_K`, recall@20 and MRR
+  over answerable queries, the same by kind, p50/p95 latency (query embedding
+  plus SQL), and for no-answer queries the best vector score next to the
+  answerable ones', to set a "nothing relevant" threshold from data.
+* **Gate** — retrieval is deterministic for a fixed index, so there is no
+  trial spread: a drop of more than 0.05 in recall@k or MRR fails, and one
+  run is enough to accept.
+* **`--fake`** — hash vectors and the in-memory store's word-count search:
+  it tests the harness, and its numbers mean nothing.
+
 ## Manual end-to-end
 
 ```bash
