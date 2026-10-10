@@ -4,7 +4,7 @@ import json
 import logging
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, override
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast, override
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.embeddings import Embeddings
@@ -457,6 +457,10 @@ class HashEmbeddings(Embeddings):
         return [self.embed_query(t) for t in texts]
 
 
+VOYAGE_DIMS = frozenset({256, 512, 1024, 2048})
+"""Output widths the Voyage 4 series offers (docs.voyageai.com, checked 2026-10-10)."""
+
+
 class EmbeddingsConfigError(RuntimeError):
     """EMBEDDINGS_MODEL is set but cannot work. Raised at boot, not at first use."""
 
@@ -469,27 +473,75 @@ def build_embeddings(settings: Settings) -> Embeddings | None:
     embedder is a deterministic hash, so tests exercise the pgvector path
     without a network call (the vectors carry no meaning, only the plumbing).
     """
-    spec = settings.embeddings_model
+    return _embeddings(
+        settings,
+        settings.embeddings_model,
+        settings.embeddings_dims,
+        setting="EMBEDDINGS_MODEL",
+        unset_hint="unset EMBEDDINGS_MODEL to run the store without vector search",
+    )
+
+
+def build_rag_embeddings(settings: Settings) -> Embeddings | None:
+    """The embedder for corpus chunks and retrieval queries (``RAG__*``).
+
+    ``None`` means RAG is off. Same providers and same offline stand-in as
+    :func:`build_embeddings`, configured separately.
+    """
+    return _embeddings(
+        settings,
+        settings.rag.embeddings_model,
+        settings.rag.embeddings_dims,
+        setting="RAG__EMBEDDINGS_MODEL",
+        unset_hint="unset RAG__EMBEDDINGS_MODEL to run without document retrieval",
+    )
+
+
+def _embeddings(
+    settings: Settings, spec: str | None, dims: int, *, setting: str, unset_hint: str
+) -> Embeddings | None:
     if not spec:
         return None
     if settings.fake_model:
-        return HashEmbeddings(dims=settings.embeddings_dims)
+        return HashEmbeddings(dims=dims)
 
-    provider, sep, _name = spec.partition(":")
+    provider, sep, name = spec.partition(":")
     if not sep:
         raise EmbeddingsConfigError(
-            f"EMBEDDINGS_MODEL={spec!r} must be 'provider:model', "
-            "e.g. 'openai:text-embedding-3-small'."
+            f"{setting}={spec!r} must be 'provider:model', e.g. 'openai:text-embedding-3-small'."
+        )
+
+    def need(key: str | None, env: str) -> str:
+        if not key:
+            raise EmbeddingsConfigError(
+                f"{setting}={spec!r} needs {env}. Set it in .env, or {unset_hint}."
+            )
+        return key
+
+    if provider == "voyageai":
+        # Built directly rather than through init_embeddings: Voyage models
+        # take the output width as a request parameter, so the width we index
+        # with is the width we ask for, not a model default that could move.
+        if dims not in VOYAGE_DIMS:
+            raise EmbeddingsConfigError(
+                f"{setting}={spec!r} offers output widths {sorted(VOYAGE_DIMS)}, not {dims}. "
+                "Set the matching *_DIMS setting to one of them."
+            )
+        try:
+            from langchain_voyageai import VoyageAIEmbeddings
+        except ImportError as exc:
+            raise EmbeddingsConfigError(
+                f"{setting}={spec!r}: langchain-voyageai is not installed ({exc})."
+            ) from exc
+        return VoyageAIEmbeddings(  # type: ignore[call-arg]
+            model=name,
+            output_dimension=cast("Literal[256, 512, 1024, 2048]", dims),
+            voyage_api_key=need(settings.voyage_api_key, "VOYAGE_API_KEY"),
         )
 
     kwargs: dict[str, Any] = {}
     if provider == "openai":
-        if not settings.openai_api_key:
-            raise EmbeddingsConfigError(
-                f"EMBEDDINGS_MODEL={spec!r} needs OPENAI_API_KEY. Set it in .env, or unset "
-                "EMBEDDINGS_MODEL to run the store without vector search."
-            )
-        kwargs["api_key"] = settings.openai_api_key
+        kwargs["api_key"] = need(settings.openai_api_key, "OPENAI_API_KEY")
 
     from langchain.embeddings import init_embeddings
 
@@ -497,12 +549,28 @@ def build_embeddings(settings: Settings) -> Embeddings | None:
         return init_embeddings(spec, **kwargs)
     except ImportError as exc:
         raise EmbeddingsConfigError(
-            f"EMBEDDINGS_MODEL={spec!r}: the provider package is not installed ({exc})."
+            f"{setting}={spec!r}: the provider package is not installed ({exc})."
         ) from exc
 
 
-async def check_embedding_dims(embeddings: Embeddings, expected: int) -> None:
-    """Embed one string at boot and compare its length with EMBEDDINGS_DIMS.
+def http_status(exc: BaseException) -> int | None:
+    """The HTTP status a provider error carries, whatever the SDK calls it.
+
+    OpenAI's and Anthropic's SDKs say ``status_code``; Voyage's says
+    ``http_status``. Reading only the first let a rejected Voyage key through
+    the boot probe as a mere network warning (found 2026-10-10).
+    """
+    for attr in ("status_code", "http_status"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+async def check_embedding_dims(
+    embeddings: Embeddings, expected: int, *, setting: str = "EMBEDDINGS_DIMS"
+) -> None:
+    """Embed one string at boot and compare its length with ``setting``.
 
     A mismatch otherwise surfaces as a pgvector error on the first ``remember``,
     long after the misconfiguration. A bad key fails here too. A network error
@@ -511,7 +579,7 @@ async def check_embedding_dims(embeddings: Embeddings, expected: int) -> None:
     try:
         vector = await embeddings.aembed_query("dimension probe")
     except Exception as exc:
-        status = getattr(exc, "status_code", None)
+        status = http_status(exc)
         if status in {401, 403}:
             raise EmbeddingsConfigError(
                 f"The embeddings provider rejected the API key ({status})."
@@ -521,5 +589,5 @@ async def check_embedding_dims(embeddings: Embeddings, expected: int) -> None:
     if len(vector) != expected:
         raise EmbeddingsConfigError(
             f"The embeddings model returns {len(vector)} dimensions but "
-            f"EMBEDDINGS_DIMS={expected}. Set EMBEDDINGS_DIMS={len(vector)}."
+            f"{setting}={expected}. Set {setting}={len(vector)}."
         )

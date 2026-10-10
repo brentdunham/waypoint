@@ -49,6 +49,7 @@ def build_settings(**overrides: Any) -> Settings:
         "secret_key": "test",
         "embeddings_model": None,
         "openai_api_key": None,
+        "voyage_api_key": None,
     }
     base.update(overrides)
     # _env_file=None: the developer's .env (real keys, EMBEDDINGS_MODEL, a live

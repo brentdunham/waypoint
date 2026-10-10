@@ -73,6 +73,55 @@ class ResearchSettings(BaseModel):
     )
 
 
+class RagSettings(BaseModel):
+    """Retrieval over tenant documents (docs/design/rag.md).
+
+    Separate from ``EMBEDDINGS_MODEL``, which indexes long-term memory: corpora
+    and memories have different embedders, dimensions and lifecycles, and
+    changing one must not force re-embedding the other.
+    """
+
+    embeddings_model: str | None = Field(
+        default=None,
+        description=(
+            "'provider:model' for corpus chunks, e.g. 'voyageai:voyage-4'. Unset -> RAG is "
+            "off: the corpora API answers 503 and no ingest run can start."
+        ),
+    )
+    embeddings_dims: int = Field(
+        default=1024,
+        ge=1,
+        le=2000,
+        description=(
+            "Width of chunks.embedding. pgvector's HNSW index stops at 2000 dims for "
+            "`vector`. Changing it after the table exists means re-embedding every corpus."
+        ),
+    )
+    chunk_tokens: int = Field(
+        default=400,
+        ge=50,
+        le=4000,
+        description="Target chunk size, estimated as characters / 4.",
+    )
+    max_upload_mb: float = Field(
+        default=5.0,
+        gt=0,
+        le=8,
+        description="Per file. The whole request is also capped at 8 MB by the middleware.",
+    )
+
+    @field_validator("embeddings_model", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, v: object) -> object:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @property
+    def enabled(self) -> bool:
+        return self.embeddings_model is not None
+
+
 class EvalSettings(BaseModel):
     """The eval harness (``python -m evals``). Not read by the service."""
 
@@ -215,6 +264,10 @@ class Settings(BaseSettings):
             "explicitly, because pydantic-settings does not export .env into os.environ."
         ),
     )
+    voyage_api_key: str | None = Field(
+        default=None,
+        description="Needed when an embeddings model starts with 'voyageai:'.",
+    )
 
     # --- caching -----------------------------------------------------------
     node_cache_ttl_s: int = Field(default=300, ge=0, description="0 disables node caching.")
@@ -224,6 +277,7 @@ class Settings(BaseSettings):
     stream: StreamSettings = Field(default_factory=StreamSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
     evals: EvalSettings = Field(default_factory=EvalSettings)
+    rag: RagSettings = Field(default_factory=RagSettings)
 
     # --- tracing -------------------------------------------------------------
     langsmith_tracing: bool = False
@@ -258,6 +312,7 @@ class Settings(BaseSettings):
     @field_validator(
         "anthropic_api_key",
         "openai_api_key",
+        "voyage_api_key",
         "bootstrap_api_key",
         "embeddings_model",
         "database_url",

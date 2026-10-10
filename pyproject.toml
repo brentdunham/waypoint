@@ -17,6 +17,9 @@ dependencies = [
     "redis>=6.4",
     "langchain-openai>=1.0",
     "fastapi>=0.143.0",
+    "pypdf>=6.20.0",
+    "langchain-voyageai>=0.4.1",
+    "python-multipart>=0.0.32",
 ]
 
 [project.optional-dependencies]
