@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api } from "./api/client";
+import { api, auth } from "./api/client";
 import type { ChatMessage, Finding } from "./api/types";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { ConnectionBar } from "./components/ConnectionBar";
@@ -8,6 +8,7 @@ import { ResearchProgress } from "./components/ResearchProgress";
 import { Sidebar } from "./components/Sidebar";
 import { TimeTravel } from "./components/TimeTravel";
 import { Transcript } from "./components/Transcript";
+import { Welcome } from "./components/Welcome";
 import { useRun } from "./hooks/useRun";
 import { useAgents, useSnapshot, useThreads } from "./hooks/useThreads";
 
@@ -75,6 +76,17 @@ export default function App() {
       await run.launch(id, { message });
     });
 
+  /** One click from the welcome panel: a new thread for that agent, then run. */
+  const tryExample = (name: string, text: string) =>
+    void guard(async () => {
+      setAgent(name);
+      run.reset();
+      const id = (await api.createThread(name, text.slice(0, 60))).thread_id;
+      setThreadId(id);
+      await refreshThreads();
+      await run.launch(id, { message: text });
+    });
+
   const decide = (decision: Record<string, unknown>) =>
     void guard(async () => {
       if (!threadId) return;
@@ -121,6 +133,10 @@ export default function App() {
         <main className="main">
           {notice && <p className="banner banner--error">{notice}</p>}
           {run.error && <p className="banner banner--error">{run.error}</p>}
+
+          {messages.length === 0 && !run.busy && !pending && !run.streamedText && (
+            <Welcome hasKey={auth.get() !== ""} onTry={tryExample} />
+          )}
 
           <Transcript
             messages={messages}

@@ -33,6 +33,30 @@ export const auth = {
   },
 };
 
+/**
+ * A personal demo link carries its key in the URL fragment: `/#key=ak_…`.
+ * Browsers never send the fragment to the server, so the key stays out of
+ * access logs and Referer headers. Returns the key and what should remain of
+ * the fragment, or null when there is no key.
+ */
+export function keyFromHash(hash: string): { key: string; rest: string } | null {
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  const key = params.get("key")?.trim() ?? "";
+  if (!/^ak_[A-Za-z0-9]+\.[A-Za-z0-9_-]+$/.test(key)) return null;
+  params.delete("key");
+  return { key, rest: params.toString() };
+}
+
+/** Store a key from a personal link, then remove it from the address bar so it
+ *  is not bookmarked, shared or left in history. Call before the first render. */
+export function adoptKeyFromUrl(): void {
+  const found = keyFromHash(window.location.hash);
+  if (!found) return;
+  auth.set(found.key);
+  const { pathname, search } = window.location;
+  window.history.replaceState(null, "", pathname + search + (found.rest ? `#${found.rest}` : ""));
+}
+
 export function headers(extra: HeadersInit = {}): HeadersInit {
   const key = auth.get();
   return {

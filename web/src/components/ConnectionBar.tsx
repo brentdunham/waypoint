@@ -39,7 +39,12 @@ export function ConnectionBar() {
         placeholder="ak_… API key"
         value={key}
         onChange={(event) => setKey(event.target.value)}
-        onBlur={() => auth.set(key)}
+        onBlur={() => {
+          if (key === auth.get()) return;
+          auth.set(key);
+          // Agents, threads and state were fetched with the old key; start over.
+          window.location.reload();
+        }}
       />
     </header>
   );

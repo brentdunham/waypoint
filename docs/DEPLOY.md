@@ -113,6 +113,32 @@ Visitors paste the demo key into the connection bar. All of them share the
 for everyone together, and threads are shared because the user is the same.
 Rotate the demo key by minting a new one and revoking the old.
 
+## Reviewer links
+
+Rather than one shared key, send each reviewer a personal link:
+
+```bash
+export WAYPOINT_ADMIN_KEY=<admin api_key>
+deploy/reviewer-link.sh "Anthropic" "Jane Doe, AI platform"
+# tenant  rev-anthropic
+# key_id  3f9a...
+# link    https://waypoint.brentdunham.com/#key=ak_3f9a....
+```
+
+Opening the link stores the key in the browser and removes it from the
+address bar. The key travels in the URL fragment, which browsers never send to
+the server, so it is not in access logs. Each reviewer is their own tenant:
+their threads are private, they get their own rate limits, and revoking one
+key (the script prints the command) affects no one else. The Anthropic
+workspace's spend limit still caps all of them together.
+
+Who has tried it, and when:
+
+```bash
+docker compose exec postgres psql -U waypoint -c \
+  "select tenant_id, count(*) runs, max(started_at) last from run_audit where tenant_id like 'rev-%' group by 1 order by 3 desc"
+```
+
 ## Operating it
 
 | Task | Command |

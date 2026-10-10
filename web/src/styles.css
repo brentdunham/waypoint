@@ -128,3 +128,11 @@ button.block { width: 100%; }
 .models { display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; margin: 0 0 0.5rem; }
 .models code, .worker__model { font-family: ui-monospace, monospace; font-size: 0.75rem; }
 .worker__model { margin-right: 0.4rem; }
+
+/* First-run guide */
+.welcome p { margin: 0 0 0.75rem; }
+.welcome ol { margin: 0 0 0.75rem; padding-left: 1.25rem; display: grid; gap: 0.35rem; }
+.welcome a { color: var(--accent); }
+.examples { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+button.example { text-align: left; display: flex; gap: 0.5rem; align-items: center; background: var(--panel); }
+button.example:hover { border-color: var(--accent); }
