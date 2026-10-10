@@ -15,7 +15,12 @@ from typing import Any
 
 from fastapi import Request
 
-from waypoint.agents.models import build_embeddings, check_embedding_dims, check_model_config
+from waypoint.agents.models import (
+    build_embeddings,
+    build_rag_embeddings,
+    check_embedding_dims,
+    check_model_config,
+)
 from waypoint.agents.registry import build_all, roles_by_agent
 from waypoint.agents.types import Graph
 from waypoint.infra import redis as redis_infra
@@ -26,6 +31,7 @@ from waypoint.infra.ratelimit import Limiter
 from waypoint.infra.runs import RunManager
 from waypoint.infra.security import KeyStore, parse_key_id
 from waypoint.infra.threads import ThreadStore
+from waypoint.rag.store import CorpusStore, MemoryCorpusStore, PgCorpusStore
 from waypoint.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -44,6 +50,7 @@ class AgentRuntime:
     db: Database | None
     limiter: Limiter | None
     bus: EventBus
+    corpora: CorpusStore = field(default_factory=MemoryCorpusStore)
     redis: Any = None
     store: Any = None
     checkpointer: Any = None
@@ -105,7 +112,7 @@ async def create_runtime(settings: Settings) -> AgentRuntime:
         # All schema work behind one advisory lock. Workers boot in parallel,
         # and LangGraph's own migrations are not safe to run concurrently.
         async with db.advisory_lock():
-            await db.migrate()
+            await db.migrate(embedding_dims=settings.rag.embeddings_dims)
             await checkpointer.setup()
             await store.setup()
 
@@ -145,7 +152,8 @@ async def create_runtime(settings: Settings) -> AgentRuntime:
     compile_kwargs: dict[str, Any] = {"checkpointer": checkpointer, "store": store}
     if cache is not None:
         compile_kwargs["cache"] = cache
-    graphs = build_all(settings, **compile_kwargs)
+    corpora = await _corpus_store(settings, db)
+    graphs = build_all(settings, corpora=corpora, **compile_kwargs)
 
     runs = RunManager(bus=bus, db=db, limiter=limiter, settings=settings, graphs=graphs)
     await runs.start_listener()
@@ -163,6 +171,7 @@ async def create_runtime(settings: Settings) -> AgentRuntime:
         db=db,
         limiter=limiter,
         bus=bus,
+        corpora=corpora,
         redis=redis_client,
         store=store,
         checkpointer=checkpointer,
@@ -185,6 +194,31 @@ async def _memory_index(settings: Settings) -> dict[str, Any] | None:
         extra={"embeddings": settings.embeddings_model, "dims": settings.embeddings_dims},
     )
     return {"dims": settings.embeddings_dims, "embed": embeddings, "fields": ["fact"]}
+
+
+async def _corpus_store(settings: Settings, db: Database | None) -> CorpusStore:
+    """The corpus store, after failing the boot on a bad RAG key or width.
+
+    Two checks, as for the memory index: the provider returns the configured
+    width (one embedding call), and the existing ``chunks.embedding`` column
+    has that width too.
+    """
+    corpora: CorpusStore = PgCorpusStore(db) if db is not None else MemoryCorpusStore()
+    embeddings = build_rag_embeddings(settings)
+    if embeddings is None:
+        log.info("RAG__EMBEDDINGS_MODEL unset: document retrieval is off")
+        return corpora
+    if db is not None:
+        await db.check_embedding_dims(settings.rag.embeddings_dims)
+    if not settings.fake_model:
+        await check_embedding_dims(
+            embeddings, settings.rag.embeddings_dims, setting="RAG__EMBEDDINGS_DIMS"
+        )
+    log.info(
+        "document retrieval on",
+        extra={"embeddings": settings.rag.embeddings_model, "dims": settings.rag.embeddings_dims},
+    )
+    return corpora
 
 
 async def _seed_bootstrap_key(keys: KeyStore, db: Database | None, settings: Settings) -> None:

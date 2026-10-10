@@ -9,10 +9,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from waypoint.agents.graphs import chat, research
+from waypoint.agents.graphs import chat, ingest, research
 from waypoint.agents.models import check_overrides, resolve_models
 from waypoint.agents.types import Graph
 from waypoint.errors import NotFound
+from waypoint.rag.store import CorpusStore
 from waypoint.settings import Settings
 
 type GraphBuilder = Callable[..., Graph]
@@ -31,6 +32,11 @@ class AgentSpec:
     ``models`` map choose per role."""
     supports_interrupts: bool = False
     example: dict[str, Any] = field(default_factory=dict)
+    listed: bool = True
+    """Shown by ``GET /agents`` and open to ``POST /threads``. False for agents
+    another endpoint starts (``ingest``, started by the corpora API)."""
+    uses_corpora: bool = False
+    """The builder takes ``corpora=``, the runtime's corpus store."""
 
     def public(self) -> dict[str, Any]:
         return {
@@ -68,6 +74,16 @@ AGENTS: dict[str, AgentSpec] = {
         supports_interrupts=True,
         example={"topic": "small modular reactors for datacentre power"},
     ),
+    "ingest": AgentSpec(
+        name="ingest",
+        title="Ingest",
+        description="Parses, chunks and embeds uploaded documents into a corpus.",
+        builder=ingest.build,
+        input_key="document_ids",
+        model_roles=ingest.ROLES,
+        listed=False,
+        uses_corpora=True,
+    ),
 }
 
 
@@ -79,7 +95,12 @@ def get_spec(name: str) -> AgentSpec:
 
 
 def list_specs() -> list[dict[str, Any]]:
-    return [spec.public() for spec in AGENTS.values()]
+    return [spec.public() for spec in AGENTS.values() if spec.listed]
+
+
+def listed_agents() -> list[str]:
+    """Agents a person talks to directly (and the eval harness evaluates)."""
+    return [name for name, spec in AGENTS.items() if spec.listed]
 
 
 def roles_by_agent() -> dict[str, tuple[str, ...]]:
@@ -98,5 +119,11 @@ def models_for(
     return resolve_models(settings, agent, roles, checked)
 
 
-def build_all(settings: Settings, **compile_kwargs: Any) -> dict[str, Graph]:
-    return {name: spec.builder(settings, **compile_kwargs) for name, spec in AGENTS.items()}
+def build_all(
+    settings: Settings, *, corpora: CorpusStore | None = None, **compile_kwargs: Any
+) -> dict[str, Graph]:
+    graphs: dict[str, Graph] = {}
+    for name, spec in AGENTS.items():
+        extra: dict[str, Any] = {"corpora": corpora} if spec.uses_corpora else {}
+        graphs[name] = spec.builder(settings, **extra, **compile_kwargs)
+    return graphs

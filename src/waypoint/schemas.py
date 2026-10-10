@@ -53,6 +53,11 @@ class RememberFact(Strict):
     fact: str = Field(min_length=1, max_length=4_000)
 
 
+class CreateCorpus(Strict):
+    name: str = Field(min_length=1, max_length=100, pattern=r"^[\w .:-]+$")
+    """Unique within the tenant. Letters, digits, spaces and ``_ . : -``."""
+
+
 SCOPE_RUN = "agents:run"
 SCOPE_READ = "threads:read"
 SCOPE_WRITE = "threads:write"
@@ -191,3 +196,51 @@ class MemoryList(Out):
 class MemoryCreated(Out):
     key: str
     fact: str
+
+
+class CorpusOut(Out):
+    corpus_id: str
+    tenant_id: str
+    name: str
+    visibility: Literal["private", "public"]
+    embed_model: str
+    """Chunks are only comparable within one embedding model."""
+    created_at: str
+    documents: int = 0
+    chunks: int = 0
+
+
+class CorpusList(Out):
+    corpora: list[CorpusOut]
+
+
+class DocumentOut(Out):
+    document_id: str
+    corpus_id: str
+    title: str
+    source_uri: str | None = None
+    media_type: str
+    sha256: str
+    bytes: int
+    status: Literal["pending", "ready", "failed"]
+    error: str | None = None
+    created_at: str
+    chunks: int = 0
+
+
+class DocumentList(Out):
+    documents: list[DocumentOut]
+
+
+class UploadedDocument(DocumentOut):
+    queued: bool
+    """In this upload's ingest run. False for a duplicate already pending or ready."""
+
+
+class UploadAccepted(Out):
+    corpus_id: str
+    documents: list[UploadedDocument]
+    run_id: str | None = None
+    """The ingest run; null when every file was a duplicate."""
+    thread_id: str | None = None
+    events_url: str | None = None

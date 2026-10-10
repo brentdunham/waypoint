@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnableConfig
 
 from waypoint.agents import get_spec
 from waypoint.api.deps import Reader, Runtime, Writer
+from waypoint.errors import BadRequest
 from waypoint.schemas import (
     CreateThread,
     History,
@@ -30,7 +31,9 @@ def _config(thread_id: str, checkpoint_id: str | None = None) -> RunnableConfig:
 
 @router.post("", status_code=201)
 async def create(payload: CreateThread, runtime: Runtime, principal: Writer) -> Thread:
-    get_spec(payload.agent)  # 404 early rather than at first run
+    spec = get_spec(payload.agent)  # 404 early rather than at first run
+    if not spec.listed:
+        raise BadRequest(f"Agent {spec.name!r} is not started directly; see the API docs.")
     thread = await runtime.threads.create(principal, agent=payload.agent, title=payload.title)
     return Thread.model_validate(thread)
 

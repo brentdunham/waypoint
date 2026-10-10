@@ -36,8 +36,11 @@ from evals.scorecard import (
     render_markdown,
 )
 from waypoint.agents.models import check_model_config
-from waypoint.agents.registry import AGENTS, roles_by_agent
+from waypoint.agents.registry import listed_agents, roles_by_agent
 from waypoint.settings import Settings
+
+AGENTS = listed_agents()
+"""Agents with datasets. Unlisted ones (``ingest``) are measured by their own evals."""
 
 
 def _settings(args: argparse.Namespace) -> Settings:
