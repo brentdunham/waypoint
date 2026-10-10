@@ -10,14 +10,18 @@
 #   Settings > Secrets and variables > Actions > Secrets
 #     ANTHROPIC_API_KEY   required
 #     OPENAI_API_KEY      required while EMBEDDINGS_MODEL is openai:* (chat memory)
+#     VOYAGE_API_KEY      required while RAG__EMBEDDINGS_MODEL is voyageai:*
+#                         (research cases that search the waypoint-docs corpus)
 #     LANGSMITH_API_KEY   optional; traces only if EVALS_LANGSMITH_TRACING=true
 #
 # Run it by hand from the Actions tab (Run workflow), with a choice of agent
 # and trials. A run fails when a metric drops past the baseline's tolerance;
 # GitHub emails the failure. Scorecards and transcripts are kept as an artifact.
 #
-# Cost: one trial of both agents is an estimated $2-3 (Sonnet 5, searcher on
-# Haiku 5.5); three trials, enough to accept as a baseline, about $7.60.
+# Cost: one trial of both agents is an estimated $3.50-4.50 (Sonnet 5, searcher
+# on Haiku 5.5, including five research cases over the docs corpus at about
+# $0.27 each); three trials, enough to accept as a baseline, about $11.50.
+# Embedding the corpus with Voyage costs under a cent per run.
 # Runs here never replay: the point is to sample the live models and the live
 # web, so each run pays in full. Set EVALS_CADENCE=off to stop the spend.
 
@@ -77,6 +81,7 @@ jobs:
       # Must match the configuration the baselines were accepted with, or the
       # fingerprint differs and the summary says so. `python -m evals
       # fingerprint` prints it locally. Everything not set here is the default.
+      # The research fingerprint includes the RAG__* settings a run reads.
       MODEL: claude-sonnet-5
       MODELS__RESEARCH__SEARCHER: claude-haiku-5-5
       MODELS__RESEARCH__VERIFIER: claude-haiku-5-5
@@ -84,12 +89,15 @@ jobs:
       MAX_TOKENS: "4096"
       EMBEDDINGS_MODEL: openai:text-embedding-3-small
       EMBEDDINGS_DIMS: "1536"
+      RAG__EMBEDDINGS_MODEL: voyageai:voyage-4
+      RAG__EMBEDDINGS_DIMS: "1024"
       EVALS__JUDGE_MODEL: claude-haiku-4-5
       EVALS__JUDGE_ESCALATION_MODEL: claude-sonnet-4-5
       EVALS__MIN_AGREEMENT: "0.8"
       FAKE_MODEL: "false"
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
       LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
       LANGSMITH_TRACING: ${{ vars.EVALS_LANGSMITH_TRACING || 'false' }}
       LANGSMITH_PROJECT: waypoint-evals
@@ -104,8 +112,15 @@ jobs:
           if [[ "$EMBEDDINGS_MODEL" == openai:* && -z "$OPENAI_API_KEY" ]]; then
             echo "::error::Add the OPENAI_API_KEY repository secret (EMBEDDINGS_MODEL is $EMBEDDINGS_MODEL)"; exit 1
           fi
+          if [[ "$RAG__EMBEDDINGS_MODEL" == voyageai:* && -z "$VOYAGE_API_KEY" ]]; then
+            echo "::error::Add the VOYAGE_API_KEY repository secret (RAG__EMBEDDINGS_MODEL is $RAG__EMBEDDINGS_MODEL)"; exit 1
+          fi
 
+      # Full history: the eval corpus is read with `git cat-file` at the commit
+      # pinned in evals/corpora/waypoint-docs.toml, which a shallow clone lacks.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v6
 

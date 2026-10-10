@@ -139,19 +139,22 @@ vectors were made by the old model.
 
 ## Document retrieval (RAG)
 
-Corpora of tenant documents, ingested by the `ingest` agent and (from phase 3)
-searched by the research agent. Design: [design/rag.md](design/rag.md).
+Corpora of tenant documents, ingested by the `ingest` agent and searched by
+the research agent when a run names a `corpus_id` (API.md).
+The research eval's corpus cases need `RAG__EMBEDDINGS_MODEL` and
+`VOYAGE_API_KEY` too, and `RAG__MODE=vector`: they index in memory, where
+only vector search exists. Design: [design/rag.md](design/rag.md).
 Configured apart from long-term memory, so the two can use different embedders
 and neither change forces re-embedding the other.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `RAG__EMBEDDINGS_MODEL` | — | The chosen model is `voyageai:voyage-4` (commented in `.env.example`, like memory's). Unset → RAG is off: `/corpora` answers 503. |
+| `RAG__EMBEDDINGS_MODEL` | — | The chosen model is `voyageai:voyage-4` (commented in `.env.example`, like memory's). Unset → RAG is off: `/corpora` answers 503, and a research run that names a corpus fails. |
 | `RAG__EMBEDDINGS_DIMS` | `1024` | Width of `chunks.embedding`. Voyage 4 offers 256, 512, 1024 and 2048; pgvector's HNSW index stops at 2000 for `vector`, so 2048 is out. |
 | `VOYAGE_API_KEY` | — | Required when either embeddings model starts with `voyageai:`. From <https://dashboard.voyageai.com/>. |
 | `RAG__CHUNK_TOKENS` | `400` | Target chunk size, estimated as characters / 4. Takes effect for documents ingested afterwards. |
 | `RAG__MAX_UPLOAD_MB` | `5` | Per file. A whole upload request is also capped at 8 MB by the middleware. |
-| `RAG__TOP_K` | `8` | Chunks per question for the research worker (phase 3). Each is input on every web search in that worker call; the design measures 5, 8, 12 and 20. |
+| `RAG__TOP_K` | `8` | Passages each research worker gets for its question. Each is input on every web search in that worker call; the design measures 5, 8, 12 and 20. |
 | `RAG__MODE` | `vector` | `vector`, `keyword` (Postgres full text) or `hybrid` (both, fused with reciprocal rank fusion). `vector` because it measured best: on the retrieval baseline (2026-10-10) recall@8 was 0.93 for vector, 0.79 for hybrid and 0.59 for keyword, MRR 0.80, 0.62 and 0.41 (design/rag.md, Phase 2). |
 | `RAG__CANDIDATES` | `50` | Chunks each method ranks before fusion. |
 | `RAG__RRF_K` | `60` | RRF constant: a chunk at rank r scores 1/(60 + r) per method that found it. 60 is the value from the original RRF paper and the design. |

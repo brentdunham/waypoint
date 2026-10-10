@@ -28,9 +28,7 @@ import hashlib
 import json
 import os
 import statistics
-import subprocess
 import sys
-import time
 import tomllib
 from collections import defaultdict
 from collections.abc import Coroutine, Sequence
@@ -41,30 +39,33 @@ from typing import Any, Literal
 from langchain_core.embeddings import Embeddings
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from evals.cases import DATASETS, ROOT
+from evals.cases import DATASETS
+from evals.corpus import (
+    TENANT,
+    Index,
+    Manifest,
+    build_index,
+    index_fingerprint,
+    load_manifest,
+    read_corpus,
+)
 from evals.scorecard import BASELINES, PRICES, RESULTS, git_sha
 from waypoint.agents.models import HashEmbeddings, build_rag_embeddings
 from waypoint.infra.db import Database
 from waypoint.loops import selector_loop
 from waypoint.rag.chunk import Chunk, chunk_sections
-from waypoint.rag.index import index_document
 from waypoint.rag.parse import media_type_for, parse
 from waypoint.rag.retrieve import MODES, Mode, retrieve
-from waypoint.rag.store import CorpusStore, MemoryCorpusStore, NewDocument, PgCorpusStore
+from waypoint.rag.store import CorpusStore, MemoryCorpusStore, PgCorpusStore
 from waypoint.settings import Settings
 
-CORPORA = ROOT / "corpora"
 DATASET = DATASETS / "retrieval.jsonl"
 PROPOSED = DATASETS / "retrieval.proposed.jsonl"
-REPO = ROOT.parent
-TENANT = "evals"
 DEPTH = 20
 """Results retrieved per query: recall@20 and MRR look this deep."""
 FLOOR = 0.05
 """Smallest drop in recall@k or MRR that fails the gate. Retrieval is
 deterministic for a fixed index, so there is no trial spread to tolerate."""
-INDEX_SOURCES = ("parse.py", "chunk.py", "index.py")
-"""Code whose change invalidates the index, by file content."""
 
 type Kind = Literal["paraphrase", "identifier", "multi-hop", "no-answer"]
 
@@ -123,32 +124,6 @@ def load_cases(path: Path) -> list[RetrievalCase]:
 # -- corpus -----------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class Manifest:
-    name: str
-    rev: str
-    paths: tuple[str, ...]
-    suffixes: tuple[str, ...]
-
-
-def load_manifest(name: str) -> Manifest:
-    data = tomllib.loads((CORPORA / f"{name}.toml").read_text(encoding="utf-8"))
-    return Manifest(name, data["rev"], tuple(data["paths"]), tuple(data["suffixes"]))
-
-
-def _git(*args: str) -> bytes:
-    return subprocess.run(
-        ["git", *args], cwd=REPO, capture_output=True, check=True, timeout=30
-    ).stdout
-
-
-def read_corpus(manifest: Manifest) -> dict[str, bytes]:
-    """Path -> bytes at the pinned commit. ``git cat-file`` applies no eol filters."""
-    names = _git("ls-tree", "-r", "--name-only", manifest.rev, "--", *manifest.paths)
-    paths = [p for p in names.decode().splitlines() if p.endswith(manifest.suffixes)]
-    return {p: _git("cat-file", "blob", f"{manifest.rev}:{p}") for p in sorted(paths)}
-
-
 def chunk_corpus(files: dict[str, bytes], chunk_tokens: int) -> dict[str, list[Chunk]]:
     """What indexing will produce, without embedding: for span checks."""
     out = {}
@@ -185,94 +160,6 @@ def unfindable_spans(cases: list[RetrievalCase], chunks: dict[str, list[Chunk]])
                     f"{case.id}: span not in any chunk of {span.document}: {span.span!r}"
                 )
     return problems
-
-
-def index_fingerprint(settings: Settings, manifest: Manifest, files: dict[str, bytes]) -> str:
-    parts = {
-        "rev": manifest.rev,
-        "files": {p: hashlib.sha256(b).hexdigest() for p, b in files.items()},
-        "model": settings.rag.embeddings_model,
-        "dims": settings.rag.embeddings_dims,
-        "chunk_tokens": settings.rag.chunk_tokens,
-        "code": {
-            name: hashlib.sha256(
-                (REPO / "src" / "waypoint" / "rag" / name).read_bytes()
-            ).hexdigest()
-            for name in INDEX_SOURCES
-        },
-    }
-    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:12]
-
-
-@dataclass(slots=True)
-class Index:
-    corpus_id: str
-    titles: dict[str, str]
-    """document_id -> path."""
-    chunks: int
-    reused: bool
-    tokens: int
-    """Estimated tokens embedded to build it (chars / 4), 0 when reused."""
-    seconds: float
-
-
-async def build_index(
-    settings: Settings,
-    store: CorpusStore,
-    embeddings: Embeddings,
-    name: str,
-    files: dict[str, bytes],
-) -> Index:
-    """Reuse a complete index of the same fingerprint, else build one."""
-    started = time.perf_counter()
-    embed_model = settings.rag.embeddings_model or "unset"
-    existing = next((c for c in await store.list_corpora(TENANT) if c.name == name), None)
-    if existing is not None:
-        docs = await store.list_documents(TENANT, existing.corpus_id)
-        if len(docs) == len(files) and all(d.status == "ready" for d in docs):
-            return Index(
-                existing.corpus_id,
-                {d.document_id: d.title for d in docs},
-                existing.chunks,
-                reused=True,
-                tokens=0,
-                seconds=time.perf_counter() - started,
-            )
-        await store.delete_corpus(TENANT, existing.corpus_id)  # partial: start over
-
-    corpus = await store.create_corpus(TENANT, name, embed_model)
-    new = [
-        NewDocument(path, media_type_for(path) or "text/plain", content, source_uri=path)
-        for path, content in files.items()
-    ]
-    added = await store.add_documents(TENANT, corpus.corpus_id, new)
-    gate = asyncio.Semaphore(4)
-
-    async def one(document_id: str) -> Any:
-        async with gate:
-            return await index_document(
-                store,
-                embeddings,
-                tenant_id=TENANT,
-                document_id=document_id,
-                embed_model=embed_model,
-                chunk_tokens=settings.rag.chunk_tokens,
-            )
-
-    results = await asyncio.gather(*(one(a.document.document_id) for a in added))
-    failed = [f"{r['title']}: {r['error']}" for r in results if r["status"] != "ready"]
-    if failed:
-        raise RuntimeError("indexing failed:\n" + "\n".join(failed))
-    chunks = await store.list_chunks(TENANT, corpus.corpus_id)
-    tokens = sum(len("\n\n".join((c.heading, *c.paragraphs))) for c in chunks) // 4
-    return Index(
-        corpus.corpus_id,
-        {a.document.document_id: a.document.title for a in added},
-        len(chunks),
-        reused=False,
-        tokens=tokens,
-        seconds=time.perf_counter() - started,
-    )
 
 
 # -- scoring ------------------------------------------------------------------------

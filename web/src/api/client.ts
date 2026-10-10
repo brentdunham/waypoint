@@ -1,5 +1,6 @@
 import type {
   AgentSpec,
+  Corpus,
   Problem,
   RunRecord,
   Snapshot,
@@ -133,4 +134,14 @@ export const api = {
   forget: (key: string) => request<void>(`/memories/${key}`, { method: "DELETE" }),
 
   ready: () => request<{ status: string; checks: Record<string, string> }>("/readyz"),
+
+  /** Corpora the caller can search. Empty when document retrieval is off (503). */
+  corpora: () =>
+    request<{ corpora: Corpus[] }>("/corpora").then(
+      (r) => r.corpora,
+      (error: unknown) => {
+        if (error instanceof ApiError && error.status === 503) return [];
+        throw error;
+      },
+    ),
 };

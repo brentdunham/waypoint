@@ -165,6 +165,26 @@ curl -s -X POST "$BASE/threads/$TID/runs?wait=true" -H "$AUTH" \
 
 The value you pass as `resume` is what `interrupt()` returns inside the node.
 
+### Research over your documents
+
+Start a research run with a corpus (see **Corpora**) and each question also
+searches it:
+
+```bash
+curl -s -X POST "$BASE/threads/$TID/runs?wait=true" -H "$AUTH" \
+  -d '{"input":{"topic":"how Waypoint recovers a dropped event stream","corpus_id":"'$CORPUS'"}}' \
+  | jq .interrupts[0].value.corpus
+# {"corpus_id":"…","name":"waypoint-docs"}
+```
+
+The corpus must be the tenant's own or a public one; otherwise, or when
+`RAG__EMBEDDINGS_MODEL` is unset, the run fails before planning. The approval
+interrupt shows it as `value.corpus`; resume with `"documents": false` to
+research the web only. In the briefing's `sources`, a passage has
+`"kind": "document"`, a `url` of `doc://<document_id>#<ordinal>` and its
+heading as `title`; web sources have no `kind`. The briefing's
+`metadata.corpus` names the corpus searched.
+
 ## Time travel
 
 ```bash

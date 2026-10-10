@@ -303,7 +303,12 @@ deviations from the design, with reasons, are in
 vector, keyword and hybrid search and `python -m evals retrieval`, with a
 reviewed 40-query gold set and a baseline: recall@8 / MRR 0.93 / 0.80 for
 vector, 0.79 / 0.62 for hybrid, 0.59 / 0.41 for keyword. Hybrid lost, so
-`RAG__MODE` defaults to `vector`. Next: phase 3, research integration.
+`RAG__MODE` defaults to `vector`. Phase 3 (2026-10-10, built; the 3-trial
+answer baseline is pending): a research run with a `corpus_id` gives each
+worker its top passages as `search_result` blocks, document and web sources
+share one `[n]` numbering, the approval step can turn documents off, the UI
+has a Documents picker, and five research eval cases search the docs (three
+from the docs alone, two that need the web too).
 
 ### 4. Observability and cost
 

@@ -5,6 +5,10 @@ answer is split across ``text`` blocks, and each block that makes a claim from
 a search result carries ``citations`` with that result's URL and title. Those
 citations are the only trustworthy source list. URLs the model types into its
 prose can be invented; URLs in citation metadata came back from the search.
+
+Passages from the tenant's documents go in as ``search_result`` blocks and
+come back cited as ``search_result_location``: the same shape, keyed by the
+``source`` we gave the block instead of a URL. Both kinds share one numbering.
 """
 
 import re
@@ -36,12 +40,29 @@ def answer_and_sources(message: BaseMessage) -> tuple[str, list[Source]]:
             continue  # server_tool_use, web_search_tool_result: not the answer
         parts.append(str(block.get("text", "")))
         for citation in block.get("citations") or []:
-            url = citation.get("url") if isinstance(citation, dict) else None
-            if not url:
+            if not isinstance(citation, dict):
                 continue
-            source = seen.setdefault(url, Source(url=url, title=str(citation.get("title") or url)))
+            if citation.get("type") == "search_result_location":
+                key = citation.get("source")
+                if not key:
+                    continue
+                source = seen.setdefault(
+                    key,
+                    Source(url=key, title=str(citation.get("title") or key), kind="document"),
+                )
+            else:
+                url = citation.get("url")
+                if not url:
+                    continue
+                source = seen.setdefault(
+                    url, Source(url=url, title=str(citation.get("title") or url))
+                )
             _add_quote(source, citation.get("cited_text"))
     return "".join(parts).strip(), list(seen.values())
+
+
+def is_document(source: Source) -> bool:
+    return source.get("kind") == "document"
 
 
 def _add_quote(source: Source, text: Any) -> None:

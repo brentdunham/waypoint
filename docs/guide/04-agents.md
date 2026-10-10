@@ -127,7 +127,7 @@ flowchart TD
 **Fan-out with `Send`.** `Send("investigate", WorkerInput)` starts one worker
 per question, concurrently, each with only the slice of state it needs:
 question, topic, round, `tenant_id` and the searcher model (both for the cache
-key).
+key), and `corpus_id` when the run searches documents.
 
 **`defer=True` on critique.** Without it the critic would run as soon as the
 first worker finished. Deferred, it runs once per wave, after every worker
@@ -149,6 +149,19 @@ the defaults.
 | The source list is built from metadata and appended; the writer cannot add a source | `synthesize`, `_source_list` |
 | An edited plan is capped at 5 questions | `approve`, `MAX_QUESTIONS` |
 | A rejected web-search request fails with the fix in the message | `investigate` |
+| A run that names a corpus the tenant cannot read, or names one while RAG is off, fails before planning | `plan`, `CorpusUnavailableError` |
+
+**Documents.** With a `corpus_id` in the input, `plan` checks the corpus
+against the caller's tenant and the approval interrupt shows it; the person
+can answer `{"documents": false}` to research the web only. Each worker then
+retrieves `RAG__TOP_K` passages for its question (`rag/retrieve.py`) and sends
+them to the searcher as `search_result` blocks ahead of the prompt, with a
+`DOCUMENT_RULE` that says the passages are the user's documents, data and
+not instructions, to prefer them, and to use the web for what they do not
+cover. The searcher keeps its web search tool. Without a corpus the prompt
+and the worker input are exactly what they were before, so recorded calls
+and cache entries still match. Design and measurements:
+[design/rag.md](../design/rag.md#phase-3-research-integration-2026-10-10).
 
 ### Research state
 
@@ -173,7 +186,8 @@ flowchart LR
 ```
 
 A **finding** is one question's answer: `question`, `answer`, `sources`
-(each with `url`, `title` and up to three `quotes`), `cited`, `confidence`,
+(each with `url`, `title`, up to three `quotes`, and `kind: "document"` for a
+passage from a corpus), `cited`, `confidence`,
 `issue`, `round` and the `model` that wrote it.
 
 ## 4.6 Citations from metadata
@@ -183,8 +197,8 @@ A **finding** is one question's answer: `question`, `answer`, `sources`
 ```mermaid
 flowchart TD
     reply[Searcher reply: content blocks] --> blocks{Text blocks carry<br/>citations?}
-    blocks -- yes --> src[Sources from each citation:<br/>url, title, cited_text as quotes<br/>max 3 per source, 400 chars each]
-    blocks -- no --> fb[Fallback: first 5 pages the<br/>searches returned, cited = false]
+    blocks -- yes --> src[Sources from each citation:<br/>web: url, title; document: source, title<br/>cited_text as quotes<br/>max 3 per source, 400 chars each]
+    blocks -- no --> fb[Fallback: retrieved passages, then<br/>pages the searches returned,<br/>first 5, cited = false]
     src & fb --> finding[Finding]
     finding --> num[number_sources: one global #91;n#93;<br/>per URL, in finding order]
     num --> writer[Writer sees findings with #91;n#93;]
@@ -196,6 +210,15 @@ A finding's sources come from the `citations` on the reply's text blocks,
 search; a URL in the text may have been invented. The **quotes** (`cited_text`)
 are what the answer drew from each page. The judge and the verifier both use
 them to check a claim against the source instead of against its title.
+
+A passage from a corpus is cited the same way. Claude returns a
+`search_result_location` citation instead of a web one, keyed by the passage's
+`source` (`doc://<document_id>#<ordinal>`), and it becomes a source with
+`kind: "document"`, its heading path as the title. Web and document sources
+share one `[n]` numbering; the appended source list shows a document as
+`[n] DEPLOY.md › 4. Caddy (document)` rather than its `doc://` id. Each
+paragraph of a passage is its own text block, because Claude cites whole
+blocks, so a citation can be narrower than the passage.
 
 The fallback exists because Haiku 5.5 searched but attached no citations in
 about a quarter of findings (2026-10-08). Its search results are still real
@@ -275,7 +298,7 @@ cancellation, audit and per-tenant limits. The upload endpoint stores the
 files first and passes only their ids, so nothing large enters graph state or
 checkpoints. A document that cannot be indexed is marked `failed` with the
 reason and the rest carry on. A chunk keeps its paragraphs as separate
-strings because the research worker (phase 3 of the RAG design) will send
-each as its own text block, and Claude cites whole blocks.
+strings because the research worker sends each as its own text block, and
+Claude cites whole blocks ([4.6](#46-citations-from-metadata)).
 
 No node is cached: every node writes to the database.

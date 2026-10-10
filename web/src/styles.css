@@ -85,6 +85,7 @@ button.block { width: 100%; }
 .badge { border-radius: 999px; padding: 0.1rem 0.55rem; font-size: 0.75rem; border: 1px solid; }
 .badge--ok { color: var(--ok); border-color: var(--ok); }
 .badge--warn { color: var(--warn); border-color: var(--warn); }
+.badge--doc { color: var(--accent); border-color: var(--accent); font-size: 0.7rem; padding: 0 0.4rem; }
 .banner { border-radius: 8px; padding: 0.6rem 0.8rem; margin: 0; }
 .banner--error { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
 

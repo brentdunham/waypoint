@@ -4,7 +4,7 @@ A key without a reducer is last-write-wins, which silently loses data when two
 parallel branches write it. Anything a fan-out touches gets a reducer.
 """
 
-from typing import Annotated, Any, NotRequired, TypedDict
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
@@ -18,12 +18,20 @@ class ChatState(TypedDict, total=False):
 
 
 class Source(TypedDict):
-    """A page behind a finding. Taken from the provider's citation metadata or,
-    failing that, its search results (``Finding.cited``); never from text the
-    model wrote, so a URL here is one the search actually returned."""
+    """A page or passage behind a finding. Taken from the provider's citation
+    metadata or, failing that, its search results (``Finding.cited``); never
+    from text the model wrote, so a URL here is one the search actually
+    returned."""
 
     url: str
+    """A web URL, or ``doc://<document_id>#<chunk ordinal>`` for a passage from
+    the tenant's documents. Unique per source either way: it keys the [n]
+    numbering."""
     title: str
+    """The page title, or the passage's heading path (``DEPLOY.md`` then ``4. Caddy``)."""
+    kind: NotRequired[Literal["web", "document"]]
+    """Absent means web: only document sources are marked, so findings and
+    prompts of web-only runs are byte-identical to before documents existed."""
     quotes: NotRequired[list[str]]
     """What the API says the answer drew from this page: the ``cited_text`` of
     each citation to it, deduplicated and capped (``citations.MAX_QUOTES``).
@@ -75,6 +83,12 @@ class ResearchState(TypedDict, total=False):
     """Questions the critic wants answered next. Empty means synthesize."""
     report: str
     metadata: dict[str, Any]
+    corpus_id: str | None
+    """Run input: search this corpus as well as the web. The approval step can
+    switch it off (set to None)."""
+    corpus: dict[str, Any] | None
+    """``{"corpus_id", "name"}`` of the corpus, resolved for the tenant by the
+    planner, for the approval card and the briefing's metadata."""
 
 
 class WorkerInput(TypedDict):
@@ -94,3 +108,6 @@ class WorkerInput(TypedDict):
     """The searcher model, for the same reason: a per-run model choice must not
     be answered from another model's cached reply. The worker uses this name."""
     round: int
+    corpus_id: NotRequired[str | None]
+    """The corpus to retrieve from, if any. In the input, so in the cache key:
+    the same question with and without documents is a different answer."""

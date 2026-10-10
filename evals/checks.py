@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from evals.driver import Transcript
-from waypoint.agents.citations import split_sentences
+from waypoint.agents.citations import is_document, number_sources, split_sentences
 from waypoint.agents.graphs.research import MAX_QUESTIONS
 from waypoint.settings import Settings
 
@@ -158,6 +158,34 @@ def _findings_cited(t: Transcript, _: Any, s: Settings) -> CheckResult:
         "findings_cited",
         [f"not cited: {f['question']}" for f in findings if not f.get("cited", bool(f["sources"]))],
     )
+
+
+def _cited_kinds(t: Transcript) -> tuple[set[int], set[int]]:
+    """Numbers cited in the briefing body that are documents, and that are web pages."""
+    body, _ = _briefing(t)
+    findings = t.values.get("findings") or []
+    numbers = number_sources(findings)
+    documents = {numbers[s["url"]] for f in findings for s in f["sources"] if is_document(s)}
+    cited = set(map(int, CITATION.findall(body)))
+    return cited & documents, cited - documents
+
+
+@check("cites_documents")
+def _cites_documents(t: Transcript, _: Any, __: Settings) -> CheckResult:
+    """The briefing cites at least one passage from the case's corpus (RAG)."""
+    documents, _web = _cited_kinds(t)
+    return CheckResult(
+        "cites_documents", bool(documents), f"{len(documents)} document sources cited"
+    )
+
+
+@check("cites_web")
+def _cites_web(t: Transcript, _: Any, s: Settings) -> CheckResult:
+    """The briefing cites at least one web page: for cases that need both."""
+    if not s.research.web_search:
+        return CheckResult("cites_web", None, "web search off")
+    _documents, web = _cited_kinds(t)
+    return CheckResult("cites_web", bool(web), f"{len(web)} web sources cited")
 
 
 @check("plan_bounds")

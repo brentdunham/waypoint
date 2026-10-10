@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, auth } from "./api/client";
-import type { ChatMessage, Finding } from "./api/types";
+import type { ChatMessage, Corpus, Finding } from "./api/types";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { ConnectionBar } from "./components/ConnectionBar";
 import { ResearchProgress } from "./components/ResearchProgress";
@@ -19,6 +19,13 @@ export default function App() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [corpora, setCorpora] = useState<Corpus[]>([]);
+  const [corpusId, setCorpusId] = useState("");
+
+  useEffect(() => {
+    // Corpora are optional: a server without RAG answers 503 and the picker hides.
+    api.corpora().then(setCorpora, () => setCorpora([]));
+  }, []);
 
   const { snapshot, history, refresh: refreshState } = useSnapshot(threadId);
   const run = useRun(async () => {
@@ -73,7 +80,10 @@ export default function App() {
       }
       const message = draft;
       setDraft("");
-      await run.launch(id, { message });
+      // The corpus goes with the research run's first input; the approval card
+      // can still switch it off.
+      const withDocuments = agent === "research" && corpusId && !threadId;
+      await run.launch(id, withDocuments ? { message, input: { corpus_id: corpusId } } : { message });
     });
 
   /** One click from the welcome panel: a new thread for that agent, then run. */
@@ -108,6 +118,9 @@ export default function App() {
           threads={threads}
           selected={threadId}
           agent={agent}
+          corpora={corpora}
+          corpusId={corpusId}
+          onCorpus={setCorpusId}
           onAgent={(name) => {
             setAgent(name);
             // A thread belongs to one agent; picking another starts fresh.
@@ -182,9 +195,18 @@ export default function App() {
                       <ul className="sources">
                         {f.sources.map((s) => (
                           <li key={s.url}>
-                            <a href={s.url} target="_blank" rel="noreferrer noopener">
-                              {s.title}
-                            </a>
+                            {s.kind === "document" ? (
+                              // A passage from the tenant's corpus: no URL to open,
+                              // so show its heading path and what was quoted.
+                              <>
+                                <span className="badge badge--doc">doc</span> {s.title}
+                                {s.quotes?.[0] && <q className="muted small"> {s.quotes[0]}</q>}
+                              </>
+                            ) : (
+                              <a href={s.url} target="_blank" rel="noreferrer noopener">
+                                {s.title}
+                              </a>
+                            )}
                           </li>
                         ))}
                       </ul>

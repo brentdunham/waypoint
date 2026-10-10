@@ -20,10 +20,12 @@ from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
 from evals.cases import Case
+from evals.corpus import build_index, index_fingerprint, load_manifest, read_corpus
 from evals.replay import Replay
 from waypoint.agents.context import AgentContext, memory_namespace
-from waypoint.agents.models import INTERCEPTOR, build_embeddings
+from waypoint.agents.models import INTERCEPTOR, build_embeddings, build_rag_embeddings
 from waypoint.agents.registry import get_spec
+from waypoint.rag.store import CorpusStore, MemoryCorpusStore
 from waypoint.serialization import jsonable
 from waypoint.settings import Settings
 
@@ -146,6 +148,40 @@ class UsageRecorder(AsyncCallbackHandler):
         self._open.pop(run_id, None)
 
 
+_INDEXES: dict[tuple[str, str], tuple[CorpusStore, str]] = {}
+_INDEX_LOCK: asyncio.Lock | None = None
+
+
+async def corpus_index(settings: Settings, name: str) -> tuple[CorpusStore, str]:
+    """An in-memory index of a pinned corpus, built once per process.
+
+    In memory rather than Postgres, so the research eval needs no database:
+    exact cosine similarity ranks the same as pgvector's HNSW does at this
+    size. Keyword and hybrid search need Postgres full text, so only vector
+    mode is allowed here; the retrieval eval measures the others.
+    """
+    global _INDEX_LOCK  # noqa: PLW0603 - one lock per process, made on the running loop
+    if settings.rag.mode != "vector":
+        raise ValueError(
+            f"RAG__MODE={settings.rag.mode}: the research eval indexes in memory, where only "
+            "vector search is real. Use RAG__MODE=vector for research evals."
+        )
+    embeddings = build_rag_embeddings(settings)  # hash vectors under FAKE_MODEL
+    if embeddings is None:
+        raise ValueError("A case names a corpus but RAG__EMBEDDINGS_MODEL is not set.")
+    manifest = load_manifest(name)
+    files = read_corpus(manifest)
+    fingerprint = index_fingerprint(settings, manifest, files)
+    key = (name, fingerprint)
+    _INDEX_LOCK = _INDEX_LOCK or asyncio.Lock()
+    async with _INDEX_LOCK:
+        if key not in _INDEXES:
+            store = MemoryCorpusStore()
+            index = await build_index(settings, store, embeddings, f"{name}-{fingerprint}", files)
+            _INDEXES[key] = (store, index.corpus_id)
+    return _INDEXES[key]
+
+
 def _turn_input(input_key: str, text: str) -> dict[str, Any]:
     if input_key == "messages":
         return {"messages": [{"role": "user", "content": text}]}
@@ -196,7 +232,16 @@ async def _run_case(
     for n, fact in enumerate(case.seed):
         await store.aput(memory_namespace(EVAL_TENANT, user), f"seed{n}", {"fact": fact})
 
-    graph = spec.builder(settings, checkpointer=InMemorySaver(), store=store)
+    extra: dict[str, Any] = {}
+    corpus_id: str | None = None
+    if case.corpus:
+        if settings.fake_model and not settings.rag.enabled:
+            # --fake checks the harness; give it hash embeddings to index with.
+            fake_rag = settings.rag.model_copy(update={"embeddings_model": "fake:hash"})
+            settings = settings.model_copy(update={"rag": fake_rag})
+        corpora, corpus_id = await corpus_index(settings, case.corpus)
+        extra["corpora"] = corpora
+    graph = spec.builder(settings, checkpointer=InMemorySaver(), store=store, **extra)
     recorder = UsageRecorder()
     run_id = str(uuid.uuid4())
     context = AgentContext(
@@ -219,6 +264,8 @@ async def _run_case(
         async with asyncio.timeout(settings.limits.run_timeout_s):
             for turn in case.turns:
                 graph_input: Any = _turn_input(spec.input_key, turn)
+                if corpus_id:
+                    graph_input["corpus_id"] = corpus_id
                 while True:
                     async for _ in graph.astream(graph_input, config, context=context):
                         pass

@@ -1,6 +1,6 @@
 # Design: retrieval over tenant documents (RAG)
 
-Status: **in progress.** Phase 0 decided and phase 1 built on 2026-10-10;
+Status: **in progress.** Phases 0 to 3 built on 2026-10-10;
 see [Implementation log](#implementation-log) for what changed from this
 design and why. Written 2026-10-10.
 This note is the hand-off for the coding sessions: what to build, what is
@@ -439,6 +439,61 @@ downloads from the Hugging Face Hub on first use. So the service needs
 outbound access to huggingface.co the first time it embeds, and tokenizing
 runs synchronously on the event loop. Neither matters at this corpus size; a
 small direct client for Voyage's REST API would remove both.
+
+### Phase 3: research integration (2026-10-10)
+
+Built as designed (R1): with a `corpus_id` in the run input, each
+`investigate` worker retrieves `RAG__TOP_K` passages for its question and
+sends them as `search_result` blocks ahead of the prompt, next to the web
+search tool. Citations come back as `search_result_location` and become
+`Source(kind="document", url="doc://<document_id>#<ordinal>")` with quotes;
+web and document sources share one `[n]` numbering, and the verifier and
+judge see a document source as a source with quotes. The UI has a Documents
+picker for the research agent and a document badge on sources.
+
+Decisions and differences from the design:
+
+* **Web-only runs are unchanged, byte for byte.** `DOCUMENT_RULE` is inserted
+  into the worker prompt only when passages were retrieved, and `corpus_id`
+  is added to a worker's input (the node-cache key) only when set. Existing
+  cache entries and recorded model calls for web-only questions still match.
+* **The corpus is checked before planning.** `plan` resolves `corpus_id`
+  against the caller's tenant: an unknown corpus, another tenant's, or a run
+  that asks for documents while `RAG__EMBEDDINGS_MODEL` is unset fails the run
+  at once with `CorpusUnavailableError`, rather than quietly researching the
+  web alone.
+* **The person can turn documents off at approval.** The approval interrupt
+  shows the corpus; answering `{"documents": false}` researches the web only.
+* **No score threshold.** Phase 2 found none that separates relevant from
+  irrelevant passages, so every worker gets its top k, and `DOCUMENT_RULE`
+  says to ignore passages that do not answer the question, and that passages
+  are data, never instructions (R8).
+* **The uncited fallback includes passages.** When a worker cites nothing,
+  its finding lists the retrieved passages first, then web results, as
+  uncited sources (capped as before), so the writer still has something to
+  number.
+* **Source lists show documents by heading.** A document source renders as
+  `[n] DEPLOY.md › 4. Caddy (document)`; the `doc://` id means nothing to a
+  reader.
+* **The research eval indexes in memory.** A case with `"corpus":
+  "waypoint-docs"` gets the pinned corpus indexed into a `MemoryCorpusStore`
+  once per run, so the research eval needs no database. Memory search is
+  vector only, so the driver requires `RAG__MODE=vector` (the default).
+  `RAG__*` settings that a research run reads are now in the research
+  scorecard's fingerprint. Two checks were added: `cites_documents` and
+  `cites_web`.
+* **Five answer-eval cases**: three answered from the docs (stream recovery,
+  tenant isolation, eval costs) and two that need docs and web (SSE against
+  WebSockets, rate limiting against public APIs).
+
+Observed in a live smoke test (claude-haiku-5-5 with web search, one
+question): the API took the `search_result` blocks and returned document
+citations with quotes. Two things to watch in the eval: the model sometimes
+repeated a cited passage verbatim after paraphrasing it, and it ran web
+searches the passages had already answered.
+
+Done-when check: pending the live 3-trial research baseline with the new
+cases.
 
 ## References
 

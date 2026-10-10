@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from evals import corpus
 from evals import retrieval as rv
 from waypoint.agents.models import HashEmbeddings
 from waypoint.rag.chunk import Chunk
@@ -180,7 +181,7 @@ def _git_has(rev: str) -> bool:
         return False
     probe = subprocess.run(
         ["git", "cat-file", "-e", f"{rev}^{{commit}}"],
-        cwd=rv.REPO,
+        cwd=corpus.REPO,
         capture_output=True,
         check=False,
     )
@@ -193,11 +194,11 @@ def test_every_gold_span_is_findable_in_the_pinned_corpus(dataset: Path) -> None
     recall. Caught here, before anyone pays for a measurement."""
     if not dataset.exists():
         pytest.skip(f"{dataset.name} does not exist yet")
-    manifest = rv.load_manifest("waypoint-docs")
+    manifest = corpus.load_manifest("waypoint-docs")
     if not _git_has(manifest.rev):
         pytest.skip("git or the pinned commit is unavailable")
     cases = rv.load_cases(dataset)
-    chunks = rv.chunk_corpus(rv.read_corpus(manifest), RagSettings().chunk_tokens)
+    chunks = rv.chunk_corpus(corpus.read_corpus(manifest), RagSettings().chunk_tokens)
     assert rv.unfindable_spans(cases, chunks) == []
     kinds = {c.kind for c in cases}
     assert kinds == {"paraphrase", "identifier", "multi-hop", "no-answer"}
@@ -206,7 +207,7 @@ def test_every_gold_span_is_findable_in_the_pinned_corpus(dataset: Path) -> None
 def test_the_harness_runs_end_to_end_offline(tmp_path: Path) -> None:
     from evals.__main__ import main
 
-    if not _git_has(rv.load_manifest("waypoint-docs").rev):
+    if not _git_has(corpus.load_manifest("waypoint-docs").rev):
         pytest.skip("git or the pinned commit is unavailable")
     if not rv.DATASET.exists():
         pytest.skip("no reviewed gold set")

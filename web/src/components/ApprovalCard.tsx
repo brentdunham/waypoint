@@ -18,6 +18,8 @@ export function ApprovalCard({ interrupt, busy, onDecide }: Props) {
   const initial = interrupt.value.plan ?? [];
   const rationale = interrupt.value.rationale ?? [];
   const [plan, setPlan] = useState<string[]>(initial);
+  const corpus = interrupt.value.corpus ?? null;
+  const [documents, setDocuments] = useState(true);
   // Rationale belongs to the planner's question, so only show it while the
   // question is still the planner's text.
   const why = (question: string) => rationale[initial.indexOf(question)] ?? "";
@@ -35,6 +37,17 @@ export function ApprovalCard({ interrupt, busy, onDecide }: Props) {
       {interrupt.value.models && <ModelLine models={interrupt.value.models} />}
       {interrupt.value.web_search === false && (
         <p className="muted">Web search is off: answers will come from the model alone, without sources.</p>
+      )}
+      {corpus && (
+        <label className="row small">
+          <input
+            type="checkbox"
+            checked={documents}
+            disabled={busy}
+            onChange={(event) => setDocuments(event.target.checked)}
+          />
+          Also search your documents: <strong>{corpus.name}</strong>
+        </label>
       )}
 
       {plan.length > 0 && (
@@ -66,7 +79,7 @@ export function ApprovalCard({ interrupt, busy, onDecide }: Props) {
           type="button"
           className="primary"
           disabled={busy || plan.length === 0}
-          onClick={() => onDecide({ approved: true, plan })}
+          onClick={() => onDecide({ approved: true, plan, ...(corpus ? { documents } : {}) })}
         >
           Approve and run
         </button>

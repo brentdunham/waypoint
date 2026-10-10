@@ -1,4 +1,4 @@
-import type { AgentSpec, Thread } from "../api/types";
+import type { AgentSpec, Corpus, Thread } from "../api/types";
 
 interface Props {
   agents: AgentSpec[];
@@ -6,6 +6,10 @@ interface Props {
   selected: string | null;
   agent: string;
   onAgent: (name: string) => void;
+  /** Corpora the research agent can search; the picker hides when there are none. */
+  corpora: Corpus[];
+  corpusId: string;
+  onCorpus: (corpusId: string) => void;
   onSelect: (threadId: string) => void;
   onNew: () => void;
   onDelete: (threadId: string) => void;
@@ -17,6 +21,9 @@ export function Sidebar({
   selected,
   agent,
   onAgent,
+  corpora,
+  corpusId,
+  onCorpus,
   onSelect,
   onNew,
   onDelete,
@@ -35,6 +42,19 @@ export function Sidebar({
         </select>
       </label>
       {spec && <p className="muted small">{spec.description}</p>}
+      {agent === "research" && corpora.length > 0 && (
+        <label className="field">
+          <span>Documents</span>
+          <select value={corpusId} onChange={(event) => onCorpus(event.target.value)}>
+            <option value="">Web only</option>
+            {corpora.map((c) => (
+              <option key={c.corpus_id} value={c.corpus_id}>
+                {c.name} ({c.documents} docs{c.visibility === "public" ? ", public" : ""})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <button type="button" className="primary block" onClick={onNew}>
         New thread

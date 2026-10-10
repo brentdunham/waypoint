@@ -63,6 +63,8 @@ export interface InterruptPayload {
   /** Why the planner asked each question, index-aligned with `plan`. */
   rationale?: string[];
   web_search?: boolean;
+  /** The corpus each question will also search; answer `documents: false` to skip it. */
+  corpus?: { corpus_id: string; name: string } | null;
   /** Role -> model for the run this plan belongs to. */
   models?: Record<string, string>;
   prompt?: string;
@@ -101,10 +103,27 @@ export type RunEvent =
   | { type: "run.failed"; data: { error: string; type: string } }
   | { type: "run.cancelled"; data: { run_id: string } };
 
-/** Mirrors `Source` / `Finding` in src/app/agents/state.py. */
+/** Mirrors `Source` / `Finding` in src/waypoint/agents/state.py. */
 export interface Source {
+  /** A web URL, or `doc://<document_id>#<chunk>` for a passage from the tenant's documents. */
   url: string;
+  /** Page title, or the passage's heading path. */
   title: string;
+  /** Absent means web. */
+  kind?: "web" | "document";
+  quotes?: string[];
+}
+
+/** Mirrors `CorpusOut` in src/waypoint/schemas.py. */
+export interface Corpus {
+  corpus_id: string;
+  tenant_id: string;
+  name: string;
+  visibility: "private" | "public";
+  embed_model: string;
+  created_at: string;
+  documents: number;
+  chunks: number;
 }
 
 export interface Finding {

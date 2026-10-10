@@ -35,6 +35,9 @@ class Case(BaseModel):
     expect: str = ""
     """What a good answer contains, for the judge. Not a reference answer."""
     tags: list[str] = Field(default_factory=list)
+    corpus: str | None = None
+    """Research: a corpus under ``corpora/`` the workers also search (RAG). The
+    driver indexes it once per process and passes its id as ``corpus_id``."""
     reviewed: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
 
     @property

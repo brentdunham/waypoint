@@ -72,6 +72,7 @@ AGENTS: dict[str, AgentSpec] = {
         input_key="topic",
         model_roles=research.ROLES,
         supports_interrupts=True,
+        uses_corpora=True,
         example={"topic": "small modular reactors for datacentre power"},
     ),
     "ingest": AgentSpec(

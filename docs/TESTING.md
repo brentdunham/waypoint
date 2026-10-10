@@ -99,7 +99,11 @@ How it fits together (`evals/`):
 
 * **Datasets** — `datasets/<agent>.jsonl`, one case per line: input, interrupt
   answers, seeded memories, programmatic checks, rubric criteria, what a good
-  answer covers, and the date someone last reviewed it.
+  answer covers, and the date someone last reviewed it. A research case with
+  `"corpus": "waypoint-docs"` also searches that corpus: the driver indexes
+  the pinned corpus (see Retrieval eval) in memory once per run, so it needs
+  `RAG__EMBEDDINGS_MODEL`, `VOYAGE_API_KEY` and `RAG__MODE=vector`, but no
+  database. Under `--fake` it uses hash vectors.
 * **Driver** — runs each case in process on the same `build()` the service
   registers, with its own in-memory store, and records every model call with
   role, model, tokens, web searches and latency.
@@ -107,7 +111,8 @@ How it fits together (`evals/`):
   used, every finding has sources (`findings_sourced`) and they came from
   citations rather than the search-results fallback (`findings_cited`), at
   least 80% of the briefing's claim-length sentences carry an `[n]`
-  (`claims_cited`),
+  (`claims_cited`), a corpus case cites a document (`cites_documents`) or a
+  web page as well (`cites_web`, for cases that need both),
   rounds and plan size stay in bounds, a declined plan searches nothing;
   for chat, the right tool was (or was not) called, facts were remembered and
   seeded memories recalled.
@@ -125,7 +130,8 @@ How it fits together (`evals/`):
   Review the labels: they are the ground truth for the judge.
 * **Scorecards** — `results/<agent>/<time>-<fingerprint>/`: `scorecard.json`,
   `summary.md`, `transcripts.jsonl`. The fingerprint hashes prompts, models per
-  role, agent settings, judge, rubric and dataset, so two scorecards with the
+  role, agent settings (for research, the `RAG__*` settings a run reads too),
+  judge, rubric and dataset, so two scorecards with the
   same fingerprint measured the same thing. Cost uses `prices.toml`; a model
   not listed there shows tokens only.
 * **Baseline gate** — `baselines/<agent>.json`. A metric fails when it drops
@@ -189,7 +195,10 @@ day, so the cadence is a repository variable, not a code change:
 | `EVALS_LANGSMITH_TRACING` | `false` | `true` sends traces to the `waypoint-evals` project |
 
 Secrets: `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` while `EMBEDDINGS_MODEL`
-is `openai:*` (chat memory recall). `LANGSMITH_API_KEY` only with tracing on.
+is `openai:*` (chat memory recall), and `VOYAGE_API_KEY` for the research
+cases that search a corpus. Those cases also need `RAG__EMBEDDINGS_MODEL` in
+the workflow's `env` and a full clone (`fetch-depth: 0`), because the corpus
+is read at a pinned commit. `LANGSMITH_API_KEY` only with tracing on.
 Set them under Settings > Secrets and variables > Actions; nothing comes from
 `.env`, which is not in the repo.
 

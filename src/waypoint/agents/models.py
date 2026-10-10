@@ -73,7 +73,12 @@ class ScriptedChatModel(BaseChatModel):
         return RunnableLambda(answer, name=f"scripted_{schema.__name__}")
 
     def _next(self, messages: list[BaseMessage]) -> AIMessage:
-        text = str(messages[-1].content) if messages else ""
+        content: Any = messages[-1].content if messages else ""
+        blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+        # Document passages arrive as search_result blocks before the prompt.
+        passages = [b for b in blocks if b.get("type") == "search_result"]
+        texts = [str(b.get("text", "")) for b in blocks if b.get("type") == "text"]
+        text = "\n".join(texts) if isinstance(content, list) else str(content)
         if "[[tool:" in text:
             import json as _json
             import re
@@ -96,19 +101,34 @@ class ScriptedChatModel(BaseChatModel):
             # citation on the text block, so source extraction runs offline too.
             question = text.rsplit("Question:", 1)[-1].strip()
             slug = "-".join(question.lower().split())[:60].strip("?-")
+            citations: list[dict[str, Any]] = [
+                {
+                    "type": "web_search_result_location",
+                    "url": f"https://example.com/{slug}",
+                    "title": f"Example source for {question}",
+                    "cited_text": "scripted",
+                }
+            ]
+            if passages:  # documents were given: cite the first, as the API would
+                first = passages[0]
+                citations.insert(
+                    0,
+                    {
+                        "type": "search_result_location",
+                        "source": first["source"],
+                        "title": first["title"],
+                        "cited_text": str(first["content"][0]["text"]),
+                        "search_result_index": 0,
+                        "start_block_index": 0,
+                        "end_block_index": 0,
+                    },
+                )
             return AIMessage(
                 content=[
                     {
                         "type": "text",
                         "text": f"Scripted answer to: {question}",
-                        "citations": [
-                            {
-                                "type": "web_search_result_location",
-                                "url": f"https://example.com/{slug}",
-                                "title": f"Example source for {question}",
-                                "cited_text": "scripted",
-                            }
-                        ],
+                        "citations": citations,
                     }
                 ]
             )

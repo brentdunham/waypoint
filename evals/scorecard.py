@@ -55,17 +55,25 @@ def prompts_of(agent: str) -> dict[str, str]:
     }
 
 
+def rag_settings(settings: Settings, agent: str) -> dict[str, Any] | None:
+    """The retrieval settings a research run reads; not the upload cap."""
+    if agent != "research":
+        return None
+    return settings.rag.model_dump(exclude={"max_upload_mb"})
+
+
 def fingerprint(settings: Settings, agent: str, models: dict[str, str]) -> str:
     """Changes when anything that could change a score changes.
 
-    Prompts, the resolved model per role, the agent's settings, the judge
-    model, the rubric and the dataset. Not the code around them: that is what
-    the git SHA is for, once there is one.
+    Prompts, the resolved model per role, the agent's settings (for research,
+    retrieval's too), the judge model, the rubric and the dataset. Not the code
+    around them: that is what the git SHA is for, once there is one.
     """
     parts = {
         "prompts": prompts_of(agent),
         "models": models,
         "research": settings.research.model_dump() if agent == "research" else None,
+        "rag": rag_settings(settings, agent),
         "max_tokens": settings.max_tokens,
         "judge": settings.evals.judge_model,
         "rubric": rubric_hash(agent),
@@ -227,6 +235,7 @@ def build_scorecard(
         "models": models,
         "judge_model": settings.evals.judge_model,
         "settings": settings.research.model_dump() if agent == "research" else {},
+        "rag": rag_settings(settings, agent),
         "cases": len({r.case.id for r in results}),
         "trials": trials,
         "errors": sum(1 for r in results if r.transcript.error),
