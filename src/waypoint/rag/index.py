@@ -1,0 +1,139 @@
+"""One document into chunks with embeddings: parse -> chunk -> embed -> write.
+
+Shared by the ``ingest`` agent, which runs it once per uploaded document, and
+the retrieval eval, which indexes its pinned corpus with exactly the same code
+so that what it measures is what the service builds.
+"""
+
+import asyncio
+import logging
+from collections.abc import Callable, Sequence
+from typing import Any, TypedDict
+
+from langchain_core.embeddings import Embeddings
+
+from waypoint.errors import NotFound, http_status
+from waypoint.rag.chunk import chunk_sections
+from waypoint.rag.parse import ParseError, parse
+from waypoint.rag.store import CorpusStore
+
+log = logging.getLogger(__name__)
+
+EMBED_ATTEMPTS = 3
+EMBED_BACKOFF_S = 1.0
+
+type Emit = Callable[[dict[str, Any]], None]
+
+
+class IndexResult(TypedDict):
+    document_id: str
+    title: str
+    status: str
+    """``ready`` or ``failed``."""
+    chunks: int
+    error: str | None
+
+
+class DocumentError(Exception):
+    """This document cannot be indexed; the reason is shown to the person."""
+
+
+class EmbeddingError(RuntimeError):
+    """The provider kept failing, or refused outright."""
+
+
+def _ignore(_event: dict[str, Any]) -> None:
+    return None
+
+
+async def index_document(
+    corpora: CorpusStore | None,
+    embeddings: Embeddings | None,
+    *,
+    tenant_id: str,
+    document_id: str,
+    embed_model: str | None,
+    chunk_tokens: int,
+    emit: Emit = _ignore,
+) -> IndexResult:
+    """Index one stored document. Failures come back as a ``failed`` result.
+
+    ``embed_model`` is the service's configured model; a corpus created with
+    another one is refused, because vectors from two models cannot be searched
+    together. Progress goes to ``emit`` as ``{"stage": ...}`` events.
+    """
+    title = document_id
+    try:
+        if corpora is None or embeddings is None:
+            raise DocumentError("Document retrieval is off: RAG__EMBEDDINGS_MODEL is unset.")
+        doc = await corpora.load_document(tenant_id, document_id)
+        if doc is None:
+            raise DocumentError("No such document.")
+        title = doc.title
+        if doc.embed_model != embed_model:
+            raise DocumentError(
+                f"The corpus is embedded with {doc.embed_model} but the service is "
+                f"configured for {embed_model}; vectors from different models cannot "
+                "be searched together."
+            )
+        try:
+            parsed = parse(doc.content, doc.media_type, doc.title)
+        except ParseError as exc:
+            raise DocumentError(str(exc)) from exc
+        progress: dict[str, Any] = {"document_id": document_id, "title": title}
+        emit(
+            progress
+            | {
+                "stage": "parsed",
+                "sections": len(parsed.sections),
+                "paragraphs": parsed.paragraph_count,
+            }
+        )
+        chunks = chunk_sections(parsed.sections, doc.title, target_tokens=chunk_tokens)
+        if not chunks:
+            raise DocumentError("The document has no text to index.")
+        emit(progress | {"stage": "chunked", "chunks": len(chunks)})
+        vectors = await embed_with_retry(embeddings, [c.text for c in chunks])
+        emit(progress | {"stage": "embedded"})
+        try:
+            stored = await corpora.write_chunks(tenant_id, document_id, chunks, vectors)
+        except NotFound as exc:
+            raise DocumentError("The document was deleted during ingestion.") from exc
+    except (DocumentError, EmbeddingError) as exc:
+        error = f"Embedding failed: {exc}" if isinstance(exc, EmbeddingError) else str(exc)
+        if corpora is not None:
+            await corpora.mark_failed(tenant_id, document_id, error)
+        emit({"document_id": document_id, "title": title, "stage": "failed", "error": error})
+        return IndexResult(
+            document_id=document_id, title=title, status="failed", chunks=0, error=error
+        )
+    emit({"document_id": document_id, "title": title, "stage": "stored", "chunks": stored})
+    return IndexResult(
+        document_id=document_id, title=title, status="ready", chunks=stored, error=None
+    )
+
+
+async def embed_with_retry(
+    embeddings: Embeddings,
+    texts: Sequence[str],
+    *,
+    attempts: int = EMBED_ATTEMPTS,
+    backoff_s: float = EMBED_BACKOFF_S,
+) -> list[list[float]]:
+    """``aembed_documents`` with a short exponential backoff on provider errors.
+
+    A rejected key (401/403) or a bad request (400) is not retried: waiting
+    does not fix it. Retrying here, not with a node ``RetryPolicy``, keeps the
+    parse and chunk work from being redone and lets the last error be recorded
+    on the document instead of failing the whole run.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return await embeddings.aembed_documents(list(texts))
+        except Exception as exc:
+            status = http_status(exc)
+            if status in {400, 401, 403} or attempt == attempts:
+                raise EmbeddingError(f"{type(exc).__name__}: {exc}") from exc
+            log.warning("embedding attempt %d failed; retrying", attempt, exc_info=True)
+            await asyncio.sleep(backoff_s * 2 ** (attempt - 1))
+    raise AssertionError("unreachable")  # pragma: no cover

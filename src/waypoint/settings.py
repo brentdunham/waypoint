@@ -109,6 +109,35 @@ class RagSettings(BaseModel):
         le=8,
         description="Per file. The whole request is also capped at 8 MB by the middleware.",
     )
+    top_k: int = Field(
+        default=8,
+        ge=1,
+        le=50,
+        description=(
+            "Chunks handed to a research worker per question. Each is input tokens on "
+            "every web search in that worker call, so more is not free (design: start "
+            "at 8, measure 5/8/12/20)."
+        ),
+    )
+    mode: Literal["vector", "keyword", "hybrid"] = Field(
+        default="vector",
+        description=(
+            "hybrid fuses the vector and full-text rankings with RRF. vector by default: "
+            "on the first retrieval scorecard (2026-10-10) hybrid scored below vector "
+            "alone on recall@8 (0.76 vs 0.90) and MRR (0.60 vs 0.73)."
+        ),
+    )
+    candidates: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        description="How many chunks each method ranks before fusion (hybrid only).",
+    )
+    rrf_k: int = Field(
+        default=60,
+        ge=1,
+        description="RRF constant: a chunk at rank r scores 1/(rrf_k + r) per method.",
+    )
 
     @field_validator("embeddings_model", mode="before")
     @classmethod
@@ -155,8 +184,15 @@ class EvalSettings(BaseModel):
         le=1.0,
         description="Judge agreement with the hand-labelled set needed to trust a criterion.",
     )
+    database_url: PostgresDsn | None = Field(
+        default=None,
+        description=(
+            "Postgres for the retrieval eval's index, so it measures the same SQL the "
+            "service runs. A database of its own, never the service's."
+        ),
+    )
 
-    @field_validator("judge_escalation_model", mode="before")
+    @field_validator("judge_escalation_model", "database_url", mode="before")
     @classmethod
     def _blank_is_unset(cls, v: object) -> object:
         if isinstance(v, str) and not v.strip():

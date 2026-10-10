@@ -14,6 +14,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import BaseModel
 
+from waypoint.errors import http_status
 from waypoint.settings import Settings
 
 if TYPE_CHECKING:
@@ -551,20 +552,6 @@ def _embeddings(
         raise EmbeddingsConfigError(
             f"{setting}={spec!r}: the provider package is not installed ({exc})."
         ) from exc
-
-
-def http_status(exc: BaseException) -> int | None:
-    """The HTTP status a provider error carries, whatever the SDK calls it.
-
-    OpenAI's and Anthropic's SDKs say ``status_code``; Voyage's says
-    ``http_status``. Reading only the first let a rejected Voyage key through
-    the boot probe as a mere network warning (found 2026-10-10).
-    """
-    for attr in ("status_code", "http_status"):
-        value = getattr(exc, attr, None)
-        if isinstance(value, int):
-            return value
-    return None
 
 
 async def check_embedding_dims(

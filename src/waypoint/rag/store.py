@@ -13,6 +13,7 @@ same visibility rules written in Python.
 
 import datetime as dt
 import hashlib
+import re
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -102,6 +103,14 @@ class StoredChunk:
     embedding: tuple[float, ...] = field(repr=False, default=())
 
 
+@dataclass(frozen=True, slots=True)
+class ChunkHit:
+    """A chunk one search method returned, with that method's score (higher is better)."""
+
+    chunk: StoredChunk
+    score: float
+
+
 class CorpusStore(Protocol):
     async def create_corpus(self, tenant_id: str, name: str, embed_model: str) -> Corpus: ...
 
@@ -130,6 +139,14 @@ class CorpusStore(Protocol):
     async def mark_failed(self, tenant_id: str, document_id: str, error: str) -> None: ...
 
     async def list_chunks(self, tenant_id: str, corpus_id: str) -> list[StoredChunk]: ...
+
+    async def vector_search(
+        self, tenant_id: str, corpus_id: str, embedding: Sequence[float], limit: int
+    ) -> list[ChunkHit]: ...
+
+    async def keyword_search(
+        self, tenant_id: str, corpus_id: str, query: str, limit: int
+    ) -> list[ChunkHit]: ...
 
 
 def is_uuid(value: str) -> bool:
@@ -433,6 +450,87 @@ class PgCorpusStore:
         )
         return [StoredChunk(**(r | {"paragraphs": tuple(r["paragraphs"])})) for r in rows]
 
+    # -- search ---------------------------------------------------------------
+
+    async def vector_search(
+        self, tenant_id: str, corpus_id: str, embedding: Sequence[float], limit: int
+    ) -> list[ChunkHit]:
+        """Nearest chunks by cosine similarity, through the HNSW index.
+
+        Two index settings, both transaction-local. ``ef_search`` (default 40)
+        caps how many candidates one HNSW scan yields, so it must be at least
+        ``limit``. ``iterative_scan`` (pgvector 0.8) keeps scanning when the
+        ``corpus_id`` filter discards candidates; without it a small corpus
+        among large ones could come back short. ``relaxed_order`` may return
+        neighbours slightly out of order, so the rows are re-sorted here.
+        """
+        if not is_uuid(corpus_id):
+            return []
+        vector = _vector(embedding)
+        async with self._as_tenant(tenant_id) as conn:
+            await conn.execute(
+                """select set_config('hnsw.ef_search', %s, true),
+                          set_config('hnsw.iterative_scan', 'relaxed_order', true)""",
+                (str(max(40, limit)),),
+            )
+            cur = await conn.execute(
+                f"""select {_CHUNK_COLUMNS}, 1 - (k.embedding <=> %s::vector) as score
+                    from chunks k
+                    where k.corpus_id = %s and {_VISIBLE_CORPUS}
+                    order by k.embedding <=> %s::vector
+                    limit %s""",
+                (vector, corpus_id, corpus_id, tenant_id, vector, limit),
+            )
+            rows = cast("list[dict[str, Any]]", await cur.fetchall())
+        hits = [_hit(r) for r in rows]
+        return sorted(hits, key=lambda h: h.score, reverse=True)
+
+    async def keyword_search(
+        self, tenant_id: str, corpus_id: str, query: str, limit: int
+    ) -> list[ChunkHit]:
+        """Postgres full-text search over heading, paragraphs and context.
+
+        The query's lexemes are OR-ed, not AND-ed: ``plainto_tsquery`` would
+        require every word of a natural-language question in one chunk, which
+        almost nothing satisfies. Ranked by ``ts_rank_cd`` (cover density),
+        which rewards matched terms that sit close together. This is not BM25:
+        there is no corpus-wide term weighting.
+        """
+        if not is_uuid(corpus_id):
+            return []
+        rows = await self._all(
+            tenant_id,
+            f"""with q as (
+                    select nullif(replace(plainto_tsquery('english', %s)::text, ' & ', ' | '),
+                                  '')::tsquery as query
+                )
+                select {_CHUNK_COLUMNS}, ts_rank_cd(k.tsv, q.query) as score
+                from chunks k, q
+                where k.corpus_id = %s and {_VISIBLE_CORPUS} and k.tsv @@ q.query
+                order by score desc, k.chunk_id
+                limit %s""",
+            (query, corpus_id, corpus_id, tenant_id, limit),
+        )
+        return [_hit(r) for r in rows]
+
+
+_CHUNK_COLUMNS = "k.document_id::text as document_id, k.ordinal, k.heading, k.paragraphs"
+
+_VISIBLE_CORPUS = """exists (select 1 from corpora c where c.corpus_id = %s
+                             and (c.tenant_id = %s or c.visibility = 'public'))"""
+"""Uncorrelated, so Postgres evaluates it once and the index scan stays a plain
+scan of one corpus."""
+
+
+def _hit(row: dict[str, Any]) -> ChunkHit:
+    chunk = StoredChunk(
+        document_id=row["document_id"],
+        ordinal=row["ordinal"],
+        heading=row["heading"],
+        paragraphs=tuple(row["paragraphs"]),
+    )
+    return ChunkHit(chunk, float(row["score"]))
+
 
 # -- in memory ------------------------------------------------------------------
 
@@ -588,3 +686,30 @@ class MemoryCorpusStore:
             return []
         docs = [d for d in self._docs.values() if d.info.corpus_id == corpus_id]
         return [c for d in docs for c in self._chunks.get(d.info.document_id, [])]
+
+    async def vector_search(
+        self, tenant_id: str, corpus_id: str, embedding: Sequence[float], limit: int
+    ) -> list[ChunkHit]:
+        """Exact cosine similarity. Embeddings here are unit vectors (HashEmbeddings)."""
+        chunks = await self.list_chunks(tenant_id, corpus_id)
+        hits = [
+            ChunkHit(c, sum(a * b for a, b in zip(c.embedding, embedding, strict=False)))
+            for c in chunks
+        ]
+        return sorted(hits, key=lambda h: h.score, reverse=True)[:limit]
+
+    async def keyword_search(
+        self, tenant_id: str, corpus_id: str, query: str, limit: int
+    ) -> list[ChunkHit]:
+        """Shared lower-case words, counted. A stand-in for the unit tier, not a
+        model of Postgres full-text search: never measure retrieval with it."""
+        terms = set(_WORD.findall(query.lower()))
+        hits = []
+        for chunk in await self.list_chunks(tenant_id, corpus_id):
+            words = set(_WORD.findall(" ".join((chunk.heading, *chunk.paragraphs)).lower()))
+            if score := len(terms & words):
+                hits.append(ChunkHit(chunk, float(score)))
+        return sorted(hits, key=lambda h: h.score, reverse=True)[:limit]
+
+
+_WORD = re.compile(r"\w{3,}")

@@ -15,7 +15,6 @@ import pytest
 from starlette.testclient import TestClient
 from tests.conftest import TestApp, build_settings, read_sse
 
-from waypoint.agents.graphs.ingest import EmbeddingError, embed_with_retry
 from waypoint.agents.models import (
     EmbeddingsConfigError,
     HashEmbeddings,
@@ -23,6 +22,7 @@ from waypoint.agents.models import (
     check_embedding_dims,
 )
 from waypoint.errors import Conflict, NotFound
+from waypoint.rag.index import EmbeddingError, embed_with_retry
 from waypoint.rag.store import MemoryCorpusStore, NewDocument
 
 DOCS = Path(__file__).resolve().parents[1] / "docs"

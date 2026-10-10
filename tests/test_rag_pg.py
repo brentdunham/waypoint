@@ -187,6 +187,47 @@ def test_migrations_rerun_and_the_width_is_checked(pg_app: TestApp) -> None:
     run(pg_app, scenario)
 
 
+def test_vector_and_keyword_search_in_postgres(pg_app: TestApp) -> None:
+    acme, evil = tenant(), tenant()
+
+    def unit(i: int) -> list[float]:
+        return [1.0 if j == i else 0.0 for j in range(DIMS)]
+
+    async def scenario(store: CorpusStore, db: Database) -> None:
+        corpus = await store.create_corpus(acme, f"s-{uuid.uuid4().hex[:8]}", "m")
+        [added] = await store.add_documents(
+            acme, corpus.corpus_id, [NewDocument("cfg.md", "text/markdown", b"x")]
+        )
+        texts = [
+            "Caddy terminates TLS for the demo host.",
+            "Set STREAM__BLOCK_MS below the socket timeout, or idle streams fail.",
+            "Reconnecting clients resume from the last event id.",
+        ]
+        chunks = [Chunk(i, f"cfg.md > {i}", (t,)) for i, t in enumerate(texts)]
+        await store.write_chunks(
+            acme, added.document.document_id, chunks, [unit(i) for i in range(3)]
+        )
+        cid = corpus.corpus_id
+
+        near = await store.vector_search(acme, cid, unit(2), 2)
+        assert len(near) == 2
+        assert near[0].chunk.ordinal == 2  # the other two tie at similarity 0
+        assert near[0].score == pytest.approx(1.0)
+
+        # Identifiers survive the English parser, and OR-ed terms match a
+        # question that shares only some of its words with the chunk.
+        ident = await store.keyword_search(acme, cid, "what is STREAM__BLOCK_MS for?", 5)
+        assert [h.chunk.ordinal for h in ident] == [1]
+        question = await store.keyword_search(acme, cid, "how do clients reconnect?", 5)
+        assert question[0].chunk.ordinal == 2
+        assert await store.keyword_search(acme, cid, "the and of", 5) == []  # stopwords only
+
+        assert await store.vector_search(evil, cid, unit(2), 5) == []
+        assert await store.keyword_search(evil, cid, "Caddy", 5) == []
+
+    run(pg_app, scenario)
+
+
 def test_uploading_docs_through_the_api_is_invisible_to_another_tenant(
     pg_app: TestApp, auth: dict[str, str]
 ) -> None:

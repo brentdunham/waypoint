@@ -71,6 +71,20 @@ class ServiceUnavailable(AppError):
     status, title, slug = 503, "Service Unavailable", "unavailable"
 
 
+def http_status(exc: BaseException) -> int | None:
+    """The HTTP status an upstream provider's error carries, whatever its SDK calls it.
+
+    OpenAI's and Anthropic's SDKs say ``status_code``; Voyage's says
+    ``http_status``. Reading only the first let a rejected Voyage key through
+    the boot probe as a mere network warning (found 2026-10-10).
+    """
+    for attr in ("status_code", "http_status"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return value
+    return None
+
+
 def problem_body(
     status: int,
     title: str,
