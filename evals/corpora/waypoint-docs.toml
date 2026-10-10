@@ -1,0 +1,7 @@
+# The corpus the retrieval eval searches: this repository's docs, pinned to a
+# commit so the gold set's spans stay true while the docs keep changing.
+# Moving `rev` means re-checking every span (`python -m evals retrieval --check`)
+# and starting a new baseline: the corpus is part of the fingerprint.
+rev = "1777465b523ee5315482acb5228f55617b23e622"  # RAG phases 0-1 documented, 2026-10-10
+paths = ["docs"]
+suffixes = [".md"]

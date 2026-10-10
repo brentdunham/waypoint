@@ -311,7 +311,15 @@ def accept(agent: str, scorecard_path: Path, *, min_trials: int = MIN_BASELINE_T
     card = json.loads(scorecard_path.read_text(encoding="utf-8"))
     if card.get("agent") != agent:
         raise AcceptError(f"{scorecard_path} is a scorecard for {card.get('agent')!r}")
-    if int(card.get("trials", 0)) < min_trials:
+    if card.get("kind") == "retrieval":
+        # Deterministic for a fixed index: one run is the measurement. What it
+        # must not be is a run over a gold set nobody has reviewed.
+        if not card.get("reviewed"):
+            raise AcceptError(
+                f"{scorecard_path} was measured on {card.get('dataset')}, not the reviewed "
+                "datasets/retrieval.jsonl."
+            )
+    elif int(card.get("trials", 0)) < min_trials:
         raise AcceptError(
             f"{scorecard_path} ran {card.get('trials')} trial(s); a baseline needs "
             f"{min_trials} so the gate has a spread to tolerate. Rerun with "

@@ -39,3 +39,13 @@ search = 0.01
 input = 5.0
 output = 25.0
 search = 0.01
+
+# Embeddings: USD per million input tokens, keyed by the RAG__EMBEDDINGS_MODEL
+# spec. Source: https://docs.voyageai.com/docs/pricing, checked 2026-10-10.
+# The first 200M tokens per model are free; this prices them anyway.
+[embeddings]
+"voyageai:voyage-4-large" = 0.12
+"voyageai:voyage-4" = 0.06
+"voyageai:voyage-4-lite" = 0.02
+"voyageai:voyage-context-4" = 0.12
+"openai:text-embedding-3-small" = 0.02

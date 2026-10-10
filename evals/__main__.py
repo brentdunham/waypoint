@@ -22,6 +22,7 @@ from evals.calibrate import calibrate
 from evals.cases import load_dataset
 from evals.judge import ROUTING, assign, load_rubric
 from evals.replay import FILENAME, ReplayStore
+from evals.retrieval import add_parser as add_retrieval_parser
 from evals.runner import compare, evaluate, parse_overrides, resolved, self_judging
 from evals.scorecard import (
     MIN_BASELINE_TRIALS,
@@ -270,11 +271,13 @@ def main(argv: list[str] | None = None) -> int:
     cal.set_defaults(fn=cmd_calibrate)
 
     acc = sub.add_parser("accept", help="make a scorecard the baseline")
-    acc.add_argument("--agent", required=True, choices=list(AGENTS))
+    acc.add_argument("--agent", required=True, choices=[*AGENTS, "retrieval"])
     acc.add_argument("scorecard", help="path to a scorecard.json")
     acc.add_argument("--min-trials", type=int, default=MIN_BASELINE_TRIALS,
                      help=f"refuse scorecards with fewer trials (default {MIN_BASELINE_TRIALS})")  # fmt: skip
     acc.set_defaults(fn=cmd_accept)
+
+    add_retrieval_parser(sub)
 
     fp = sub.add_parser("fingerprint", help="print the configuration fingerprint")
     common(fp)
