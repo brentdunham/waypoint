@@ -27,6 +27,7 @@ the agents against a baseline.
 | [docs/TESTING.md](docs/TESTING.md) | How to run and extend each test tier |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What is done, what is next, and why in that order |
 | [docs/case-studies/grounded.md](docs/case-studies/grounded.md) | Raising citation quality with the eval loop: measure, calibrate the judge, fix, re-measure |
+| [docs/case-studies/retrieval.md](docs/case-studies/retrieval.md) | Which retrieval techniques earned their place: reranking, contextual retrieval, embedding models, chunk size, top-k, measured on a reviewed gold set |
 
 ## What it does
 

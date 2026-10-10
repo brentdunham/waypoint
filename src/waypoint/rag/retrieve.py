@@ -9,13 +9,18 @@ Hybrid search uses reciprocal rank fusion: a chunk's fused score is the sum,
 over the methods that ranked it, of ``1 / (rrf_k + rank)``. Only ranks are
 used, so vector cosine similarities and ``ts_rank_cd`` values, which are on
 unrelated scales, never have to be made comparable.
+
+With a reranker (``RAG__RERANK``), any mode's top ``candidates`` go through a
+second stage that reads the query and each chunk together, and its order
+decides the final ``k``.
 """
 
 import asyncio
+import re
 import time
 from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Protocol
 
 from langchain_core.embeddings import Embeddings
 
@@ -50,10 +55,39 @@ class Retrieval:
     """Time spent embedding the query (zero for keyword mode)."""
     search_s: float = 0.0
     """Time spent in the database after the query was embedded."""
+    rerank_s: float = 0.0
+    rerank_tokens: int = 0
+    """Tokens the reranker billed for this query (0 without one)."""
 
     @property
     def elapsed_s(self) -> float:
-        return self.embed_s + self.search_s
+        return self.embed_s + self.search_s + self.rerank_s
+
+
+@dataclass(frozen=True, slots=True)
+class Reranked:
+    order: list[tuple[int, float]]
+    """(index into the documents passed, relevance score), best first."""
+    tokens: int
+    """Billed tokens: query tokens x documents + document tokens."""
+
+
+class Reranker(Protocol):
+    async def rerank(self, query: str, documents: Sequence[str]) -> Reranked: ...
+
+
+class WordOverlapReranker:
+    """Offline stand-in for tests: more shared words ranks higher. Never measure
+    retrieval with it."""
+
+    async def rerank(self, query: str, documents: Sequence[str]) -> Reranked:
+        terms = set(_WORD.findall(query.lower()))
+        scores = [len(terms & set(_WORD.findall(d.lower()))) for d in documents]
+        order = sorted(range(len(documents)), key=lambda i: (-scores[i], i))
+        return Reranked([(i, float(scores[i])) for i in order], 0)
+
+
+_WORD = re.compile(r"\w{3,}")
 
 
 def rrf[K: Hashable](rankings: Mapping[str, Sequence[K]], *, k: int) -> dict[K, float]:
@@ -80,12 +114,14 @@ async def retrieve(
     mode: Mode = "hybrid",
     candidates: int = 50,
     rrf_k: int = 60,
+    reranker: Reranker | None = None,
 ) -> Retrieval:
     """The ``k`` best chunks for ``query`` in a corpus the tenant can read."""
     if mode != "keyword" and embeddings is None:
         raise ValueError(f"mode {mode!r} needs an embeddings model")
 
-    pool = max(k, candidates) if mode == "hybrid" else k
+    pool = max(k, candidates) if mode == "hybrid" or reranker is not None else k
+    first_k = max(k, candidates) if reranker is not None else k
     embed_s = 0.0
     vector: list[float] = []
     if mode != "keyword":
@@ -121,22 +157,48 @@ async def retrieve(
     if mode == "hybrid":
         fused = rrf({m: [_key(h.chunk) for h in f] for m, f in by_method.items()}, k=rrf_k)
         order = sorted(fused, key=lambda key: (-fused[key], key))
-        final = {key: fused[key] for key in order[:k]}
+        final = {key: fused[key] for key in order[:first_k]}
     else:
         (method,) = by_method
         final = {key: scores[key][method] for key in [_key(h.chunk) for h in by_method[method]]}
 
+    rerank_s, rerank_tokens = 0.0, 0
+    if reranker is not None and final:
+        keys = list(final)[:first_k]
+        started = time.perf_counter()
+        reranked = await reranker.rerank(query, [chunks[key].text for key in keys])
+        rerank_s = time.perf_counter() - started
+        rerank_tokens = reranked.tokens
+        final = {}
+        for rank, (index, relevance) in enumerate(reranked.order, start=1):
+            key = keys[index]
+            ranks[key]["rerank"] = rank
+            scores[key]["rerank"] = relevance
+            final[key] = relevance
+
     ranked = [Hit(chunks[key], score, ranks[key], scores[key]) for key, score in final.items()]
-    return Retrieval(ranked[:k], mode, embed_s=embed_s, search_s=search_s)
+    return Retrieval(
+        ranked[:k],
+        mode,
+        embed_s=embed_s,
+        search_s=search_s,
+        rerank_s=rerank_s,
+        rerank_tokens=rerank_tokens,
+    )
 
 
 class Retriever:
     """``retrieve`` with the service's ``RAG__*`` defaults bound."""
 
     def __init__(
-        self, store: CorpusStore, embeddings: Embeddings | None, settings: RagSettings
+        self,
+        store: CorpusStore,
+        embeddings: Embeddings | None,
+        settings: RagSettings,
+        reranker: Reranker | None = None,
     ) -> None:
         self.store, self.embeddings, self.settings = store, embeddings, settings
+        self.reranker = reranker
 
     async def search(
         self,
@@ -157,4 +219,5 @@ class Retriever:
             mode=mode or self.settings.mode,
             candidates=self.settings.candidates,
             rrf_k=self.settings.rrf_k,
+            reranker=self.reranker,
         )

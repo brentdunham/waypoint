@@ -50,12 +50,17 @@ from evals.corpus import (
     read_corpus,
 )
 from evals.scorecard import BASELINES, PRICES, RESULTS, git_sha
-from waypoint.agents.models import HashEmbeddings, build_rag_embeddings
+from waypoint.agents.models import (
+    HashEmbeddings,
+    build_contextualizer,
+    build_rag_embeddings,
+    build_reranker,
+)
 from waypoint.infra.db import Database
 from waypoint.loops import selector_loop
 from waypoint.rag.chunk import Chunk, chunk_sections
 from waypoint.rag.parse import media_type_for, parse
-from waypoint.rag.retrieve import MODES, Mode, retrieve
+from waypoint.rag.retrieve import MODES, Mode, Reranker, retrieve
 from waypoint.rag.store import CorpusStore, MemoryCorpusStore, PgCorpusStore
 from waypoint.settings import Settings
 
@@ -63,6 +68,13 @@ DATASET = DATASETS / "retrieval.jsonl"
 PROPOSED = DATASETS / "retrieval.proposed.jsonl"
 DEPTH = 20
 """Results retrieved per query: recall@20 and MRR look this deep."""
+CUTOFFS = (5, 8, 12, DEPTH)
+"""Recall is reported at each, plus at RAG__TOP_K: the top-k ablation
+(5/8/12/20 passages per worker) reads its quality side from these."""
+CACHE_READ = 0.1
+CACHE_WRITE = 1.25
+"""Prompt-cache multipliers of the input price (platform.claude.com pricing,
+checked 2026-10-10): what the contextualizer's cached document costs."""
 FLOOR = 0.05
 """Smallest drop in recall@k or MRR that fails the gate. Retrieval is
 deterministic for a fixed index, so there is no trial spread to tolerate."""
@@ -176,6 +188,7 @@ class QueryResult:
     top_vector_score: float | None
     elapsed_s: float
     embed_s: float
+    rerank_tokens: int = 0
     top: list[str] = field(default_factory=list)
     """Headings of the top five hits, ``*`` marking relevant ones, for reading."""
 
@@ -210,9 +223,9 @@ async def evaluate(  # noqa: PLR0917
     index: Index,
     cases: list[RetrievalCase],
     modes: Sequence[Mode],
+    reranker: Reranker | None = None,
 ) -> list[QueryResult]:
-    k = settings.rag.top_k
-    cutoffs = sorted({5, k, DEPTH})
+    cutoffs = sorted({*CUTOFFS, settings.rag.top_k})
     results = []
     for mode in modes:
         for case in cases:
@@ -226,6 +239,7 @@ async def evaluate(  # noqa: PLR0917
                 mode=mode,
                 candidates=max(settings.rag.candidates, DEPTH),
                 rrf_k=settings.rag.rrf_k,
+                reranker=reranker,
             )
             ranked = [
                 (index.titles[h.chunk.document_id], h.chunk.paragraphs) for h in retrieval.hits
@@ -247,6 +261,7 @@ async def evaluate(  # noqa: PLR0917
                     top_vector_score=max(vector_scores) if vector_scores else None,
                     elapsed_s=retrieval.elapsed_s,
                     embed_s=retrieval.embed_s,
+                    rerank_tokens=retrieval.rerank_tokens,
                     top=top,
                 )
             )
@@ -275,11 +290,13 @@ def fingerprint(settings: Settings, dataset: Path, index_fp: str) -> str:
         "candidates": settings.rag.candidates,
         "rrf_k": settings.rag.rrf_k,
         "depth": DEPTH,
+        **({"rerank": settings.rag.rerank_model} if settings.rag.rerank else {}),
     }
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:12]
 
 
 def _mode_summary(rows: list[QueryResult], k: int) -> dict[str, Any]:
+    cutoffs = sorted({*CUTOFFS, k})
     answerable = [r for r in rows if r.kind != "no-answer"]
     by_kind: dict[str, list[QueryResult]] = defaultdict(list)
     for r in answerable:
@@ -290,10 +307,9 @@ def _mode_summary(rows: list[QueryResult], k: int) -> dict[str, Any]:
         r.top_vector_score for r in rows if r.kind == "no-answer" and r.top_vector_score is not None
     ]
     return {
-        "recall@5": _mean([r.recall[5] for r in answerable]),
-        f"recall@{k}": _mean([r.recall[k] for r in answerable]),
-        f"recall@{DEPTH}": _mean([r.recall[DEPTH] for r in answerable]),
+        **{f"recall@{n}": _mean([r.recall[n] for r in answerable]) for n in cutoffs},
         "mrr": _mean([r.reciprocal_rank for r in answerable]),
+        "rerank_tokens_per_query": _mean([r.rerank_tokens for r in rows]),
         "missed": sorted(r.case_id for r in answerable if r.first_rank is None),
         "by_kind": {
             kind: {
@@ -323,9 +339,15 @@ def build_card(
     index_fp: str,
     cases: list[RetrievalCase],
     results: list[QueryResult],
-    price_per_m: float | None,
+    prices: dict[str, Any],
 ) -> dict[str, Any]:
     k = settings.rag.top_k
+    price_per_m = prices.get("embeddings", {}).get(settings.rag.embeddings_model or "")
+    rerank_price = prices.get("rerank", {}).get(settings.rag.rerank_model)
+    embed_cost = index.tokens * price_per_m / 1_000_000 if price_per_m is not None else None
+    context_cost = _context_cost(
+        index.context, prices.get("models", {}).get(settings.rag.context_model)
+    )
     modes: dict[str, list[QueryResult]] = defaultdict(list)
     for r in results:
         modes[r.mode].append(r)
@@ -349,22 +371,38 @@ def build_card(
             "candidates": settings.rag.candidates,
             "rrf_k": settings.rag.rrf_k,
             "depth": DEPTH,
+            "contextual": settings.rag.context_model if settings.rag.contextual else None,
+            "rerank": settings.rag.rerank_model if settings.rag.rerank else None,
         },
+        "rerank_usd_per_m": rerank_price if settings.rag.rerank else None,
         "queries": dict(sorted(kinds.items())),
         "index": {
             "chunks": index.chunks,
             "reused": index.reused,
             "tokens_embedded": index.tokens,
             "cost_usd": (
-                round(index.tokens * price_per_m / 1_000_000, 4)
-                if price_per_m is not None
-                else None
+                round(embed_cost + (context_cost or 0.0), 4) if embed_cost is not None else None
             ),
+            "context": index.context,
+            "context_cost_usd": round(context_cost, 4) if context_cost is not None else None,
             "seconds": round(index.seconds, 1),
         },
         "modes": {mode: _mode_summary(rows, k) for mode, rows in modes.items()},
         "runs": [asdict(r) for r in results],
     }
+
+
+def _context_cost(usage: dict[str, int] | None, price: dict[str, float] | None) -> float | None:
+    """USD the contextualizer spent, cache reads and writes priced as such."""
+    if not usage or not price:
+        return None
+    rate_in, rate_out = price["input"], price["output"]
+    tokens_in = (
+        usage["input_tokens"]
+        + usage["cache_read_tokens"] * CACHE_READ
+        + usage["cache_write_tokens"] * CACHE_WRITE
+    )
+    return (tokens_in * rate_in + usage["output_tokens"] * rate_out) / 1_000_000
 
 
 def regressions(baseline: dict[str, Any], card: dict[str, Any]) -> list[str]:
@@ -385,6 +423,12 @@ def render(card: dict[str, Any], found: list[str] | None = None) -> str:
     k = card["settings"]["top_k"]
     index = card["index"]
     cost = index["cost_usd"]
+    cutoffs = sorted({*CUTOFFS, k})
+    s = card["settings"]
+    extras = [
+        *([f"contextual by `{s['contextual']}`"] if s.get("contextual") else []),
+        *([f"reranked by `{s['rerank']}`"] if s.get("rerank") else []),
+    ]
     lines = [
         "# retrieval scorecard",
         "",
@@ -392,7 +436,8 @@ def render(card: dict[str, Any], found: list[str] | None = None) -> str:
         + (f" · git `{card['git_sha']}`" if card.get("git_sha") else ""),
         f"Corpus `{card['corpus']['name']}` at `{card['corpus']['rev'][:7]}`, "
         f"{index['chunks']} chunks, `{card['embed_model']}` "
-        f"({card['settings']['dims']} dims, {card['settings']['chunk_tokens']}-token chunks)",
+        f"({card['settings']['dims']} dims, {card['settings']['chunk_tokens']}-token chunks)"
+        + (", " + ", ".join(extras) if extras else ""),
         "Queries: "
         + ", ".join(f"{n} {kind}" for kind, n in card["queries"].items())
         + f" · dataset `{card['dataset']}`"
@@ -403,15 +448,24 @@ def render(card: dict[str, Any], found: list[str] | None = None) -> str:
             if index["reused"]
             else f"built in {index['seconds']}s, ~{index['tokens_embedded']} tokens"
             + (f", ${cost:.4f}" if cost is not None else "")
+            + (
+                f" (preambles ${index['context_cost_usd']:.4f})"
+                if index.get("context_cost_usd") is not None
+                else ""
+            )
         ),
         "",
-        f"| mode | recall@5 | recall@{k} | recall@{DEPTH} | MRR | p50 s | p95 s | missed |",
-        "|---|---|---|---|---|---|---|---|",
+        "| mode | "
+        + " | ".join(f"recall@{n}" for n in cutoffs)
+        + " | MRR | p50 s | p95 s | missed | rerank tok/q |",
+        "|---" * (len(cutoffs) + 6) + "|",
     ]
     for mode, m in card["modes"].items():
         lines.append(
-            f"| {mode} | {m['recall@5']} | {m[f'recall@{k}']} | {m[f'recall@{DEPTH}']} | "
-            f"{m['mrr']} | {m['latency_s']['p50']} | {m['latency_s']['p95']} | {len(m['missed'])} |"
+            f"| {mode} | "
+            + " | ".join(str(m.get(f"recall@{n}")) for n in cutoffs)
+            + f" | {m['mrr']} | {m['latency_s']['p50']} | {m['latency_s']['p95']} | "
+            f"{len(m['missed'])} | {m.get('rerank_tokens_per_query') or 0} |"
         )
     kinds = [kind for kind in card["queries"] if kind != "no-answer"]
     lines += [
@@ -568,16 +622,25 @@ async def measure(plan: Plan) -> dict[str, Any]:
     try:
         index_fp = index_fingerprint(settings, plan.manifest, plan.files)
         name = f"{plan.manifest.name}-{index_fp}"
-        index = await build_index(settings, store, embeddings, name, plan.files)
+        index = await build_index(
+            settings,
+            store,
+            embeddings,
+            name,
+            plan.files,
+            contextualizer=build_contextualizer(settings),
+        )
         print(
             f"index {index_fp}: {index.chunks} chunks, "
             + ("reused" if index.reused else f"built in {index.seconds:.1f}s")
         )
-        results = await evaluate(settings, store, embeddings, index, plan.cases, plan.modes)
+        results = await evaluate(
+            settings, store, embeddings, index, plan.cases, plan.modes, build_reranker(settings)
+        )
     finally:
         if db is not None:
             await db.close()
-    prices = tomllib.loads(PRICES.read_text(encoding="utf-8")).get("embeddings", {})
+    prices = tomllib.loads(PRICES.read_text(encoding="utf-8"))
     return build_card(
         settings,
         corpus=plan.manifest,
@@ -587,7 +650,7 @@ async def measure(plan: Plan) -> dict[str, Any]:
         index_fp=index_fp,
         cases=plan.cases,
         results=results,
-        price_per_m=prices.get(settings.rag.embeddings_model or ""),
+        prices=prices,
     )
 
 

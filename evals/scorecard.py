@@ -55,11 +55,25 @@ def prompts_of(agent: str) -> dict[str, str]:
     }
 
 
+LEGACY_RAG = {
+    "contextual": False,
+    "context_model": "claude-haiku-5-5",
+    "rerank": False,
+    "rerank_model": "rerank-3",
+}
+"""Settings added after research scorecards were first fingerprinted, with the
+value that reproduces the behaviour before them. A setting enters the
+fingerprint only when it differs from that value: adding a knob does not by
+itself change a fingerprint, and turning one on always does, whatever the
+current default."""
+
+
 def rag_settings(settings: Settings, agent: str) -> dict[str, Any] | None:
     """The retrieval settings a research run reads; not the upload cap."""
     if agent != "research":
         return None
-    return settings.rag.model_dump(exclude={"max_upload_mb"})
+    dump = settings.rag.model_dump(exclude={"max_upload_mb"})
+    return {k: v for k, v in dump.items() if k not in LEGACY_RAG or v != LEGACY_RAG[k]}
 
 
 def fingerprint(settings: Settings, agent: str, models: dict[str, str]) -> str:

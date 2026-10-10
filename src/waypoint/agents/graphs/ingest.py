@@ -25,14 +25,16 @@ from langgraph.runtime import get_runtime
 from langgraph.types import Send
 
 from waypoint.agents.context import AgentContext
-from waypoint.agents.models import build_rag_embeddings
+from waypoint.agents.models import build_contextualizer, build_rag_embeddings
 from waypoint.agents.types import Graph
 from waypoint.rag.index import IndexResult, index_document
 from waypoint.rag.store import CorpusStore
 from waypoint.settings import Settings
 
 ROLES: tuple[str, ...] = ()
-"""No model calls yet. Contextual retrieval (phase 4) adds a ``contextualizer``."""
+"""No routed model roles. With ``RAG__CONTEXTUAL`` the contextualizer calls
+``RAG__CONTEXT_MODEL``, which is a property of the index, not of the run: every
+document in a corpus must get its preamble from the same model."""
 
 
 class IngestState(TypedDict, total=False):
@@ -51,6 +53,7 @@ def build(
     settings: Settings, *, corpora: CorpusStore | None = None, **compile_kwargs: Any
 ) -> Graph:
     embeddings = build_rag_embeddings(settings)
+    contextualizer = build_contextualizer(settings)
 
     def fan_out(state: IngestState) -> list[Send] | str:
         ids = list(dict.fromkeys(state.get("document_ids") or []))
@@ -65,6 +68,7 @@ def build(
             document_id=state["document_id"],
             embed_model=settings.rag.embeddings_model,
             chunk_tokens=settings.rag.chunk_tokens,
+            contextualizer=contextualizer,
             emit=runtime.stream_writer,
         )
         return {"results": [result]}

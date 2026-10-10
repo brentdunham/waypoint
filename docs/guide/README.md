@@ -17,7 +17,9 @@ constraints it was built under, and the trade-offs that shaped it.
 models are assigned to roles, and the harness that measures the agents:
 rubrics, an LLM judge calibrated against human labels, a baseline gate, and
 record/replay. The [grounded case study](../case-studies/grounded.md) shows
-that harness used on a real problem.
+that harness used on a real problem, and the
+[retrieval case study](../case-studies/retrieval.md) shows a separate
+retrieval eval deciding which search techniques to keep.
 
 **Running it in production.** [2. Runs](02-runs.md),
 [3. State and persistence](03-state-and-persistence.md) and

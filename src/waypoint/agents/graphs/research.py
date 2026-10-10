@@ -50,6 +50,7 @@ from waypoint.agents.models import (
     ModelRouter,
     RoleModel,
     build_rag_embeddings,
+    build_reranker,
     model_of,
     structured,
 )
@@ -357,7 +358,7 @@ def build(
     router = ModelRouter(settings, "research", ROLES)
     rag_embeddings = build_rag_embeddings(settings) if corpora is not None else None
     retriever = (
-        Retriever(corpora, rag_embeddings, settings.rag)
+        Retriever(corpora, rag_embeddings, settings.rag, build_reranker(settings))
         if corpora is not None and rag_embeddings is not None
         else None
     )

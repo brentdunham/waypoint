@@ -1,6 +1,6 @@
 # Design: retrieval over tenant documents (RAG)
 
-Status: **in progress.** Phases 0 to 3 built on 2026-10-10;
+Status: **in progress.** Phases 0 to 4 built on 2026-10-10;
 see [Implementation log](#implementation-log) for what changed from this
 design and why. Written 2026-10-10.
 This note is the hand-off for the coding sessions: what to build, what is
@@ -89,11 +89,13 @@ Constraints that matter here:
    `voyageai:` provider to `build_embeddings` (package `langchain-voyageai`).
    Whatever is chosen, record dimensions in settings; the `chunks.embedding`
    column is `vector(<dims>)` and changing it means re-embedding.
-2. **Reranker.** Voyage and Cohere both offer one. Only adopt it if the
+2. **Reranker.** *Decided 2026-10-10: Voyage `rerank-3`, on by default
+   (phase 4).* Voyage and Cohere both offer one. Only adopt it if the
    retrieval eval shows the gain is worth the latency (phase 4).
-3. **Top-k per question.** Anthropic's contextual-retrieval study found 20
-   chunks beat 10 or 5, but each chunk is input tokens on every worker call
-   (and on every later web search in that call). Start at 8, measure 5/8/12/20.
+3. **Top-k per question.** *Decided 2026-10-10: 8 (phase 4).* Anthropic's
+   contextual-retrieval study found 20 chunks beat 10 or 5, but each chunk is
+   input tokens on every worker call (and on every later web search in that
+   call). Start at 8, measure 5/8/12/20.
 
 ## Data model
 
@@ -536,6 +538,54 @@ run fell from 161 to 109 across the corpus cases and searcher input from 80k to
 attaching citations (once typing markers like `[3-2]` into its prose), and on a
 web question the fallback listed passages ahead of the web results it used.
 Within the gate's tolerance; worth a look in phase 4.
+
+### Phase 4: ablations (2026-10-10)
+
+Full write-up with every number: [case-studies/retrieval.md](../case-studies/retrieval.md).
+Built: contextual retrieval (`rag/contextualize.py`, `RAG__CONTEXTUAL`),
+contextualized embeddings (`voyageai:voyage-context-4`, `rag/voyage.py`), a
+reranker stage for every mode (`RAG__RERANK`, Voyage `rerank-3`), and the
+retrieval eval's recall@12, rerank token count and index cost including
+preambles. Each was measured on the reviewed gold set.
+
+| vector search | recall@5 | recall@8 | MRR | p50 |
+|---|---|---|---|---|
+| voyage-4, 400-token chunks | 0.88 | 0.93 | 0.80 | 0.18 s |
+| + rerank-3 | **0.96** | **0.97** | **0.90** | 0.40 s |
+| contextual preambles | 0.84 | 0.93 | 0.75 | 0.19 s |
+| voyage-4-large / voyage-context-4 | 0.87 / 0.87 | 0.93 / 0.90 | 0.80 / 0.75 | |
+| 250 / 800-token chunks | 0.87 / 0.91 | 0.91 / 0.94 | 0.73 / 0.80 | |
+
+Decisions:
+
+* **Reranking is on by default** (Brent, 2026-10-10): 10 queries up, 3 down
+  by one rank, for about $0.0007 and 0.2 s per query. A missing
+  `VOYAGE_API_KEY` or a rejected key stops the boot. It also makes the
+  first-stage mode matter little (reranked keyword MRR 0.78, hybrid 0.90).
+* **Contextual retrieval stays off.** It helped keyword and hybrid search
+  (MRR 0.41 to 0.46, 0.62 to 0.67) but not vector (0.80 to 0.75), and added
+  two queries' worth on top of the reranker, for $0.05 and 28 s per
+  `docs/`-sized ingest.
+* **voyage-4, 400-token chunks and top-k 8 stay.** Nothing else raised MRR
+  by more than one query; 250-token chunks, the preambles and
+  voyage-context-4 lowered it.
+* **New settings enter the research fingerprint only when they change
+  behaviour** (`scorecard.LEGACY_RAG`): adding a knob does not change existing
+  fingerprints, and turning reranking on does.
+
+Differences from the design: the reranker reorders `RAG__CANDIDATES` (50)
+first-stage chunks rather than a separate setting; contextual preambles use
+Anthropic's published prompt unchanged, so results compare with theirs; the
+research eval's in-memory index pays for preambles again in every process
+when `RAG__CONTEXTUAL` is on (they are not replayed). rerank-3's scores are
+not perfectly repeatable: the same configuration measured twice gave
+identical vector and hybrid results but keyword recall@5 0.82 and 0.84.
+
+At the answer level (5 corpus cases x 3 trials, $3.04), reranking left
+`useful` and `covers` unchanged and lowered `grounded` on the corpus cases
+from 3.87 to 3.67, all through citations to uncited findings, which doubled
+(7 to 14 of about 108). The gate passed over all cases. Retrieval is no longer
+what limits these briefings; citation attachment by the searcher is.
 
 ## References
 

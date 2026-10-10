@@ -1,96 +1,96 @@
 {
   "agent": "retrieval",
   "corpus": {
-    "index": "f546a9177d10",
+    "index": "396ea5fde87b",
     "name": "waypoint-docs",
     "rev": "1777465b523ee5315482acb5228f55617b23e622"
   },
   "dataset": "retrieval.jsonl",
-  "date": "2026-10-10T21:08:15+00:00",
+  "date": "2026-10-10T23:22:24+00:00",
   "embed_model": "voyageai:voyage-4",
-  "fingerprint": "23fc0bddc032",
-  "git_sha": "1777465",
+  "fingerprint": "84b14fbf3f75",
+  "git_sha": "894c717",
   "index": {
     "chunks": 251,
-    "cost_usd": 0.0,
-    "reused": true,
-    "seconds": 0.0,
-    "tokens_embedded": 0
+    "context": null,
+    "context_cost_usd": null,
+    "cost_usd": 0.0036,
+    "reused": false,
+    "seconds": 3.5,
+    "tokens_embedded": 60082
   },
   "kind": "retrieval",
   "modes": {
     "hybrid": {
       "by_kind": {
         "identifier": {
-          "mrr": 0.7393,
+          "mrr": 0.8833,
           "queries": 10,
           "recall@8": 1.0
         },
         "multi-hop": {
-          "mrr": 0.5908,
+          "mrr": 0.8125,
           "queries": 8,
-          "recall@8": 0.75
+          "recall@8": 0.875
         },
         "paraphrase": {
-          "mrr": 0.5554,
+          "mrr": 0.95,
           "queries": 16,
-          "recall@8": 0.6875
+          "recall@8": 1.0
         }
       },
       "latency_s": {
-        "p50": 0.1876,
-        "p95": 0.3134
+        "p50": 0.3877,
+        "p95": 0.544
       },
-      "missed": [
-        "q06-long-chats"
-      ],
-      "mrr": 0.6178,
-      "recall@20": 0.9412,
-      "recall@5": 0.7353,
-      "recall@8": 0.7941,
+      "missed": [],
+      "mrr": 0.898,
+      "recall@12": 0.9706,
+      "recall@20": 0.9853,
+      "recall@5": 0.9559,
+      "recall@8": 0.9706,
+      "rerank_tokens_per_query": 15139.625,
       "top_vector_score": {
-        "answerable_mean": 0.493,
+        "answerable_mean": 0.4978,
         "answerable_min": 0.3584,
         "no_answer_max": 0.5206,
-        "no_answer_mean": 0.4545
+        "no_answer_mean": 0.4691
       }
     },
     "keyword": {
       "by_kind": {
         "identifier": {
-          "mrr": 0.7146,
+          "mrr": 0.8833,
           "queries": 10,
-          "recall@8": 0.9
+          "recall@8": 1.0
         },
         "multi-hop": {
-          "mrr": 0.46,
+          "mrr": 0.8125,
           "queries": 8,
-          "recall@8": 0.5
+          "recall@8": 0.875
         },
         "paraphrase": {
-          "mrr": 0.1851,
+          "mrr": 0.7,
           "queries": 16,
-          "recall@8": 0.4375
+          "recall@8": 0.75
         }
       },
       "latency_s": {
-        "p50": 0.0066,
-        "p95": 0.0087
+        "p50": 0.2109,
+        "p95": 0.3421
       },
       "missed": [
-        "q01-cross-tenant-not-found",
         "q03-cancel-other-process",
         "q06-long-chats",
-        "q10-where-figures-come-from",
-        "q11-resume-progress-feed",
-        "q12-memory-without-embedder",
         "q15-watch-from-other-process",
         "q16-ab-order-bias"
       ],
-      "mrr": 0.4055,
-      "recall@20": 0.7206,
-      "recall@5": 0.5147,
-      "recall@8": 0.5882,
+      "mrr": 0.7804,
+      "recall@12": 0.8529,
+      "recall@20": 0.8676,
+      "recall@5": 0.8382,
+      "recall@8": 0.8529,
+      "rerank_tokens_per_query": 15823.5,
       "top_vector_score": {
         "answerable_mean": null,
         "answerable_min": null,
@@ -101,30 +101,32 @@
     "vector": {
       "by_kind": {
         "identifier": {
-          "mrr": 0.6658,
+          "mrr": 0.8833,
           "queries": 10,
           "recall@8": 1.0
         },
         "multi-hop": {
-          "mrr": 0.8333,
+          "mrr": 0.8125,
           "queries": 8,
-          "recall@8": 0.8125
+          "recall@8": 0.875
         },
         "paraphrase": {
-          "mrr": 0.8633,
+          "mrr": 0.95,
           "queries": 16,
-          "recall@8": 0.9375
+          "recall@8": 1.0
         }
       },
       "latency_s": {
-        "p50": 0.1881,
-        "p95": 0.3976
+        "p50": 0.3803,
+        "p95": 0.523
       },
       "missed": [],
-      "mrr": 0.7982,
-      "recall@20": 0.9706,
-      "recall@5": 0.8824,
-      "recall@8": 0.9265,
+      "mrr": 0.898,
+      "recall@12": 0.9706,
+      "recall@20": 0.9853,
+      "recall@5": 0.9559,
+      "recall@8": 0.9706,
+      "rerank_tokens_per_query": 13623.575,
       "top_vector_score": {
         "answerable_mean": 0.4978,
         "answerable_min": 0.3584,
@@ -139,12 +141,15 @@
     "no-answer": 6,
     "paraphrase": 16
   },
+  "rerank_usd_per_m": 0.05,
   "reviewed": true,
   "settings": {
     "candidates": 50,
     "chunk_tokens": 400,
+    "contextual": null,
     "depth": 20,
     "dims": 1024,
+    "rerank": "rerank-3",
     "rrf_k": 60,
     "top_k": 8
   }

@@ -237,6 +237,12 @@ uv run python -m evals retrieval --mode hybrid --case q17-payload-too-large
 uv run python -m evals retrieval --fake --dataset evals/datasets/retrieval.proposed.jsonl
 uv run python -m evals accept --agent retrieval evals/results/retrieval/<run>/scorecard.json
 uv run python -m evals retrieval --against-baseline  # exit 1 on a drop > 0.05
+
+# ablations: any RAG__ setting, for one run (PowerShell: $env:RAG__RERANK="false")
+RAG__RERANK=false uv run python -m evals retrieval --mode vector
+RAG__CHUNK_TOKENS=800 uv run python -m evals retrieval
+RAG__CONTEXTUAL=true uv run python -m evals retrieval   # ~$0.05 of Haiku preambles
+RAG__EMBEDDINGS_MODEL=voyageai:voyage-context-4 uv run python -m evals retrieval --mode vector
 ```
 
 * **Corpus** — `corpora/waypoint-docs.toml` names `docs/**/*.md` at a pinned
@@ -254,14 +260,17 @@ uv run python -m evals retrieval --against-baseline  # exit 1 on a drop > 0.05
   `tests/test_retrieval.py` fails when any span stops being findable.
 * **Index** — built by `rag/index.py`, the ingest agent's own code, under
   tenant `evals`, in a corpus named after a fingerprint of the files, the
-  embedding model and width, the chunk size and the parse/chunk/index source.
+  embedding model and width, the chunk size, the preamble model when
+  `RAG__CONTEXTUAL` is on, and the `rag/` indexing source.
   A rerun with the same fingerprint reuses it; anything else builds a new one
   (about 60k tokens for `docs/`, $0.004 at voyage-4's price, inside the free
-  tier).
-* **Metrics** — per mode: recall@5, recall@`RAG__TOP_K`, recall@20 and MRR
-  over answerable queries, the same by kind, p50/p95 latency (query embedding
-  plus SQL), and for no-answer queries the best vector score next to the
-  answerable ones', to set a "nothing relevant" threshold from data.
+  tier; contextual preambles add about $0.05 and 30 s).
+* **Metrics** — per mode: recall@5, @8, @12, @20 (and @`RAG__TOP_K`) and MRR
+  over answerable queries, the same by kind, p50/p95 latency (query embedding,
+  SQL and reranking), billed rerank tokens per query, and for no-answer
+  queries the best vector score next to the answerable ones', to set a
+  "nothing relevant" threshold from data. Reranking applies to every mode
+  when `RAG__RERANK` is on (the default).
 * **Gate** — retrieval is deterministic for a fixed index, so there is no
   trial spread: a drop of more than 0.05 in recall@k or MRR fails, and one
   run is enough to accept.

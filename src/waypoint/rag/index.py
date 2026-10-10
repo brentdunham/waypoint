@@ -14,6 +14,7 @@ from langchain_core.embeddings import Embeddings
 
 from waypoint.errors import NotFound, http_status
 from waypoint.rag.chunk import chunk_sections
+from waypoint.rag.contextualize import Contextualizer, document_text
 from waypoint.rag.parse import ParseError, parse
 from waypoint.rag.store import CorpusStore
 
@@ -54,13 +55,16 @@ async def index_document(
     document_id: str,
     embed_model: str | None,
     chunk_tokens: int,
+    contextualizer: Contextualizer | None = None,
     emit: Emit = _ignore,
 ) -> IndexResult:
     """Index one stored document. Failures come back as a ``failed`` result.
 
     ``embed_model`` is the service's configured model; a corpus created with
     another one is refused, because vectors from two models cannot be searched
-    together. Progress goes to ``emit`` as ``{"stage": ...}`` events.
+    together. With a ``contextualizer`` (``RAG__CONTEXTUAL``) each chunk gets a
+    preamble before it is embedded. Progress goes to ``emit`` as
+    ``{"stage": ...}`` events.
     """
     title = document_id
     try:
@@ -93,6 +97,14 @@ async def index_document(
         if not chunks:
             raise DocumentError("The document has no text to index.")
         emit(progress | {"stage": "chunked", "chunks": len(chunks)})
+        if contextualizer is not None:
+            try:
+                chunks = await contextualizer(document_text(chunks), chunks)
+            except Exception as exc:
+                raise DocumentError(
+                    f"Contextual retrieval failed: {type(exc).__name__}: {exc}"
+                ) from exc
+            emit(progress | {"stage": "contextualized"})
         vectors = await embed_with_retry(embeddings, [c.text for c in chunks])
         emit(progress | {"stage": "embedded"})
         try:

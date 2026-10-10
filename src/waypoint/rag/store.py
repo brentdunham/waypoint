@@ -101,6 +101,13 @@ class StoredChunk:
     heading: str
     paragraphs: tuple[str, ...]
     embedding: tuple[float, ...] = field(repr=False, default=())
+    context: str = ""
+    """The contextual-retrieval preamble, empty when it was not generated."""
+
+    @property
+    def text(self) -> str:
+        """What was embedded, and what a reranker reads: as ``Chunk.text``."""
+        return Chunk(self.ordinal, self.heading, self.paragraphs, self.context).text
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,8 +415,8 @@ class PgCorpusStore:
                 await cur.executemany(
                     """insert into chunks
                          (document_id, corpus_id, tenant_id, ordinal, heading, paragraphs,
-                          embedding)
-                       values (%s, %s, %s, %s, %s, %s, %s::vector)""",
+                          context, embedding)
+                       values (%s, %s, %s, %s, %s, %s, nullif(%s, ''), %s::vector)""",
                     [
                         (
                             document_id,
@@ -418,6 +425,7 @@ class PgCorpusStore:
                             c.ordinal,
                             c.heading,
                             list(c.paragraphs),
+                            c.context,
                             _vector(e),
                         )
                         for c, e in zip(chunks, embeddings, strict=True)
@@ -442,7 +450,8 @@ class PgCorpusStore:
             return []
         rows = await self._all(
             tenant_id,
-            """select k.document_id::text as document_id, k.ordinal, k.heading, k.paragraphs
+            """select k.document_id::text as document_id, k.ordinal, k.heading, k.paragraphs,
+                      coalesce(k.context, '') as context
                from chunks k join corpora c on c.corpus_id = k.corpus_id
                where k.corpus_id = %s and (c.tenant_id = %s or c.visibility = 'public')
                order by k.document_id, k.ordinal""",
@@ -514,7 +523,10 @@ class PgCorpusStore:
         return [_hit(r) for r in rows]
 
 
-_CHUNK_COLUMNS = "k.document_id::text as document_id, k.ordinal, k.heading, k.paragraphs"
+_CHUNK_COLUMNS = (
+    "k.document_id::text as document_id, k.ordinal, k.heading, k.paragraphs, "
+    "coalesce(k.context, '') as context"
+)
 
 _VISIBLE_CORPUS = """exists (select 1 from corpora c where c.corpus_id = %s
                              and (c.tenant_id = %s or c.visibility = 'public'))"""
@@ -528,6 +540,7 @@ def _hit(row: dict[str, Any]) -> ChunkHit:
         ordinal=row["ordinal"],
         heading=row["heading"],
         paragraphs=tuple(row["paragraphs"]),
+        context=row["context"],
     )
     return ChunkHit(chunk, float(row["score"]))
 
@@ -670,7 +683,7 @@ class MemoryCorpusStore:
         if doc is None or self._owned(tenant_id, doc.info.corpus_id) is None:
             raise NotFound(f"Unknown document {document_id!r}.")
         self._chunks[document_id] = [
-            StoredChunk(document_id, c.ordinal, c.heading, c.paragraphs, tuple(e))
+            StoredChunk(document_id, c.ordinal, c.heading, c.paragraphs, tuple(e), c.context)
             for c, e in zip(chunks, embeddings, strict=True)
         ]
         doc.info = replace(doc.info, status="ready", error=None)
@@ -706,7 +719,7 @@ class MemoryCorpusStore:
         terms = set(_WORD.findall(query.lower()))
         hits = []
         for chunk in await self.list_chunks(tenant_id, corpus_id):
-            words = set(_WORD.findall(" ".join((chunk.heading, *chunk.paragraphs)).lower()))
+            words = set(_WORD.findall(chunk.text.lower()))
             if score := len(terms & words):
                 hits.append(ChunkHit(chunk, float(score)))
         return sorted(hits, key=lambda h: h.score, reverse=True)[:limit]

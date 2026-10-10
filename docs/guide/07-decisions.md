@@ -19,6 +19,9 @@ decision came from a measured failure, the entry says so.
 [D18](#d18-one-criterion-per-judge-call-on-an-anchored-4-point-scale) ·
 [D19](#d19-a-calibrated-judge-escalated-per-criterion) ·
 [D20](#d20-gate-on-the-baselines-own-spread) · [D21](#d21-record-and-replay-keyed-on-exactly-what-is-sent)
+- **Retrieval**: [D22](#d22-passages-retrieved-before-the-worker-call-as-search_result-blocks) ·
+[D23](#d23-measure-retrieval-on-quoted-spans-before-any-answer) ·
+[D24](#d24-vector-search-then-a-reranker-nothing-else-earned-its-place)
 
 ---
 
@@ -325,3 +328,68 @@ live and record them.
 of $18.50). Nothing stale can be replayed, because any change to what reaches
 the API changes the key. Replayed searches freeze the web as recorded, so
 baselines meant to last are checked with `--fresh`, and CI never replays.
+
+---
+
+## Retrieval
+
+Design and measurements: [design/rag.md](../design/rag.md),
+[case study](../case-studies/retrieval.md).
+
+### D22. Passages retrieved before the worker call, as `search_result` blocks
+
+**Context.** The research agent should answer from a tenant's documents as
+well as the web, with the same citations, verifier and evals.
+
+**Decision.** Each worker retrieves its top passages for its question and
+sends them ahead of the prompt as Claude `search_result` blocks, next to the
+web search tool. Citations to them come back as `search_result_location`,
+become sources with `kind: "document"` and quotes, and share the `[n]`
+numbering with web sources. Runs without a corpus send exactly the prompt
+they sent before.
+
+**Alternatives.** *A `search_documents` tool loop*: lets the model rephrase
+queries, but adds model calls to every worker; revisit if recall on
+rephrasing-heavy questions is poor.
+
+**Consequences.** One model call per worker, retrieval deterministic and
+replayable. The searcher must attach citations to what it read; when it does
+not, the finding is uncited, which is now the limit on `grounded` for corpus
+cases (phase 4).
+
+### D23. Measure retrieval on quoted spans, before any answer
+
+**Context.** Answer evals cost dollars per run and mix retrieval with
+everything after it.
+
+**Decision.** A separate retrieval eval with no model at query time: a
+reviewed gold set whose labels are quoted spans (with alternatives), a
+corpus pinned to a git commit, recall@5/8/12/20 and MRR per mode and per
+query kind, cost and latency, its own baseline and gate.
+
+**Alternatives.** *Chunk-id labels*: invalid after any chunking change.
+*LLM-judged relevance*: costs per run and drifts.
+
+**Consequences.** Ten configurations measured in under ten minutes for about
+$0.05. Spans survive re-chunking, so chunk size could be ablated without
+relabelling.
+
+### D24. Vector search, then a reranker; nothing else earned its place
+
+**Context.** Hybrid search, contextual retrieval, larger or contextualized
+embedding models and other chunk sizes are all commonly recommended.
+
+**Decision.** Vector search over voyage-4 at 400-token chunks, then Voyage
+`rerank-3` over the top 50, top 8 to each worker. Hybrid and contextual
+retrieval stay as settings, off.
+
+**Alternatives.** Each measured: hybrid lost to vector (MRR 0.62 vs 0.80);
+contextual preambles helped keyword search but not vector (0.75); voyage-4-large
+matched voyage-4 at twice the price; voyage-context-4 and 250-token chunks
+were worse.
+
+**Consequences.** MRR 0.80 to 0.90 and recall@5 0.88 to 0.96 for $0.0007 and
+0.2 s per query. With the defaults, `VOYAGE_API_KEY` is required whenever RAG
+is on. Better
+retrieval did not raise answer scores, which are now limited by citation
+attachment.

@@ -18,8 +18,10 @@ from fastapi import Request
 from waypoint.agents.models import (
     build_embeddings,
     build_rag_embeddings,
+    build_reranker,
     check_embedding_dims,
     check_model_config,
+    check_reranker,
 )
 from waypoint.agents.registry import build_all, roles_by_agent
 from waypoint.agents.types import Graph
@@ -199,9 +201,9 @@ async def _memory_index(settings: Settings) -> dict[str, Any] | None:
 async def _corpus_store(settings: Settings, db: Database | None) -> CorpusStore:
     """The corpus store, after failing the boot on a bad RAG key or width.
 
-    Two checks, as for the memory index: the provider returns the configured
-    width (one embedding call), and the existing ``chunks.embedding`` column
-    has that width too.
+    Checks, as for the memory index: the provider returns the configured width
+    (one embedding call), the existing ``chunks.embedding`` column has that
+    width too, and with ``RAG__RERANK`` the reranker accepts the key.
     """
     corpora: CorpusStore = PgCorpusStore(db) if db is not None else MemoryCorpusStore()
     embeddings = build_rag_embeddings(settings)
@@ -210,13 +212,20 @@ async def _corpus_store(settings: Settings, db: Database | None) -> CorpusStore:
         return corpora
     if db is not None:
         await db.check_embedding_dims(settings.rag.embeddings_dims)
+    reranker = build_reranker(settings)  # no VOYAGE_API_KEY with RAG__RERANK on: stops here
     if not settings.fake_model:
         await check_embedding_dims(
             embeddings, settings.rag.embeddings_dims, setting="RAG__EMBEDDINGS_DIMS"
         )
+        if reranker is not None:
+            await check_reranker(reranker)
     log.info(
         "document retrieval on",
-        extra={"embeddings": settings.rag.embeddings_model, "dims": settings.rag.embeddings_dims},
+        extra={
+            "embeddings": settings.rag.embeddings_model,
+            "dims": settings.rag.embeddings_dims,
+            "rerank": settings.rag.rerank_model if reranker is not None else None,
+        },
     )
     return corpora
 

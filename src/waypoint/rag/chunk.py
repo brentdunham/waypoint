@@ -32,11 +32,17 @@ class Chunk:
     heading: str
     """The document label, then the section's headings, joined by ``HEADING_SEPARATOR``."""
     paragraphs: tuple[str, ...]
+    context: str = ""
+    """Contextual-retrieval preamble (``rag/contextualize.py``), empty when off.
+    Searched and embedded, never shown to the model that answers."""
 
     @property
     def text(self) -> str:
-        """What gets embedded: heading first, so a section's name counts as content."""
-        return "\n\n".join((self.heading, *self.paragraphs))
+        """What gets embedded: context, then the heading, so a section's name counts
+        as content, then the paragraphs."""
+        return "\n\n".join(
+            (*([self.context] if self.context else []), self.heading, *self.paragraphs)
+        )
 
 
 def estimate_tokens(text: str) -> int:

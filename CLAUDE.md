@@ -11,10 +11,11 @@ rediscovering it.
   glossary). Keep it in step with any architecture change.
 * `docs/ROADMAP.md`: what is done and what is next.
 * `docs/design/`: design docs for work not yet built. **Current: RAG,
-  `docs/design/rag.md`.** Build it phase by phase as written; record any
-  deviation in the doc and in ROADMAP.md.
+  `docs/design/rag.md`; phases 0 to 4 done, phase 5 (demo corpus) next.**
+  Build it phase by phase as written; record any deviation in the doc and in
+  ROADMAP.md.
 * `docs/case-studies/`: write-ups of measured changes (`grounded.md` is the
-  model to follow).
+  model to follow; `retrieval.md` covers RAG phase 4).
 * `src/waypoint/`: the service. `agents/graphs/research.py` is the research
   agent; `agents/models.py` builds models and embeddings; `infra/db.py` owns
   the schema and `migrate()`.

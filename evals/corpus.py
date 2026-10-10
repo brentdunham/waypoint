@@ -12,12 +12,13 @@ import json
 import subprocess
 import time
 import tomllib
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from langchain_core.embeddings import Embeddings
 
 from evals.cases import ROOT
+from waypoint.rag.contextualize import Contextualizer
 from waypoint.rag.index import index_document
 from waypoint.rag.parse import media_type_for
 from waypoint.rag.store import CorpusStore, NewDocument
@@ -26,7 +27,7 @@ from waypoint.settings import Settings
 CORPORA = ROOT / "corpora"
 REPO = ROOT.parent
 TENANT = "evals"
-INDEX_SOURCES = ("parse.py", "chunk.py", "index.py")
+INDEX_SOURCES = ("parse.py", "chunk.py", "index.py", "contextualize.py", "voyage.py")
 """Code whose change invalidates the index, by file content."""
 
 
@@ -63,6 +64,7 @@ def index_fingerprint(settings: Settings, manifest: Manifest, files: dict[str, b
         "model": settings.rag.embeddings_model,
         "dims": settings.rag.embeddings_dims,
         "chunk_tokens": settings.rag.chunk_tokens,
+        **({"contextual": settings.rag.context_model} if settings.rag.contextual else {}),
         "code": {
             name: hashlib.sha256(
                 (REPO / "src" / "waypoint" / "rag" / name).read_bytes()
@@ -83,6 +85,8 @@ class Index:
     tokens: int
     """Estimated tokens embedded to build it (chars / 4), 0 when reused."""
     seconds: float
+    context: dict[str, int] | None = None
+    """Contextualizer token usage when it ran, for the cost line."""
 
 
 async def build_index(
@@ -91,6 +95,8 @@ async def build_index(
     embeddings: Embeddings,
     name: str,
     files: dict[str, bytes],
+    *,
+    contextualizer: Contextualizer | None = None,
 ) -> Index:
     """Reuse a complete index of the same fingerprint, else build one."""
     started = time.perf_counter()
@@ -126,6 +132,7 @@ async def build_index(
                 document_id=document_id,
                 embed_model=embed_model,
                 chunk_tokens=settings.rag.chunk_tokens,
+                contextualizer=contextualizer,
             )
 
     results = await asyncio.gather(*(one(a.document.document_id) for a in added))
@@ -133,7 +140,7 @@ async def build_index(
     if failed:
         raise RuntimeError("indexing failed:\n" + "\n".join(failed))
     chunks = await store.list_chunks(TENANT, corpus.corpus_id)
-    tokens = sum(len("\n\n".join((c.heading, *c.paragraphs))) for c in chunks) // 4
+    tokens = sum(len(c.text) for c in chunks) // 4
     return Index(
         corpus.corpus_id,
         {a.document.document_id: a.document.title for a in added},
@@ -141,4 +148,5 @@ async def build_index(
         reused=False,
         tokens=tokens,
         seconds=time.perf_counter() - started,
+        context=asdict(contextualizer.usage) if contextualizer is not None else None,
     )

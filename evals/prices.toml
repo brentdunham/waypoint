@@ -4,7 +4,8 @@
 # search = USD per web search request (server tool), charged on top of tokens.
 # long_threshold / long_input / long_output: rates for prompts above the
 # threshold, for models priced by prompt length (scorecard.call_cost).
-# Cache reads and writes are not modelled; no call site uses prompt caching yet.
+# Cache reads and writes are modelled only for the contextualizer's index cost
+# (evals/retrieval.py: CACHE_READ, CACHE_WRITE); no agent call site caches.
 as_of = "2026-10-08 (Haiku and Sonnet rows checked against the page; Opus 4.5 not)"
 
 [models.claude-haiku-5-5]
@@ -49,3 +50,9 @@ search = 0.01
 "voyageai:voyage-4-lite" = 0.02
 "voyageai:voyage-context-4" = 0.12
 "openai:text-embedding-3-small" = 0.02
+
+# Rerankers: USD per million billed tokens (query tokens x documents + document
+# tokens), keyed by RAG__RERANK_MODEL. Same source and date; 200M free tokens.
+[rerank]
+"rerank-3" = 0.05
+"rerank-3-lite" = 0.02

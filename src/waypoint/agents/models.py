@@ -19,6 +19,8 @@ from waypoint.settings import Settings
 
 if TYPE_CHECKING:
     from waypoint.agents.context import AgentContext
+    from waypoint.rag.contextualize import Contextualizer
+    from waypoint.rag.retrieve import Reranker
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +81,10 @@ class ScriptedChatModel(BaseChatModel):
         passages = [b for b in blocks if b.get("type") == "search_result"]
         texts = [str(b.get("text", "")) for b in blocks if b.get("type") == "text"]
         text = "\n".join(texts) if isinstance(content, list) else str(content)
+        if text.startswith("<document>"):  # contextual retrieval: name the chunk's section
+            # Before the tool check: a document may quote the [[tool:...]] syntax.
+            heading = text.split("<chunk>\n", 1)[-1].split("\n", 1)[0]
+            return AIMessage(content=f"Scripted context: this chunk is from {heading}.")
         if "[[tool:" in text:
             import json as _json
             import re
@@ -548,6 +554,13 @@ def _embeddings(
                 f"{setting}={spec!r} offers output widths {sorted(VOYAGE_DIMS)}, not {dims}. "
                 "Set the matching *_DIMS setting to one of them."
             )
+        key = need(settings.voyage_api_key, "VOYAGE_API_KEY")
+        if name.startswith("voyage-context"):
+            # Contextualized chunk embeddings: a separate endpoint, which
+            # langchain-voyageai does not wrap (rag/voyage.py).
+            from waypoint.rag.voyage import VoyageContextEmbeddings
+
+            return VoyageContextEmbeddings(name, dims, key)
         try:
             from langchain_voyageai import VoyageAIEmbeddings
         except ImportError as exc:
@@ -557,7 +570,7 @@ def _embeddings(
         return VoyageAIEmbeddings(  # type: ignore[call-arg]
             model=name,
             output_dimension=cast("Literal[256, 512, 1024, 2048]", dims),
-            voyage_api_key=need(settings.voyage_api_key, "VOYAGE_API_KEY"),
+            voyage_api_key=key,
         )
 
     kwargs: dict[str, Any] = {}
@@ -572,6 +585,51 @@ def _embeddings(
         raise EmbeddingsConfigError(
             f"{setting}={spec!r}: the provider package is not installed ({exc})."
         ) from exc
+
+
+def build_reranker(settings: Settings) -> Reranker | None:
+    """The second retrieval stage, when ``RAG__RERANK`` is on (Voyage only).
+
+    Under ``FAKE_MODEL`` a word-overlap stand-in, so the path runs offline.
+    """
+    if not settings.rag.rerank or not settings.rag.enabled:
+        return None
+    if settings.fake_model:
+        from waypoint.rag.retrieve import WordOverlapReranker
+
+        return WordOverlapReranker()
+    from waypoint.rag.voyage import VoyageReranker
+
+    if not settings.voyage_api_key:
+        raise EmbeddingsConfigError(
+            f"RAG__RERANK uses Voyage's {settings.rag.rerank_model} and needs "
+            "VOYAGE_API_KEY. Set it, or set RAG__RERANK=false."
+        )
+    return VoyageReranker(settings.rag.rerank_model, settings.voyage_api_key)
+
+
+async def check_reranker(reranker: Reranker) -> None:
+    """One tiny rerank at boot: a rejected key stops the boot, as for embeddings."""
+    try:
+        await reranker.rerank("probe", ["probe"])
+    except Exception as exc:
+        status = http_status(exc)
+        if status in {401, 403}:
+            raise EmbeddingsConfigError(
+                f"The reranker rejected the API key ({status}). Check VOYAGE_API_KEY, "
+                "or set RAG__RERANK=false."
+            ) from exc
+        log.warning("reranker probe failed; key not verified", exc_info=True)
+
+
+def build_contextualizer(settings: Settings) -> Contextualizer | None:
+    """Writes contextual-retrieval preambles when ``RAG__CONTEXTUAL`` is on."""
+    if not settings.rag.contextual or not settings.rag.enabled:
+        return None
+    from waypoint.rag.contextualize import MAX_TOKENS, Contextualizer
+
+    model = build_model(settings, model=settings.rag.context_model, max_tokens=MAX_TOKENS)
+    return Contextualizer(model, settings.rag.context_model)
 
 
 async def check_embedding_dims(

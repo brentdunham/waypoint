@@ -309,7 +309,13 @@ share one `[n]` numbering, the approval step can turn documents off, the UI
 has a Documents picker, and five research eval cases search the docs (three
 from the docs alone, two that need the web too). On the accepted 3-trial
 baseline every corpus case cites a document, `grounded` holds at 3.75 (3.87 on
-the corpus cases) and `claims_cited` at 0.92. Next: phase 4, ablations.
+the corpus cases) and `claims_cited` at 0.92. Phase 4 (2026-10-10): of
+contextual retrieval, voyage-4-large, voyage-context-4, a reranker, chunk
+size and top-k, only the reranker earned its place (vector MRR 0.80 to 0.90,
+recall@5 0.88 to 0.96, $0.0007 and 0.2 s per query) and is on by default.
+At the answer level the bottleneck is now the searcher attaching citations,
+not retrieval ([case study](case-studies/retrieval.md)). Next: phase 5, the
+public demo corpus.
 
 ### 4. Observability and cost
 

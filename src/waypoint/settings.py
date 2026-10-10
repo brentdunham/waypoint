@@ -131,12 +131,42 @@ class RagSettings(BaseModel):
         default=50,
         ge=1,
         le=500,
-        description="How many chunks each method ranks before fusion (hybrid only).",
+        description=(
+            "How many chunks each method ranks before fusion (hybrid), and how many the "
+            "reranker reorders (rerank)."
+        ),
     )
     rrf_k: int = Field(
         default=60,
         ge=1,
         description="RRF constant: a chunk at rank r scores 1/(rrf_k + r) per method.",
+    )
+    contextual: bool = Field(
+        default=False,
+        description=(
+            "Contextual retrieval: before embedding, context_model writes a short preamble "
+            "situating each chunk in its document. One call per chunk, with the document "
+            "cached. The preamble is embedded and full-text indexed with the chunk, never "
+            "shown to the research worker. Applies to documents ingested afterwards."
+        ),
+    )
+    context_model: str = Field(
+        default="claude-haiku-5-5",
+        description="Writes the contextual preambles when `contextual` is on.",
+    )
+    rerank: bool = Field(
+        default=True,
+        description=(
+            "Rerank the first stage's top `candidates` chunks with a Voyage reranker "
+            "before taking top_k. One rerank call per query; needs VOYAGE_API_KEY. On "
+            "by default: in the phase 4 retrieval eval (2026-10-10) it raised vector "
+            "MRR from 0.80 to 0.90 and recall@5 from 0.88 to 0.96, for about $0.0007 "
+            "and 0.2 s per query."
+        ),
+    )
+    rerank_model: str = Field(
+        default="rerank-3",
+        description="Voyage reranker used when `rerank` is on.",
     )
 
     @field_validator("embeddings_model", mode="before")

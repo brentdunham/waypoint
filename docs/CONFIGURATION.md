@@ -151,13 +151,17 @@ and neither change forces re-embedding the other.
 |---|---|---|
 | `RAG__EMBEDDINGS_MODEL` | — | The chosen model is `voyageai:voyage-4` (commented in `.env.example`, like memory's). Unset → RAG is off: `/corpora` answers 503, and a research run that names a corpus fails. |
 | `RAG__EMBEDDINGS_DIMS` | `1024` | Width of `chunks.embedding`. Voyage 4 offers 256, 512, 1024 and 2048; pgvector's HNSW index stops at 2000 for `vector`, so 2048 is out. |
-| `VOYAGE_API_KEY` | — | Required when either embeddings model starts with `voyageai:`. From <https://dashboard.voyageai.com/>. |
+| `VOYAGE_API_KEY` | — | Required when either embeddings model starts with `voyageai:`, and whenever RAG is on with `RAG__RERANK` (the default). From <https://dashboard.voyageai.com/>. |
 | `RAG__CHUNK_TOKENS` | `400` | Target chunk size, estimated as characters / 4. Takes effect for documents ingested afterwards. |
 | `RAG__MAX_UPLOAD_MB` | `5` | Per file. A whole upload request is also capped at 8 MB by the middleware. |
 | `RAG__TOP_K` | `8` | Passages each research worker gets for its question. Each is input on every web search in that worker call; the design measures 5, 8, 12 and 20. |
 | `RAG__MODE` | `vector` | `vector`, `keyword` (Postgres full text) or `hybrid` (both, fused with reciprocal rank fusion). `vector` because it measured best: on the retrieval baseline (2026-10-10) recall@8 was 0.93 for vector, 0.79 for hybrid and 0.59 for keyword, MRR 0.80, 0.62 and 0.41 (design/rag.md, Phase 2). |
-| `RAG__CANDIDATES` | `50` | Chunks each method ranks before fusion. |
+| `RAG__CANDIDATES` | `50` | Chunks each method ranks before fusion, and the chunks the reranker reorders. |
 | `RAG__RRF_K` | `60` | RRF constant: a chunk at rank r scores 1/(60 + r) per method that found it. 60 is the value from the original RRF paper and the design. |
+| `RAG__RERANK` | `true` | Rerank the first stage's top `RAG__CANDIDATES` with Voyage before taking `RAG__TOP_K`. Needs `VOYAGE_API_KEY`; a rejected key stops the boot. On because it measured best: vector MRR 0.80 to 0.90, recall@5 0.88 to 0.96, for about 13.6k billed tokens ($0.0007) and 0.2 s per query (design/rag.md, Phase 4; [case study](case-studies/retrieval.md)). |
+| `RAG__RERANK_MODEL` | `rerank-3` | $0.05 per million tokens, 200M free (docs.voyageai.com/docs/pricing, 2026-10-10). `rerank-3-lite` is $0.02. |
+| `RAG__CONTEXTUAL` | `false` | Contextual retrieval: `RAG__CONTEXT_MODEL` writes a one or two sentence preamble per chunk, with the document cached, before embedding. Off: it did not beat plain vector search here. Applies to documents ingested afterwards. |
+| `RAG__CONTEXT_MODEL` | `claude-haiku-5-5` | About $0.05 to contextualize this repository's `docs/` (251 chunks). |
 
 Why `voyage-4` at 1024 (decided 2026-10-10, prices from
 <https://docs.voyageai.com/docs/pricing> that day): Anthropic has no embedding
@@ -166,14 +170,17 @@ voyage-4-lite $0.02 per million tokens, each with 200M free tokens. This
 repository's `docs/` is about 52k tokens (236 chunks at 400 tokens), so
 embedding it costs well under a cent with any of them and price does not
 decide. voyage-4 is the general-purpose model; large and the contextualized
-`voyage-context-4` are phase 4 ablations, kept only if the retrieval eval says
-so. The 4 series shares one embedding space. 1024 rather than 2048 keeps the
-HNSW index on plain `vector`.
+`voyage-context-4` were phase 4 ablations and neither beat voyage-4 (both
+work: `RAG__EMBEDDINGS_MODEL=voyageai:voyage-context-4` embeds each chunk
+with the rest of its document). The 4 series shares one embedding space.
+1024 rather than 2048 keeps the HNSW index on plain `vector`.
 
 Startup checks run as for memory: a missing key, a width Voyage does not
 offer, or a provider that returns a different width stops the boot, and so
 does a `chunks.embedding` column whose width differs from
-`RAG__EMBEDDINGS_DIMS`. The column is sized when the table is first created.
+`RAG__EMBEDDINGS_DIMS`. With `RAG__RERANK` on, a missing `VOYAGE_API_KEY` or
+a key the reranker rejects (one tiny rerank call) stops it too. The column is
+sized when the table is first created.
 To change the width afterwards, drop `chunks` (documents keep their content)
 and re-ingest. Each corpus records the model its chunks were embedded with;
 ingesting into a corpus made with another model fails that document rather

@@ -379,6 +379,8 @@ facts went stale. The transcripts say which.
 | Writer-prompt change, replayed | about $0.90 | TESTING.md |
 | Verifier iteration, 1 trial, replayed | $0.04 agent cost per run, plus judge | 2026-10-09 scorecard |
 | Fresh 1-trial research run | $0.27 per run, $2.16 for 8 cases | 2026-10-09 scorecard |
+| Retrieval eval, ten configurations, index reused or rebuilt | about $0.05 (Haiku preambles); Voyage calls inside the free tier | 2026-10-10 scorecards |
+| Research corpus cases live, 5 cases x 3 trials, web cases replayed | $2.84 to $3.04 | 2026-10-10 scorecards |
 
 Judge calls are not priced on scorecards. `evals/prices.toml` holds the rates
 used, with the date they were checked.
@@ -393,3 +395,20 @@ used, with the date they were checked.
   90% on ten examples is an estimate with a wide interval.
 * **Replay freezes the web.** Iterations are measured on one sample of search
   results per trial; a fresh run is needed to see generalisation.
+
+## 5.15 The retrieval eval
+
+Answer evals measure retrieval only through everything after it, at dollars
+per run. The retrieval eval measures it alone, with no model at query time:
+40 reviewed queries over this repository's `docs/` pinned to a commit, each
+labelled with the quoted spans that answer it, scored as recall@5/8/12/20 and
+MRR per search mode and per query kind, with latency and cost. Its index is
+stored under a fingerprint, so a rerun pays only for query embeddings and
+rerank calls. It has its own baseline and a fixed gate (a drop of 0.05),
+because retrieval is deterministic enough that there is no trial spread to
+measure. Commands and details: [TESTING.md](../TESTING.md#retrieval-eval);
+what it found: [case study](../case-studies/retrieval.md).
+
+What it cannot see: whether the searcher cites what it was given. Phase 4
+raised retrieval MRR from 0.80 to 0.90 and the corpus cases' `grounded` fell,
+because uncited findings doubled. Both evals are needed.

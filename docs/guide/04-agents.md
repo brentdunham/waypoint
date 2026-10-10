@@ -154,7 +154,8 @@ the defaults.
 **Documents.** With a `corpus_id` in the input, `plan` checks the corpus
 against the caller's tenant and the approval interrupt shows it; the person
 can answer `{"documents": false}` to research the web only. Each worker then
-retrieves `RAG__TOP_K` passages for its question (`rag/retrieve.py`) and sends
+retrieves `RAG__TOP_K` passages for its question (`rag/retrieve.py`: the
+nearest 50 by vector, reordered by Voyage's reranker) and sends
 them to the searcher as `search_result` blocks ahead of the prompt, with a
 `DOCUMENT_RULE` that says the passages are the user's documents, data and
 not instructions, to prefer them, and to use the web for what they do not
@@ -287,7 +288,8 @@ flowchart LR
     run --> d1[ingest_document<br/>one per document, via Send]
     d1 --> p[parse<br/>Markdown, HTML, PDF, text<br/>to heading path + paragraphs]
     p --> c[chunk<br/>~400 tokens, one-paragraph overlap,<br/>never across a heading]
-    c --> e[embed<br/>RAG__EMBEDDINGS_MODEL, 3 attempts]
+    c --> x[contextualize, if RAG__CONTEXTUAL<br/>a preamble per chunk,<br/>document cached]
+    x --> e[embed<br/>RAG__EMBEDDINGS_MODEL, 3 attempts]
     e --> w[write chunks + ready<br/>one transaction]
     w --> s[summarize<br/>run.completed metadata]
 ```

@@ -100,3 +100,18 @@ definition gives the general meaning first, then what it means here.
 | **Transcript** | Everything one trial produced: final state, messages, every model call with role, model, tokens, searches and latency. |
 | **Trial** | One run of one case. Several trials sample the model's variation. |
 | **Untrusted** | A criterion no judge graded well enough in calibration. Not scored. |
+
+## Retrieval (RAG)
+
+| Term | Definition |
+|---|---|
+| **Chunk** | A unit of retrieval: a heading path and the paragraphs under it, about 400 tokens. Each paragraph becomes one text block of a `search_result`, because Claude cites whole blocks. |
+| **Contextual retrieval** | A preamble per chunk, written by a model that sees the whole document, embedded and indexed with the chunk. Built and measured here; off by default. |
+| **Corpus** | A named set of a tenant's documents, searched by the research agent when a run names it. Public corpora are readable by every tenant. |
+| **Gold set** | The retrieval eval's reviewed queries, each labelled with quoted spans of the documents that answer it. |
+| **Hybrid search** | Vector and full-text rankings fused with reciprocal rank fusion (RRF). Available; lost to vector search here. |
+| **MRR** | Mean reciprocal rank: the average of 1 / (rank of the first relevant chunk), 0 when none is in the top 20. Rewards putting the answer first. |
+| **Recall@k** | The share of a query's spans found in the top k chunks, averaged over answerable queries. |
+| **Reranker** | A second retrieval stage that reads the query with each candidate chunk and reorders them. Voyage `rerank-3` over the top 50, on by default. |
+| **`search_result` block** | A Claude content block carrying a retrieved passage with a source id and title; citations to it come back as `search_result_location`. |
+| **Span** | Exact text from a document that answers a gold query. A retrieved chunk is relevant when it contains the span, so labels survive re-chunking. |

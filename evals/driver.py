@@ -23,7 +23,12 @@ from evals.cases import Case
 from evals.corpus import build_index, index_fingerprint, load_manifest, read_corpus
 from evals.replay import Replay
 from waypoint.agents.context import AgentContext, memory_namespace
-from waypoint.agents.models import INTERCEPTOR, build_embeddings, build_rag_embeddings
+from waypoint.agents.models import (
+    INTERCEPTOR,
+    build_contextualizer,
+    build_embeddings,
+    build_rag_embeddings,
+)
 from waypoint.agents.registry import get_spec
 from waypoint.rag.store import CorpusStore, MemoryCorpusStore
 from waypoint.serialization import jsonable
@@ -177,7 +182,16 @@ async def corpus_index(settings: Settings, name: str) -> tuple[CorpusStore, str]
     async with _INDEX_LOCK:
         if key not in _INDEXES:
             store = MemoryCorpusStore()
-            index = await build_index(settings, store, embeddings, f"{name}-{fingerprint}", files)
+            index = await build_index(
+                settings,
+                store,
+                embeddings,
+                f"{name}-{fingerprint}",
+                files,
+                contextualizer=build_contextualizer(
+                    settings
+                ),  # not replayed: RAG__CONTEXTUAL pays per process
+            )
             _INDEXES[key] = (store, index.corpus_id)
     return _INDEXES[key]
 
