@@ -139,7 +139,7 @@ FastAPI exception handler, can still add `X-Request-ID`.
 |---|---|---|
 | Request id | `X-Request-ID` header in and out; every log line; every problem body | Set by the middleware, bound to a ContextVar |
 | Access log | `waypoint.access` logger, JSON with `JSON_LOGS=true` | Successful health probes log at DEBUG, failing ones at INFO |
-| Run audit | `run_audit` table | Every run's tenant, user, agent, status, error, start and end |
+| Run audit | `run_audit` table | Every run's tenant, user, agent, status, error, start and end, and its cost, tokens and searches (`GET /usage` sums them per tenant) |
 | Run events | Redis Streams | The full event history of a run for an hour after it ends |
 | Model attribution | Message, finding and briefing metadata; per-role run metadata | Which model produced what, kept in the checkpoint |
 | Traces | LangSmith when `LANGSMITH_TRACING=true` | Tagged by tenant and agent; roles visible in metadata |

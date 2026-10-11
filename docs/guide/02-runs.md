@@ -207,8 +207,18 @@ checkpoint it will resume from.
 
 `GET /runs/{id}` returns the record kept in Redis under `run:{id}:meta`, next
 to the event stream at `run:{id}:events`: `run_id`, `thread_id`, `agent`,
-`tenant_id`, `user_id`, `status`, `created_at`, `error`, and `models` (the
-role-to-model map this run used). The `run_audit` table in Postgres keeps the
-durable part (ids, tenant, user, agent, status, error, `started_at`,
-`ended_at`; not the models), outlives the stream's TTL, and is indexed by
-thread.
+`tenant_id`, `user_id`, `status`, `created_at`, `error`, `models` (the
+role-to-model map this run used) and, once the run ends or pauses, `usage`
+(cost, tokens and searches per role and in total). The `run_audit` table in
+Postgres keeps the durable part (ids, tenant, user, agent, status, error,
+`started_at`, `ended_at`, and the cost, token and search totals with the
+per-role breakdown in `usage`; not the models), outlives the stream's TTL,
+and is indexed by thread and by tenant.
+
+The cost comes from `waypoint.usage.Meter`, a LangChain callback handler that
+`RunManager._drive` attaches to every run. Each chat model call reports its
+usage to it, attributed to a role by the `model_role` metadata each role's
+runnable carries, and is priced from `src/waypoint/prices.toml` (cache reads,
+cache writes and long prompts at their own rates, web searches per request).
+Embeddings and reranking are not chat model calls; the code that makes them
+reports them through `METER`, a ContextVar holding the current run's meter.

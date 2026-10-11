@@ -1,6 +1,6 @@
 # Design: observability and cost
 
-Status: **phase 0 done (2026-10-11); phase 1 next.** Written 2026-10-11 as roadmap item 4.
+Status: **phases 0 and 1 built (2026-10-11); phase 1's live check on Bob waits for a deploy, then phase 2.** Written 2026-10-11 as roadmap item 4.
 This note is the hand-off for the coding sessions: what to build, what is
 decided, what is still open, and in what order. Read it with
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [rag.md](rag.md), which set the
@@ -254,6 +254,60 @@ langchain's `input_tokens` includes the cached parts, so the cache rates need
 the split `rag/contextualize.py: Usage.add` already does, and the meter's tests
 are where that gets checked. `evals/retrieval.py` keeps its own
 `CACHE_READ` / `CACHE_WRITE` multipliers until then.
+
+### Phase 1: cost per run (2026-10-11)
+
+* `waypoint/usage.py` gained `CallUsage` and `usage_of` (one reply's usage,
+  with cached input split out of langchain's total), `Meter`, `METER`,
+  `report_embedding` and `report_rerank`. `call_cost` now prices cache reads
+  (0.1x), 5-minute writes (1.25x) and 1-hour writes (2x); the long-context
+  threshold counts cached input too. With no cache tokens it gives the same
+  numbers as before: the phase 0 parity tests still pass unchanged.
+* `RunManager._drive` attaches a `Meter` to every run (callbacks and
+  `METER`), binds `run_id`, `agent` and `tenant_id` into the log context, and
+  writes `usage` to the run record, to every terminal event (`run.completed`,
+  `run.interrupted`, `run.failed`, `run.cancelled`) and to `run_audit`. A
+  failed audit write is logged at WARNING with the usage, not swallowed.
+* Schema: the `run_audit` columns and tenant index from "Data model" above,
+  idempotent in `SCHEMA`. `trace_id` is added now and stays null until phase 3,
+  so phase 3 needs no migration.
+* `Retriever.search` reports the query embedding and rerank tokens;
+  `index_document` reports document embedding tokens (so an ingest run shows
+  what indexing cost). The contextualizer's model carries
+  `model_role="contextualize"`, so its calls during ingestion get a role of
+  their own.
+* `GET /usage` (`api/usage.py`): the tenant's spend over 1 to 31 days, summed
+  from `run_audit`. Schema models `RunUsage`, `RoleUsage`, `TenantUsage`.
+* UI: one line under the transcript when a run ends, with cost, tokens in and
+  out, searches and duration, and a per-role breakdown on hover
+  (`web/src/usage.ts`). A paused research run's line is labelled "Plan:".
+* `evals/driver.py: UsageRecorder` reads usage with `usage_of`. It keeps
+  counting all input at the input rate, as scorecards always have.
+* Tests (`tests/test_meter.py`): cache pricing, the cache split, per-role
+  sums, an unpriced model making the total `null`, a broken reply not
+  breaking the meter, embedding and rerank reports, and a scripted chat run
+  and research run (both legs) whose reported costs match prices computed by
+  hand. `ScriptedChatModel.usage_script` gives the fake runs known usage. One
+  integration test checks `run_audit` and `GET /usage` against Postgres.
+
+Deviations:
+
+* **The cost line is under the transcript, for the latest run, not under
+  every reply.** Messages in a checkpoint do not say which run wrote them, so
+  after a reload there is no run to look up for an old reply. The line shows
+  for the run just finished; a past run's cost is in `GET /runs/<id>` while
+  Redis keeps it, and in `run_audit` after.
+* **Embedding tokens are estimated** (characters / 4, the chunker's
+  estimate). langchain's `Embeddings` returns vectors only. At $0.06 per
+  million tokens for voyage-4 the error cannot move a run's cost.
+* **Not metered:** memory-store embeddings (the chat agent's `remember` and
+  memory search go through LangGraph's store, which calls the embeddings model
+  itself; text-embedding-3-small at $0.02 per million tokens), the boot-time
+  embedding and rerank probes, and the `waypoint-docs` seed (it runs outside
+  any run, in the system tenant). All three are fractions of a cent.
+* Unpriced models make a run's `cost_usd` `null`, like the scorecards. Phase
+  2 needs a number to charge; D3 (boot error when budgets are on) is what
+  guarantees one.
 
 ## References
 

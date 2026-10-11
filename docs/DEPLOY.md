@@ -158,6 +158,14 @@ docker compose exec postgres psql -U waypoint -c \
   "select tenant_id, count(*) runs, max(started_at) last from run_audit where tenant_id like 'rev-%' group by 1 order by 3 desc"
 ```
 
+What the demo has cost, per tenant, over the last 30 days (runs from before
+metering have no cost and count as zero):
+
+```bash
+docker compose exec postgres psql -U waypoint -c \
+  "select tenant_id, count(*) runs, round(sum(cost_usd), 2) usd from run_audit where started_at > now() - interval '30 days' group by 1 order by 3 desc nulls last"
+```
+
 ## Operating it
 
 | Task | Command |

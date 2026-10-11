@@ -107,6 +107,32 @@ is still there after a reload:
 | The research approval interrupt | `value.models`: the run's role -> model map |
 | The research briefing's state | `metadata.models` |
 
+### Cost
+
+Every run reports what it cost when it ends, or pauses at an interrupt:
+`usage` on the run record (`GET /runs/<id>`), on the terminal event and in the
+`?wait=true` result. Priced from `src/waypoint/prices.toml`, the table the
+eval scorecards use.
+
+```jsonc
+{"cost_usd": 0.2534,          // null if any call was by a model not in prices.toml
+ "input_tokens": 123456,      // all input, cached parts included
+ "output_tokens": 7890,
+ "searches": 12,              // server-side web searches, billed per request
+ "roles": {
+   "searcher": {"model": "claude-haiku-5-5", "calls": 6, "input_tokens": 98000,
+                "output_tokens": 4100, "cache_read_tokens": 0, "cache_write_tokens": 0,
+                "searches": 12, "cost_usd": 0.1302},
+   "writer":   {"model": "claude-sonnet-5", "calls": 1, "...": "...", "cost_usd": 0.1231},
+   "embed":    {"model": "voyageai:voyage-4", "tokens": 40, "cost_usd": 0.0000024},
+   "rerank":   {"model": "rerank-3", "tokens": 18400, "cost_usd": 0.00092}}}
+```
+
+Each run is priced on its own: a research run's plan (paused at approval) and
+its briefing (the resumed run) are two runs with two costs. `embed` tokens are
+estimated (characters / 4); langchain's embeddings interface does not return
+the provider's count. Rerank tokens are Voyage's own count.
+
 `?wait=true` is a convenience for scripts and tests. Real clients POST, take
 the `run_id`, and stream.
 
@@ -142,6 +168,8 @@ data: {"interrupts":[{"id":"6ac8…","value":{"kind":"approve_plan","plan":["…
 | `heartbeat` | Keep-alive; ignore |
 | `run.interrupted` | Paused for a human — **terminal for this run** |
 | `run.completed` / `run.failed` / `run.cancelled` | Terminal |
+
+Every terminal event carries the run's `usage` (see Cost above).
 
 Every frame carries an `id`. Send it back as `Last-Event-ID` (header or
 `?last_event_id=`) and the server replays the Redis Stream from exactly there —
@@ -258,6 +286,27 @@ scopes but not this one. Public corpora (`visibility: "public"`) are
 listed for every key and searchable by every research run, and no key can
 change them. The demo's `waypoint-docs` is one: this repository's `docs/`,
 kept indexed by the service itself (`RAG__SEED_DIR`, CONFIGURATION.md).
+
+## Usage
+
+| Method | Path | Scope | Notes |
+|---|---|---|---|
+| GET | `/usage?days=1` | `threads:read` | The caller's tenant's spend over the last `days` days (1 to 31, default 1: the last 24 hours) |
+
+```jsonc
+{"tenant_id": "acme", "days": 1, "since": "2026-10-10T20:00:00+00:00",
+ "runs": 4, "cost_usd": 0.61, "unpriced_runs": 0,
+ "input_tokens": 410233, "output_tokens": 23110, "searches": 31,
+ "by_agent": {"chat": {"runs": 1, "cost_usd": 0.002},
+              "research": {"runs": 3, "cost_usd": 0.608}}}
+```
+
+Summed from `run_audit` over runs that started in the window and have ended.
+`unpriced_runs` counts runs with no recorded cost: one used a model missing
+from the price table, or ran before metering existed. Only the caller's own
+tenant: no key sees the server's total or another tenant's spend. Budgets and
+the remaining balance join this response with budget enforcement
+(observability design, phase 2).
 
 ## Keys
 
