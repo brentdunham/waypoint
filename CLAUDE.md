@@ -10,8 +10,9 @@ rediscovering it.
 * `docs/guide/`: the long-form design guide for reviewers (Mermaid diagrams,
   glossary). Keep it in step with any architecture change.
 * `docs/ROADMAP.md`: what is done and what is next.
-* `docs/design/`: design docs for work not yet built. **Current: RAG,
-  `docs/design/rag.md`; all five phases done; phase 5 (demo corpus) deployed 2026-10-11.**
+* `docs/design/`: design docs. **Current: observability and cost,
+  `docs/design/observability.md`; not started, phase 0 next.** `rag.md` is
+  complete (all five phases, deployed 2026-10-11) and is the model for format.
   Build it phase by phase as written; record any deviation in the doc and in
   ROADMAP.md.
 * `docs/case-studies/`: write-ups of measured changes (`grounded.md` is the

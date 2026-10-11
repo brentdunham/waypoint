@@ -271,9 +271,7 @@ dependencies, response models for every endpoint, and the OpenAPI page at
 a 500; bodies over 8 MB are a 413 `payload-too-large`; `/healthz` no longer
 reports the background loop it no longer has (ARCHITECTURE.md §1).
 
-## Next
-
-### Retrieval over tenant documents (RAG)
+### Retrieval over tenant documents (RAG) (2026-10-10 to 2026-10-11)
 
 **What.** Tenants upload documents into corpora; the research agent searches a
 chosen corpus alongside the web and cites passages with the same `[n]`
@@ -321,6 +319,8 @@ Phase 5 deployed 2026-10-11: the public `waypoint-docs` corpus is seeded from
 `docs/` at boot, reviewer links can research it, and only the admin key can
 create or upload to corpora. The RAG design is complete.
 
+## Next
+
 ### 4. Observability and cost
 
 **What.** OpenTelemetry spans for HTTP request, run, node and model call,
@@ -335,6 +335,12 @@ and tokens go and cap them per tenant.
 
 **Done when.** A single run can be followed end to end in a trace; a tenant
 over its token budget gets a clean 429.
+
+**Design.** [design/observability.md](design/observability.md), written
+2026-10-11. It changes one thing here: budgets are in US dollars, not
+tokens, because a Sonnet token costs 20 times a Haiku token. Phases 1 and 2
+(cost per run, budgets) come before tracing, since the public demo has no
+spending cap today.
 
 ### 5. MCP tools and tool-level approval
 

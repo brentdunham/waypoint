@@ -1,6 +1,7 @@
 # Design: retrieval over tenant documents (RAG)
 
-Status: **in progress.** Phases 0 to 4 built on 2026-10-10;
+Status: **done.** Phases 0 to 4 built on 2026-10-10, phase 5 deployed
+2026-10-11;
 see [Implementation log](#implementation-log) for what changed from this
 design and why. Written 2026-10-10.
 This note is the hand-off for the coding sessions: what to build, what is
