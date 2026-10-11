@@ -628,6 +628,16 @@ Differences from the design: seeding is a boot task rather than a deploy
 step, so `git pull && docker compose up -d --build` is the whole update; and
 reviewer uploads are off rather than capped.
 
+Deployed 2026-10-11. On the server the first boot seeded 18 files (294
+chunks) in 4.8 s. A reviewer key lists `waypoint-docs`, gets 403 on
+`POST /corpora` and `POST /keys`, and one research question over the docs
+("How does Waypoint recover a dropped event stream?") completed with 7
+findings, 17 sources, all of them documents, no uncited finding (one
+retried) and 0 unsupported sentences. One deploy note: the API first
+crash-looped on an unrelated stale `EMBEDDINGS_MODEL` key, which left the
+`web` container in Created (it waits for a healthy API); after fixing `.env`,
+`docker compose up -d` (not `up -d api`) starts both.
+
 ## References
 
 * [Claude docs: search results](https://platform.claude.com/docs/en/build-with-claude/search-results)

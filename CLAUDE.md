@@ -11,7 +11,7 @@ rediscovering it.
   glossary). Keep it in step with any architecture change.
 * `docs/ROADMAP.md`: what is done and what is next.
 * `docs/design/`: design docs for work not yet built. **Current: RAG,
-  `docs/design/rag.md`; phases 0 to 4 done, phase 5 (demo corpus) next.**
+  `docs/design/rag.md`; all five phases done; phase 5 (demo corpus) deployed 2026-10-11.**
   Build it phase by phase as written; record any deviation in the doc and in
   ROADMAP.md.
 * `docs/case-studies/`: write-ups of measured changes (`grounded.md` is the

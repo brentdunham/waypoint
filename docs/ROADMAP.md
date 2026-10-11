@@ -316,8 +316,10 @@ recall@5 0.88 to 0.96, $0.0007 and 0.2 s per query) and is on by default.
 At the answer level the bottleneck is now the searcher attaching citations,
 not retrieval ([case study](case-studies/retrieval.md)). Fixed the same day:
 a worker whose reply cites nothing is asked once more, which took uncited
-findings from 20 of 277 to 1 of 281 and `grounded` from 3.67 to 3.83. Next:
-phase 5, the public demo corpus.
+findings from 20 of 277 to 1 of 281 and `grounded` from 3.67 to 3.83.
+Phase 5 deployed 2026-10-11: the public `waypoint-docs` corpus is seeded from
+`docs/` at boot, reviewer links can research it, and only the admin key can
+create or upload to corpora. The RAG design is complete.
 
 ### 4. Observability and cost
 
