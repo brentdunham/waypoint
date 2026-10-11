@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../api/client";
 import { streamRun } from "../api/sse";
-import type { Interrupt, RunEvent, RunResult, RunStatus } from "../api/types";
+import { TERMINAL_EVENTS } from "../api/types";
+import type { Interrupt, RunEvent, RunResult, RunStatus, RunUsage } from "../api/types";
 import { applyEvent, EMPTY_PROGRESS, type Progress } from "../research/progress";
 
 export interface RunState {
@@ -15,6 +16,11 @@ export interface RunState {
   error: string | null;
   /** Research runs only: workers and phase, rebuilt from the stream. */
   progress: Progress;
+  /** What the run cost, from its terminal event. */
+  usage: RunUsage | null;
+  /** Milliseconds from starting the run to its terminal event. */
+  durationMs: number | null;
+  startedAt: number | null;
 }
 
 const IDLE: RunState = {
@@ -26,6 +32,9 @@ const IDLE: RunState = {
   result: null,
   error: null,
   progress: EMPTY_PROGRESS,
+  usage: null,
+  durationMs: null,
+  startedAt: null,
 };
 
 /**
@@ -46,7 +55,15 @@ export function useRun(onSettled?: () => void | Promise<void>) {
 
   const consume = useCallback((event: RunEvent) => {
     setState((current) => {
-      const prev = { ...current, progress: applyEvent(current.progress, event) };
+      let prev = { ...current, progress: applyEvent(current.progress, event) };
+      if (TERMINAL_EVENTS.has(event.type)) {
+        const data = event.data as { usage?: RunUsage | null };
+        prev = {
+          ...prev,
+          usage: data.usage ?? null,
+          durationMs: prev.startedAt === null ? null : Date.now() - prev.startedAt,
+        };
+      }
       switch (event.type) {
         case "run.started":
           return { ...prev, status: "running", runId: event.data.run_id };
@@ -76,7 +93,7 @@ export function useRun(onSettled?: () => void | Promise<void>) {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      setState({ ...IDLE, status: "running" });
+      setState({ ...IDLE, status: "running", startedAt: Date.now() });
 
       try {
         const record = await api.startRun(threadId, body);

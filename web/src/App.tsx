@@ -11,6 +11,7 @@ import { Transcript } from "./components/Transcript";
 import { Welcome } from "./components/Welcome";
 import { useRun } from "./hooks/useRun";
 import { useAgents, useSnapshot, useThreads } from "./hooks/useThreads";
+import { formatUsage, usageBreakdown } from "./usage";
 
 export default function App() {
   const { agents } = useAgents();
@@ -168,6 +169,15 @@ export default function App() {
             streamingModel={run.progress.models["writer"] ?? run.progress.models["assistant"]}
             activeNodes={run.nodes}
           />
+
+          {/* What the last run cost. A research run pays for its plan and its
+              briefing as two runs, so the plan's line says so. */}
+          {run.usage && !run.busy && (
+            <p className="muted small run-usage" title={usageBreakdown(run.usage)}>
+              {run.status === "interrupted" && "Plan: "}
+              {formatUsage(run.usage, run.durationMs)}
+            </p>
+          )}
 
           {activeAgent === "research" && <ResearchProgress progress={run.progress} />}
 

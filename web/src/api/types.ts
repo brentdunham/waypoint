@@ -42,6 +42,8 @@ export interface RunRecord {
   error: string | null;
   /** Role -> model this run used. Empty for runs from before routing. */
   models?: Record<string, string>;
+  /** Set when the run ends or pauses; absent while running and for older runs. */
+  usage?: RunUsage | null;
   events_url?: string;
   cancel_url?: string;
 }
@@ -87,6 +89,32 @@ export interface Snapshot {
   tasks: { id: string; name: string; error: string | null }[];
 }
 
+/** Mirrors `RoleUsage` in src/waypoint/schemas.py. */
+export interface RoleUsage {
+  model: string;
+  calls?: number;
+  /** All input, cached parts included. */
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  searches?: number;
+  /** Embedding (estimated) or rerank tokens. */
+  tokens?: number;
+  /** null: the model is not in the price table. */
+  cost_usd: number | null;
+}
+
+/** Mirrors `RunUsage` in src/waypoint/schemas.py. */
+export interface RunUsage {
+  /** null when any call was by a model the price table does not list. */
+  cost_usd: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  searches: number;
+  roles: Record<string, RoleUsage>;
+}
+
 // --- SSE frames -----------------------------------------------------------
 
 export type RunEvent =
@@ -98,10 +126,13 @@ export type RunEvent =
   | { type: "node"; data: { node: string; update: unknown } }
   | { type: "custom"; data: { payload: unknown } }
   | { type: "heartbeat"; data: { ts: string } }
-  | { type: "run.interrupted"; data: { interrupts: Interrupt[]; next: string[] } }
-  | { type: "run.completed"; data: { result: RunResult } }
-  | { type: "run.failed"; data: { error: string; type: string } }
-  | { type: "run.cancelled"; data: { run_id: string } };
+  | {
+      type: "run.interrupted";
+      data: { interrupts: Interrupt[]; next: string[]; usage?: RunUsage | null };
+    }
+  | { type: "run.completed"; data: { result: RunResult; usage?: RunUsage | null } }
+  | { type: "run.failed"; data: { error: string; type: string; usage?: RunUsage | null } }
+  | { type: "run.cancelled"; data: { run_id: string; usage?: RunUsage | null } };
 
 /** Mirrors `Source` / `Finding` in src/waypoint/agents/state.py. */
 export interface Source {
