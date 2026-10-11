@@ -33,6 +33,7 @@ from waypoint.agents.registry import get_spec
 from waypoint.rag.store import CorpusStore, MemoryCorpusStore
 from waypoint.serialization import jsonable
 from waypoint.settings import Settings
+from waypoint.usage import replies, usage_of
 
 EVAL_TENANT = "evals"
 
@@ -111,6 +112,10 @@ class UsageRecorder(AsyncCallbackHandler):
 
     The structured-output path of the scripted test model is not a chat model,
     so offline runs record nothing; with a real model every call lands here.
+    Usage is read with ``waypoint.usage.usage_of``, as the service's meter
+    reads it. ``Call.input_tokens`` stays the total input, cached parts
+    included, and scorecards price it all at the input rate: no agent call
+    site uses prompt caching yet, so the two agree until one does.
     """
 
     def __init__(self) -> None:
@@ -138,15 +143,11 @@ class UsageRecorder(AsyncCallbackHandler):
         if call is None or started is None:
             return
         call.latency_s = time.perf_counter() - started
-        for generations in response.generations:
-            for generation in generations:
-                message = getattr(generation, "message", None)
-                usage = getattr(message, "usage_metadata", None) or {}
-                call.input_tokens += int(usage.get("input_tokens", 0))
-                call.output_tokens += int(usage.get("output_tokens", 0))
-                raw = (getattr(message, "response_metadata", None) or {}).get("usage") or {}
-                server = raw.get("server_tool_use") or {}
-                call.searches += int(server.get("web_search_requests", 0) or 0)
+        for message in replies(response):
+            usage = usage_of(message)
+            call.input_tokens += usage.total_input_tokens
+            call.output_tokens += usage.output_tokens
+            call.searches += usage.searches
         self.calls.append(call)
 
     async def on_llm_error(self, error: BaseException, *, run_id: uuid.UUID, **kwargs: Any) -> None:

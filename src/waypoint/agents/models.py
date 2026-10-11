@@ -45,6 +45,14 @@ class ScriptedChatModel(BaseChatModel):
     graph down a specific path, e.g. a critic that asks for follow-ups.
     """
 
+    usage_script: ClassVar[Callable[[str], dict[str, int]] | None] = None
+    """Prompt text -> the usage a reply reports, or ``None`` (the default) for
+    none. Keys: ``input_tokens``, ``output_tokens``, ``cache_read``,
+    ``cache_creation`` and ``searches``, shaped onto the reply the way
+    langchain-anthropic reports them, so a test can give a fake run known
+    usage and check what the meter makes of it (``monkeypatch.setattr``).
+    """
+
     @property
     @override
     def _llm_type(self) -> str:
@@ -142,6 +150,31 @@ class ScriptedChatModel(BaseChatModel):
             return AIMessage(content="Scripted briefing covering every finding above.")
         return AIMessage(content=f"echo: {text}")
 
+    def _usage(self, messages: list[BaseMessage]) -> dict[str, Any]:
+        """Fields for the reply's usage, from :attr:`usage_script`."""
+        script = type(self).usage_script
+        if script is None:
+            return {}
+        text = "\n".join(str(m.content) for m in messages)
+        u = script(text)
+        total_in = u.get("input_tokens", 0) + u.get("cache_read", 0) + u.get("cache_creation", 0)
+        fields: dict[str, Any] = {
+            "usage_metadata": {
+                "input_tokens": total_in,
+                "output_tokens": u.get("output_tokens", 0),
+                "total_tokens": total_in + u.get("output_tokens", 0),
+                "input_token_details": {
+                    "cache_read": u.get("cache_read", 0),
+                    "cache_creation": u.get("cache_creation", 0),
+                },
+            }
+        }
+        if searches := u.get("searches", 0):
+            fields["response_metadata"] = {
+                "usage": {"server_tool_use": {"web_search_requests": searches}}
+            }
+        return fields
+
     @override
     def _generate(
         self,
@@ -150,7 +183,8 @@ class ScriptedChatModel(BaseChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        return ChatResult(generations=[ChatGeneration(message=self._next(messages))])
+        message = self._next(messages).model_copy(update=self._usage(messages))
+        return ChatResult(generations=[ChatGeneration(message=message)])
 
     @override
     def _stream(
@@ -167,12 +201,13 @@ class ScriptedChatModel(BaseChatModel):
             yield ChatGenerationChunk(
                 message=AIMessageChunk(content="", tool_calls=message.tool_calls)
             )
-            return
-        if isinstance(message.content, list):  # content blocks arrive whole
+        elif isinstance(message.content, list):  # content blocks arrive whole
             yield ChatGenerationChunk(message=AIMessageChunk(content=message.content))
-            return
-        for word in str(message.content).split(" "):
-            yield ChatGenerationChunk(message=AIMessageChunk(content=word + " "))
+        else:
+            for word in str(message.content).split(" "):
+                yield ChatGenerationChunk(message=AIMessageChunk(content=word + " "))
+        if usage := self._usage(messages):  # last, as the API sends it
+            yield ChatGenerationChunk(message=AIMessageChunk(content="", **usage))
 
 
 def _scripted_plan(text: str) -> dict[str, Any]:
@@ -628,8 +663,12 @@ def build_contextualizer(settings: Settings) -> Contextualizer | None:
         return None
     from waypoint.rag.contextualize import MAX_TOKENS, Contextualizer
 
-    model = build_model(settings, model=settings.rag.context_model, max_tokens=MAX_TOKENS)
-    return Contextualizer(model, settings.rag.context_model)
+    name = settings.rag.context_model
+    model = build_model(settings, model=name, max_tokens=MAX_TOKENS)
+    # The same metadata RoleModel puts on agent roles, so a run's meter
+    # attributes preamble calls (during ingestion) to a role of their own.
+    tagged = model.with_config(metadata={"model_role": "contextualize", "model_name": name})
+    return Contextualizer(tagged, name)
 
 
 async def check_embedding_dims(

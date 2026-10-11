@@ -60,6 +60,16 @@ create table if not exists run_audit (
     ended_at    timestamptz
 );
 create index if not exists run_audit_thread_idx on run_audit (thread_id, started_at desc);
+-- What each run cost (observability design, O5). Totals here, per-call detail
+-- in traces. Rows from before this existed keep nulls: "not recorded", not zero.
+alter table run_audit
+    add column if not exists cost_usd      numeric(12, 6),
+    add column if not exists input_tokens  bigint,
+    add column if not exists output_tokens bigint,
+    add column if not exists searches      int,
+    add column if not exists usage         jsonb,
+    add column if not exists trace_id      text;
+create index if not exists run_audit_tenant_idx on run_audit (tenant_id, started_at desc);
 """
 
 TENANT_ROLE = "waypoint_tenant"

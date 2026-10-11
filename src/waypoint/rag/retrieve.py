@@ -24,8 +24,10 @@ from typing import Literal, Protocol
 
 from langchain_core.embeddings import Embeddings
 
+from waypoint.rag.chunk import estimate_tokens
 from waypoint.rag.store import ChunkHit, CorpusStore, StoredChunk
 from waypoint.settings import RagSettings
+from waypoint.usage import report_embedding, report_rerank
 
 type Mode = Literal["vector", "keyword", "hybrid"]
 MODES: tuple[Mode, ...] = ("vector", "keyword", "hybrid")
@@ -209,15 +211,21 @@ class Retriever:
         k: int | None = None,
         mode: Mode | None = None,
     ) -> Retrieval:
-        return await retrieve(
+        mode = mode or self.settings.mode
+        result = await retrieve(
             self.store,
             self.embeddings,
             tenant_id,
             corpus_id,
             query,
             k=k or self.settings.top_k,
-            mode=mode or self.settings.mode,
+            mode=mode,
             candidates=self.settings.candidates,
             rrf_k=self.settings.rrf_k,
             reranker=self.reranker,
         )
+        # Into the current run's meter, if there is one (not in the evals).
+        if mode != "keyword":
+            report_embedding(self.settings.embeddings_model, estimate_tokens(query))
+        report_rerank(self.settings.rerank_model, result.rerank_tokens)
+        return result

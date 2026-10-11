@@ -13,10 +13,11 @@ from typing import Any, TypedDict
 from langchain_core.embeddings import Embeddings
 
 from waypoint.errors import NotFound, http_status
-from waypoint.rag.chunk import chunk_sections
+from waypoint.rag.chunk import chunk_sections, estimate_tokens
 from waypoint.rag.contextualize import Contextualizer, document_text
 from waypoint.rag.parse import ParseError, parse
 from waypoint.rag.store import CorpusStore
+from waypoint.usage import report_embedding
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +107,8 @@ async def index_document(
                 ) from exc
             emit(progress | {"stage": "contextualized"})
         vectors = await embed_with_retry(embeddings, [c.text for c in chunks])
+        # Estimated: langchain's embeddings interface returns vectors, not counts.
+        report_embedding(embed_model, sum(estimate_tokens(c.text) for c in chunks))
         emit(progress | {"stage": "embedded"})
         try:
             stored = await corpora.write_chunks(tenant_id, document_id, chunks, vectors)

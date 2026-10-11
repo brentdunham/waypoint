@@ -151,6 +151,35 @@ class StateUpdated(Out):
     thread_id: str
 
 
+class RoleUsage(Out):
+    """One role's share of a run. Chat roles have ``calls`` and token counts;
+    ``embed`` and ``rerank`` have ``tokens`` only."""
+
+    model: str
+    calls: int | None = None
+    input_tokens: int | None = None
+    """All input, cached parts included."""
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    searches: int | None = None
+    tokens: int | None = None
+    """Embedding (estimated) or rerank tokens."""
+    cost_usd: float | None = None
+    """``null`` when the model is not in the price table."""
+
+
+class RunUsage(Out):
+    """What a run cost, priced from ``src/waypoint/prices.toml``."""
+
+    cost_usd: float | None
+    """``null`` when any call was by a model the price table does not list."""
+    input_tokens: int
+    output_tokens: int
+    searches: int
+    roles: dict[str, RoleUsage] = Field(default_factory=dict)
+
+
 class Run(Out):
     run_id: str
     thread_id: str
@@ -162,6 +191,8 @@ class Run(Out):
     error: str | None = None
     models: dict[str, str] = Field(default_factory=dict)
     """Role -> model this run used."""
+    usage: RunUsage | None = None
+    """Set when the run ends (and when it pauses at an interrupt)."""
 
 
 class RunStarted(Run):
@@ -178,6 +209,31 @@ class RunResult(Out):
     status: str
     models: dict[str, str] = Field(default_factory=dict)
     """Role -> model this run used."""
+    usage: RunUsage | None = None
+
+
+class AgentSpend(Out):
+    runs: int
+    cost_usd: float
+
+
+class TenantUsage(Out):
+    """``GET /usage``: the caller's tenant's spend over a trailing window."""
+
+    tenant_id: str
+    days: int
+    since: str
+    """Start of the window (UTC, ISO 8601); it ends now."""
+    runs: int
+    """Runs started in the window that have ended."""
+    cost_usd: float
+    """Sum over runs with a recorded cost."""
+    unpriced_runs: int
+    """Ended runs with no cost recorded: an unpriced model, or from before metering."""
+    input_tokens: int
+    output_tokens: int
+    searches: int
+    by_agent: dict[str, AgentSpend] = Field(default_factory=dict)
 
 
 class KeyCreated(Out):

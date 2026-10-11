@@ -19,6 +19,7 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
+from psycopg.types.json import Jsonb
 
 from waypoint.agents.context import AgentContext
 from waypoint.agents.types import Graph
@@ -27,8 +28,10 @@ from waypoint.infra.bus import TERMINAL, Event, EventBus
 from waypoint.infra.db import Database
 from waypoint.infra.ratelimit import Limiter
 from waypoint.infra.security import Principal
+from waypoint.log_config import bind, unbind
 from waypoint.serialization import jsonable, message_to_dict
 from waypoint.settings import Settings
+from waypoint.usage import METER, Meter
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +50,9 @@ class RunRecord:
     error: str | None = None
     models: dict[str, str] = field(default_factory=dict)
     """Role -> model this run used. Empty for runs started before routing existed."""
+    usage: dict[str, Any] | None = None
+    """Cost, tokens and searches, per role and in total (``Meter.summary``).
+    ``None`` while running, and for runs from before metering existed."""
 
     def public(self) -> dict[str, Any]:
         return asdict(self)
@@ -224,6 +230,14 @@ class RunManager:
         )
         graph_input: Any = Command(resume=resume) if resume is not None else payload
 
+        # Every chat model call in the graph reports to the meter through the
+        # callbacks; embeddings and reranking find it through METER. This task
+        # has its own copy of the context, so neither leaks to other runs.
+        meter = Meter()
+        config["callbacks"] = [meter]
+        meter_token = METER.set(meter)
+        log_token = bind(run_id=run_id, agent=record.agent, tenant_id=record.tenant_id)
+
         status, error = "completed", None
         try:
             async with asyncio.timeout(limits.run_timeout_s):
@@ -248,35 +262,63 @@ class RunManager:
                             for i in snapshot.interrupts
                         ],
                         "next": list(snapshot.next or ()),
+                        "usage": self._usage(record, meter),
                     },
                 )
             else:
                 await self._bus.append(
                     run_id,
                     "run.completed",
-                    {"result": self._summarize(snapshot.values)},
+                    {
+                        "result": self._summarize(snapshot.values),
+                        "usage": self._usage(record, meter),
+                    },
                 )
         except asyncio.CancelledError:
             status = "cancelled"
-            await self._bus.append(run_id, "run.cancelled", {"run_id": run_id})
+            await self._bus.append(
+                run_id, "run.cancelled", {"run_id": run_id, "usage": self._usage(record, meter)}
+            )
             raise
         except TimeoutError:
             status, error = "failed", f"Run exceeded {limits.run_timeout_s}s."
-            await self._bus.append(run_id, "run.failed", {"error": error, "type": "timeout"})
+            await self._bus.append(
+                run_id,
+                "run.failed",
+                {"error": error, "type": "timeout", "usage": self._usage(record, meter)},
+            )
         except Exception as exc:
             status, error = "failed", f"{type(exc).__name__}: {exc}"
-            log.exception("run failed", extra={"run_id": run_id, "agent": record.agent})
+            log.exception("run failed")
             await self._bus.append(
-                run_id, "run.failed", {"error": error, "type": type(exc).__name__}
+                run_id,
+                "run.failed",
+                {"error": error, "type": type(exc).__name__, "usage": self._usage(record, meter)},
             )
         finally:
             record.status, record.error = status, error
+            self._usage(record, meter)  # the terminal append may not have been reached
             with contextlib.suppress(Exception):
                 await self._bus.set_meta(run_id, record.public())
+            try:
                 await self._audit_end(record)
+            except Exception:
+                # Spend is never lost silently: if Postgres missed it, the log has it.
+                log.warning("could not write the run's audit row", extra={"usage": record.usage})
+            METER.reset(meter_token)
+            unbind(log_token)
             if release is not None:
                 with contextlib.suppress(Exception):
                     await release.__aexit__(None, None, None)
+
+    @staticmethod
+    def _usage(record: RunRecord, meter: Meter) -> dict[str, Any] | None:
+        """Snapshot the meter onto the record; never fails the run."""
+        try:
+            record.usage = meter.summary()
+        except Exception:
+            log.warning("could not summarise the run's usage", exc_info=True)
+        return record.usage
 
     async def _emit(self, run_id: str, mode: str, chunk: Any) -> None:
         match mode:
@@ -395,9 +437,23 @@ class RunManager:
     async def _audit_end(self, record: RunRecord) -> None:
         if self._db is None:
             return
+        usage = record.usage or {}
         await self._db.execute(
-            "update run_audit set status = %s, error = %s, ended_at = now() where run_id = %s",
-            (record.status, record.error, record.run_id),
+            """update run_audit
+               set status = %s, error = %s, ended_at = now(),
+                   cost_usd = %s, input_tokens = %s, output_tokens = %s, searches = %s,
+                   usage = %s
+               where run_id = %s""",
+            (
+                record.status,
+                record.error,
+                usage.get("cost_usd"),
+                usage.get("input_tokens"),
+                usage.get("output_tokens"),
+                usage.get("searches"),
+                Jsonb(usage["roles"]) if "roles" in usage else None,
+                record.run_id,
+            ),
         )
 
 
