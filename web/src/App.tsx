@@ -86,15 +86,22 @@ export default function App() {
       await run.launch(id, withDocuments ? { message, input: { corpus_id: corpusId } } : { message });
     });
 
-  /** One click from the welcome panel: a new thread for that agent, then run. */
-  const tryExample = (name: string, text: string) =>
+  /** One click from the welcome panel: a new thread for that agent, then run.
+   *  An example over a corpus names it; it runs on the web alone if that corpus
+   *  is not on this server. */
+  const tryExample = (name: string, text: string, corpusName?: string) =>
     void guard(async () => {
       setAgent(name);
       run.reset();
+      const corpus = corpusName ? corpora.find((c) => c.name === corpusName) : undefined;
+      setCorpusId(corpus?.corpus_id ?? "");
       const id = (await api.createThread(name, text.slice(0, 60))).thread_id;
       setThreadId(id);
       await refreshThreads();
-      await run.launch(id, { message: text });
+      await run.launch(
+        id,
+        corpus ? { message: text, input: { corpus_id: corpus.corpus_id } } : { message: text },
+      );
     });
 
   const decide = (decision: Record<string, unknown>) =>
@@ -148,7 +155,11 @@ export default function App() {
           {run.error && <p className="banner banner--error">{run.error}</p>}
 
           {messages.length === 0 && !run.busy && !pending && !run.streamedText && (
-            <Welcome hasKey={auth.get() !== ""} onTry={tryExample} />
+            <Welcome
+              hasKey={auth.get() !== ""}
+              corpora={corpora.map((c) => c.name)}
+              onTry={tryExample}
+            />
           )}
 
           <Transcript

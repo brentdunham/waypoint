@@ -62,6 +62,10 @@ SCOPE_RUN = "agents:run"
 SCOPE_READ = "threads:read"
 SCOPE_WRITE = "threads:write"
 SCOPE_ADMIN = "keys:admin"
+SCOPE_CORPORA = "corpora:write"
+"""Create and delete corpora and upload documents. Searching a corpus needs only
+the scopes of a research run, so a demo key without it can use public corpora
+but add nothing."""
 
 
 # -- responses ----------------------------------------------------------------------

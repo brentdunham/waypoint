@@ -14,6 +14,10 @@ node_modules/
 web/node_modules/
 web/dist/
 tests/
-docs/
+# docs/ is in the API image: the public demo corpus is seeded from it
+# (RAG__SEED_DIR=docs). Only Markdown is indexed; images stay out.
+docs/**/*.png
+docs/**/*.svg
+docs/**/*.jpg
 Dockerfile
 compose*.yaml

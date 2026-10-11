@@ -280,6 +280,12 @@ safe on a pooled connection. Writes are allowed only into the tenant's own
 keys are checked without RLS. `tests/test_rag_pg.py` tests each guard on its
 own, including that the owner sees everything (the reason for the role).
 
+Public corpora are therefore written only as the owner, and only by
+`rag/seed.py`, which keeps `RAG__SEED_DIR` (the demo's `docs/`) indexed as
+`waypoint-docs` under the system tenant `waypoint`. It never handles tenant
+input. Through the API, changing any corpus also needs the `corpora:write`
+scope, which the demo's reviewer keys do not have.
+
 ## 9. The cache is Redis, not a dict
 
 `src/waypoint/infra/cache.py`.

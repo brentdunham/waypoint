@@ -5,8 +5,10 @@
 #
 # Each reviewer gets their own tenant (rev-<slug>), so their threads are
 # private and one reviewer cannot use up another's rate limit. The key can run
-# agents and read and write its own threads; it cannot mint keys. The key is in
-# the URL fragment, which browsers never send to the server.
+# agents (including research over the public waypoint-docs corpus) and read and
+# write its own threads; it cannot mint keys or create corpora and upload
+# documents (no corpora:write). The key is in the URL fragment, which browsers
+# never send to the server.
 #
 # Revoke:  curl -X DELETE "$WAYPOINT_URL/api/v1/keys/<key_id>" -H "Authorization: Bearer $WAYPOINT_ADMIN_KEY"
 # Usage:   docker compose exec postgres psql -U waypoint -c \

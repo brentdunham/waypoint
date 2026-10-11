@@ -51,7 +51,7 @@ deployment accept?" without going into the database. A `401` with
 that `key_id` against the one in the key you are pasting.
 
 Keys are `ak_<key_id>.<secret>`. Only the SHA-256 of the whole string is
-stored. Scopes are `agents:run`, `threads:read`, `threads:write`,
+stored. Scopes are `agents:run`, `threads:read`, `threads:write`, `corpora:write`,
 `keys:admin`, and `*`. Mint more with `POST /api/v1/keys`.
 
 ## Model
@@ -162,6 +162,8 @@ and neither change forces re-embedding the other.
 | `RAG__RERANK_MODEL` | `rerank-3` | $0.05 per million tokens, 200M free (docs.voyageai.com/docs/pricing, 2026-10-10). `rerank-3-lite` is $0.02. |
 | `RAG__CONTEXTUAL` | `false` | Contextual retrieval: `RAG__CONTEXT_MODEL` writes a one or two sentence preamble per chunk, with the document cached, before embedding. Off: it did not beat plain vector search here. Applies to documents ingested afterwards. |
 | `RAG__CONTEXT_MODEL` | `claude-haiku-5-5` | About $0.05 to contextualize this repository's `docs/` (251 chunks). |
+| `RAG__SEED_DIR` | *unset* | A directory kept indexed as a **public** corpus, searchable by every key and changeable by none. Reconciled in the background at every boot, Postgres only: new and changed files are indexed, removed ones deleted, unchanged ones left alone. The API image contains `docs/`, and production sets `docs`. Titles are paths relative to the working directory (`docs/DEPLOY.md`). `python -m waypoint.seed` runs it in the foreground. |
+| `RAG__SEED_CORPUS` | `waypoint-docs` | Name of that corpus. Owned by the system tenant `waypoint`. |
 
 Why `voyage-4` at 1024 (decided 2026-10-10, prices from
 <https://docs.voyageai.com/docs/pricing> that day): Anthropic has no embedding

@@ -23,10 +23,12 @@ from tests.conftest import (
     requires_infra,
 )
 
+from waypoint.agents.models import HashEmbeddings
 from waypoint.errors import NotFound
 from waypoint.infra.db import Database, SchemaMismatchError
 from waypoint.rag.chunk import Chunk
-from waypoint.rag.store import CorpusStore, NewDocument, tenant_transaction
+from waypoint.rag.seed import SYSTEM_TENANT, collect, seed_corpus
+from waypoint.rag.store import CorpusStore, NewDocument, PgCorpusStore, tenant_transaction
 
 pytestmark = [pytest.mark.integration, requires_infra]
 
@@ -252,7 +254,7 @@ def test_uploading_docs_through_the_api_is_invisible_to_another_tenant(
         json={
             "tenant_id": tenant(),
             "user_id": "u",
-            "scopes": ["agents:run", "threads:read", "threads:write"],
+            "scopes": ["agents:run", "threads:read", "threads:write", "corpora:write"],
         },
         headers=auth,
     ).json()["api_key"]
@@ -267,3 +269,86 @@ def test_uploading_docs_through_the_api_is_invisible_to_another_tenant(
         assert client.request(method, url, headers=other).status_code == 404, url
     upload = client.post(f"/api/v1/corpora/{corpus_id}/documents", files=files[:1], headers=other)
     assert upload.status_code == 404
+
+
+def test_changing_corpora_needs_the_corpora_write_scope(pg_app: TestApp) -> None:
+    auth = {"Authorization": f"Bearer {BOOTSTRAP_KEY}"}
+    client: TestClient = pg_app.test_client()
+
+    def key(scopes: list[str]) -> dict[str, str]:
+        body = {"tenant_id": tenant(), "user_id": "u", "scopes": scopes}
+        raw = client.post("/api/v1/keys", json=body, headers=auth).json()["api_key"]
+        return {"Authorization": f"Bearer {raw}"}
+
+    reviewer = key(["agents:run", "threads:read", "threads:write"])  # deploy/reviewer-link.sh
+    assert client.get("/api/v1/corpora", headers=reviewer).status_code == 200
+    denied = client.post("/api/v1/corpora", json={"name": "mine"}, headers=reviewer)
+    assert denied.status_code == 403
+    assert "corpora:write" in denied.json()["detail"]
+
+    owner = key(["agents:run", "threads:read", "threads:write", "corpora:write"])
+    created = client.post("/api/v1/corpora", json={"name": "mine"}, headers=owner)
+    assert created.status_code == 201
+    corpus_id = created.json()["corpus_id"]
+    files = [("files", ("a.md", b"# A\n\ntext\n", "text/markdown"))]
+    upload = client.post(f"/api/v1/corpora/{corpus_id}/documents", files=files, headers=reviewer)
+    assert upload.status_code == 403
+    assert client.delete(f"/api/v1/corpora/{corpus_id}", headers=reviewer).status_code == 403
+    assert client.delete(f"/api/v1/corpora/{corpus_id}", headers=owner).status_code == 204
+
+
+def test_seeding_keeps_a_public_corpus_in_step_with_a_directory(
+    pg_app: TestApp, tmp_path: Any
+) -> None:
+    name = f"seed-{uuid.uuid4().hex[:8]}"
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("# A\n\nalpha text here\n", encoding="utf-8")
+    (docs / "b.md").write_text("# B\n\nbeta text here\n", encoding="utf-8")
+    (docs / "logo.png").write_bytes(b"not a document")
+
+    async def scenario(store: CorpusStore, db: Database) -> None:
+        owner = PgCorpusStore(db, owner=True)
+        embeddings = HashEmbeddings(DIMS)
+
+        async def seed() -> Any:
+            return await seed_corpus(
+                owner,
+                embeddings,
+                name=name,
+                files=collect(docs, tmp_path),
+                embed_model="voyageai:voyage-4",
+                chunk_tokens=400,
+            )
+
+        first = await seed()
+        assert first.indexed == ["docs/a.md", "docs/b.md"]
+        assert not first.failed
+        visitor = tenant()
+        [public] = [c for c in await store.list_corpora(visitor) if c.corpus_id == first.corpus_id]
+        assert public.visibility == "public"
+        assert public.documents == 2
+        # Readable by everyone, changeable by no tenant: not even the system
+        # tenant's name through the tenant role.
+        for who in (visitor, SYSTEM_TENANT):
+            assert not await store.delete_corpus(who, first.corpus_id)
+            with pytest.raises(NotFound):
+                await store.add_documents(
+                    who, first.corpus_id, [NewDocument("x.md", "text/markdown", b"x")]
+                )
+
+        again = await seed()
+        assert again.corpus_id == first.corpus_id
+        assert again.indexed == []
+        assert again.unchanged == 2
+
+        (docs / "a.md").write_text("# A\n\nalpha, changed\n", encoding="utf-8")
+        (docs / "b.md").unlink()
+        third = await seed()
+        assert third.indexed == ["docs/a.md"]
+        assert third.removed == ["docs/b.md"]
+        titles = [d.title for d in await store.list_documents(visitor, first.corpus_id)]
+        assert titles == ["docs/a.md"]
+        assert await owner.delete_corpus(SYSTEM_TENANT, first.corpus_id)
+
+    run(pg_app, scenario)

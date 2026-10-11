@@ -21,8 +21,9 @@ flowchart LR
   reads the database cannot use what they find. The plaintext exists once, in
   the `POST /keys` response. The key id in the prefix names the key for
   revocation and in logs without revealing the secret.
-* **Scopes** are `threads:read`, `threads:write`, `agents:run` and
-  `keys:admin`; `*` grants all. `tenant:admin` additionally lets a caller
+* **Scopes** are `threads:read`, `threads:write`, `agents:run`,
+  `corpora:write` (create, delete and upload to corpora) and `keys:admin`;
+  `*` grants all. `tenant:admin` additionally lets a caller
   open threads of other users in its own tenant. Endpoints declare theirs through typed
   dependencies (`Reader`, `Writer`, `Runner`, `Admin`), so a handler cannot
   forget to check.
@@ -73,7 +74,7 @@ Isolation is enforced at each place data could cross between tenants:
 | Runs | The run record carries the tenant; reading, streaming or cancelling another tenant's run is 404 |
 | Graph state | Identity is in context, never state or `configurable`, so it is never checkpointed ([3.5](03-state-and-persistence.md#35-context-state-and-config)) |
 | Memories | Namespace `("memories", tenant_id, user_id)`, from one function used by both graph and API |
-| Corpora | Two guards: every query in `rag/store.py` filters `tenant_id`, and each runs as the `waypoint_tenant` role with `app.tenant_id` set, so Postgres row-level security filters again. The role is needed because the service's own user owns the tables (and is a superuser in compose), and owners bypass RLS. Public corpora are readable by all and writable only by the owner role ([ARCHITECTURE.md §8a](../ARCHITECTURE.md)) |
+| Corpora | Two guards: every query in `rag/store.py` filters `tenant_id`, and each runs as the `waypoint_tenant` role with `app.tenant_id` set, so Postgres row-level security filters again. The role is needed because the service's own user owns the tables (and is a superuser in compose), and owners bypass RLS. Public corpora are readable by all and written only as the owner, by the seeder for `RAG__SEED_DIR` ([ARCHITECTURE.md §8a](../ARCHITECTURE.md)); through the API, changing a corpus needs `corpora:write` |
 | Node cache | Keys hash node input only, so cached nodes carry `tenant_id` in their input; per-user nodes are not cached ([3.8](03-state-and-persistence.md#38-the-node-cache)) |
 | Limits | Buckets and slots are per tenant |
 | Traces | Each run is tagged `tenant:<id>` and `agent:<name>` |

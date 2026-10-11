@@ -228,15 +228,15 @@ Named sets of a tenant's documents for retrieval (design:
 
 | Method | Path | Scope | Notes |
 |---|---|---|---|
-| POST | `/corpora` | `threads:write` | `{"name":"waypoint-docs"}`; `409` if the tenant has one by that name |
+| POST | `/corpora` | `corpora:write` | `{"name":"my-docs"}`; `409` if the tenant has one by that name |
 | GET | `/corpora` | `threads:read` | Your corpora, then public ones, with document and chunk counts |
 | GET | `/corpora/<id>` | `threads:read` | |
-| DELETE | `/corpora/<id>` | `threads:write` | Deletes its documents and chunks. Public corpora: `404` |
-| POST | `/corpora/<id>/documents` | `threads:write` + `agents:run` | Multipart `files` (`.md`, `.html`, `.pdf`, `.txt`). `202` with an `ingest` run |
+| DELETE | `/corpora/<id>` | `corpora:write` | Deletes its documents and chunks. Public corpora: `404` |
+| POST | `/corpora/<id>/documents` | `corpora:write` + `threads:write` + `agents:run` | Multipart `files` (`.md`, `.html`, `.pdf`, `.txt`). `202` with an `ingest` run |
 | GET | `/corpora/<id>/documents` | `threads:read` | Each with `status` (`pending`, `ready`, `failed`), `error` and `chunks` |
 
 ```bash
-CORPUS=$(curl -s -X POST $BASE/corpora -H "$AUTH" -d '{"name":"waypoint-docs"}' | jq -r .corpus_id)
+CORPUS=$(curl -s -X POST $BASE/corpora -H "$AUTH" -d '{"name":"my-docs"}' | jq -r .corpus_id)
 
 # The filename as sent is the document's title and the start of every chunk's
 # heading ("docs/DEPLOY.md › 4. Caddy"), so send the path you want shown.
@@ -251,6 +251,13 @@ already in the corpus is listed with `queued: false` and not ingested again;
 if every file was a duplicate, `run_id` is `null`. Another tenant's corpus is
 `404` on every route. Limits: `RAG__MAX_UPLOAD_MB` per file (`413`), 8 MB per
 request, 100 files per request.
+
+`corpora:write` is separate from `threads:write` so that a key can search
+corpora without adding to them: the demo's reviewer keys have the research
+scopes but not this one. Public corpora (`visibility: "public"`) are
+listed for every key and searchable by every research run, and no key can
+change them. The demo's `waypoint-docs` is one: this repository's `docs/`,
+kept indexed by the service itself (`RAG__SEED_DIR`, CONFIGURATION.md).
 
 ## Keys
 

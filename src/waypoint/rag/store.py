@@ -119,7 +119,9 @@ class ChunkHit:
 
 
 class CorpusStore(Protocol):
-    async def create_corpus(self, tenant_id: str, name: str, embed_model: str) -> Corpus: ...
+    async def create_corpus(
+        self, tenant_id: str, name: str, embed_model: str, *, visibility: Visibility = "private"
+    ) -> Corpus: ...
 
     async def list_corpora(self, tenant_id: str) -> list[Corpus]: ...
 
@@ -134,6 +136,8 @@ class CorpusStore(Protocol):
     async def list_documents(self, tenant_id: str, corpus_id: str) -> list[DocumentInfo]: ...
 
     async def load_document(self, tenant_id: str, document_id: str) -> StoredDocument | None: ...
+
+    async def delete_document(self, tenant_id: str, document_id: str) -> bool: ...
 
     async def write_chunks(
         self,
@@ -213,6 +217,15 @@ async def tenant_transaction(
         yield conn
 
 
+@asynccontextmanager
+async def owner_transaction(db: Database) -> AsyncIterator[AsyncConnection[Any]]:
+    """A transaction as the tables' owner, which row-level security does not
+    filter. Only for writing public corpora (``rag/seed.py``); never for tenant
+    input."""
+    async with db.pool.connection() as conn, conn.transaction():
+        yield conn
+
+
 _CORPUS_COLUMNS = """
     c.corpus_id::text as corpus_id, c.tenant_id, c.name, c.visibility, c.embed_model,
     c.created_at,
@@ -237,10 +250,16 @@ def _document(row: dict[str, Any]) -> DocumentInfo:
 
 
 class PgCorpusStore:
-    def __init__(self, db: Database) -> None:
+    """``owner=True`` runs every query as the tables' owner instead of the tenant
+    role, so it can write public corpora. Only the seeder makes one."""
+
+    def __init__(self, db: Database, *, owner: bool = False) -> None:
         self._db = db
+        self._owner = owner
 
     def _as_tenant(self, tenant_id: str) -> AbstractAsyncContextManager[AsyncConnection[Any]]:
+        if self._owner:
+            return owner_transaction(self._db)
         return tenant_transaction(self._db, tenant_id)
 
     async def _one(
@@ -259,14 +278,17 @@ class PgCorpusStore:
 
     # -- corpora --------------------------------------------------------------
 
-    async def create_corpus(self, tenant_id: str, name: str, embed_model: str) -> Corpus:
+    async def create_corpus(
+        self, tenant_id: str, name: str, embed_model: str, *, visibility: Visibility = "private"
+    ) -> Corpus:
+        """A public corpus needs an owner store; the tenant role may not insert one."""
         corpus_id = str(uuid.uuid4())
         try:
             async with self._as_tenant(tenant_id) as conn:
                 await conn.execute(
-                    """insert into corpora (corpus_id, tenant_id, name, embed_model)
-                       values (%s, %s, %s, %s)""",
-                    (corpus_id, tenant_id, name, embed_model),
+                    """insert into corpora (corpus_id, tenant_id, name, visibility, embed_model)
+                       values (%s, %s, %s, %s, %s)""",
+                    (corpus_id, tenant_id, name, visibility, embed_model),
                 )
         except UniqueViolation:
             raise Conflict(f"A corpus named {name!r} already exists.") from None
@@ -301,8 +323,8 @@ class PgCorpusStore:
         row = await self._one(
             tenant_id,
             """delete from corpora where corpus_id = %s and tenant_id = %s
-               and visibility = 'private' returning corpus_id""",
-            (corpus_id, tenant_id),
+               and (visibility = 'private' or %s) returning corpus_id""",
+            (corpus_id, tenant_id, self._owner),
         )
         return row is not None
 
@@ -317,8 +339,8 @@ class PgCorpusStore:
         async with self._as_tenant(tenant_id) as conn:
             cur = await conn.execute(
                 """select 1 from corpora where corpus_id = %s and tenant_id = %s
-                   and visibility = 'private'""",
-                (corpus_id, tenant_id),
+                   and (visibility = 'private' or %s)""",
+                (corpus_id, tenant_id, self._owner),
             )
             if await cur.fetchone() is None:
                 raise NotFound(f"Unknown corpus {corpus_id!r}.")
@@ -389,6 +411,20 @@ class PgCorpusStore:
         if row is None:
             return None
         return StoredDocument(**(row | {"content": bytes(row["content"])}))
+
+    async def delete_document(self, tenant_id: str, document_id: str) -> bool:
+        """With its chunks. Only in the tenant's own corpora (all, for the owner)."""
+        if not is_uuid(document_id):
+            return False
+        row = await self._one(
+            tenant_id,
+            """delete from documents d using corpora c
+               where d.document_id = %s and d.tenant_id = %s and c.corpus_id = d.corpus_id
+                 and (c.visibility = 'private' or %s)
+               returning d.document_id""",
+            (document_id, tenant_id, self._owner),
+        )
+        return row is not None
 
     # -- chunks ---------------------------------------------------------------
 
@@ -564,8 +600,9 @@ class MemoryCorpusStore:
     random id per process made every corpus-case call miss the replay store.
     """
 
-    def __init__(self, *, stable_ids: bool = False) -> None:
+    def __init__(self, *, stable_ids: bool = False, owner: bool = False) -> None:
         self._stable_ids = stable_ids
+        self._owner = owner
         self._corpora: dict[str, Corpus] = {}
         self._docs: dict[str, _Doc] = {}
         self._chunks: dict[str, list[StoredChunk]] = {}
@@ -583,7 +620,11 @@ class MemoryCorpusStore:
 
     def _owned(self, tenant_id: str, corpus_id: str) -> Corpus | None:
         corpus = self._corpora.get(corpus_id)
-        if corpus and corpus.tenant_id == tenant_id and corpus.visibility == "private":
+        if (
+            corpus
+            and corpus.tenant_id == tenant_id
+            and (corpus.visibility == "private" or self._owner)
+        ):
             return corpus
         return None
 
@@ -684,6 +725,14 @@ class MemoryCorpusStore:
             doc.content,
             corpus.embed_model,
         )
+
+    async def delete_document(self, tenant_id: str, document_id: str) -> bool:
+        doc = self._docs.get(document_id)
+        if doc is None or self._owned(tenant_id, doc.info.corpus_id) is None:
+            return False
+        del self._docs[document_id]
+        self._chunks.pop(document_id, None)
+        return True
 
     async def write_chunks(
         self,

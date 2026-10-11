@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import Request
 
 from waypoint.agents.models import (
+    build_contextualizer,
     build_embeddings,
     build_rag_embeddings,
     build_reranker,
@@ -33,6 +34,7 @@ from waypoint.infra.ratelimit import Limiter
 from waypoint.infra.runs import RunManager
 from waypoint.infra.security import KeyStore, parse_key_id
 from waypoint.infra.threads import ThreadStore
+from waypoint.rag.seed import describe, seed_public_corpus
 from waypoint.rag.store import CorpusStore, MemoryCorpusStore, PgCorpusStore
 from waypoint.settings import Settings
 
@@ -164,6 +166,8 @@ async def create_runtime(settings: Settings) -> AgentRuntime:
     if keys is not None:
         await _seed_bootstrap_key(keys, db, settings)
 
+    _start_seeding(settings, db, closers)
+
     return AgentRuntime(
         settings=settings,
         graphs=graphs,
@@ -179,6 +183,48 @@ async def create_runtime(settings: Settings) -> AgentRuntime:
         checkpointer=checkpointer,
         _closers=closers,
     )
+
+
+def _start_seeding(settings: Settings, db: Database | None, closers: list[Any]) -> None:
+    """Index ``RAG__SEED_DIR`` in the background, cancelled at shutdown.
+
+    The API serves while the corpus is indexed; a seeding failure is logged,
+    never fatal.
+    """
+    if not (settings.rag.seed_dir and settings.rag.enabled):
+        return
+    if db is None:
+        log.warning("RAG__SEED_DIR is set but DATABASE_URL is not: nothing seeded")
+        return
+    seeding = asyncio.create_task(_seed_corpus(settings, db), name="rag-seed")
+
+    async def stop_seeding() -> None:
+        seeding.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await seeding
+
+    closers.append(stop_seeding)
+
+
+async def _seed_corpus(settings: Settings, db: Database) -> None:
+    """``RAG__SEED_DIR`` into the public ``RAG__SEED_CORPUS`` (``rag/seed.py``)."""
+    embeddings = build_rag_embeddings(settings)
+    if embeddings is None:
+        return
+    try:
+        result = await seed_public_corpus(db, settings, embeddings, build_contextualizer(settings))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("seeding the public corpus failed")
+        return
+    if result is not None:
+        level = logging.WARNING if result.failed else logging.INFO
+        log.log(
+            level,
+            describe(result, settings.rag.seed_corpus),
+            extra={"indexed": result.indexed, "removed": result.removed, "failed": result.failed},
+        )
 
 
 async def _memory_index(settings: Settings) -> dict[str, Any] | None:

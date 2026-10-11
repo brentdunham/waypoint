@@ -600,6 +600,34 @@ The research eval's in-memory corpus now has stable document ids, so
 corpus-case calls replay; before, the random `doc://` ids in every prompt
 made each of those runs pay in full.
 
+### Phase 5: the public demo corpus (2026-10-10)
+
+Built:
+
+* **Seeding** (`rag/seed.py`, `RAG__SEED_DIR`, `RAG__SEED_CORPUS`). The API
+  image contains `docs/`; at every boot a background task reconciles it into
+  the public corpus `waypoint-docs`, owned by the system tenant `waypoint`:
+  unchanged files are kept, new and changed ones indexed with the ingest
+  agent's code, removed ones deleted, and a corpus embedded with another model
+  rebuilt. An advisory lock keeps two workers from seeding at once.
+  `python -m waypoint.seed` runs it in the foreground. Measured locally: 18
+  files in 10.3 s on the first run, nothing to do and 0.0 s on the second.
+* **Writes as the owner, on purpose.** Row-level security lets the tenant role
+  write only private corpora (phase 1), so the seeder uses
+  `PgCorpusStore(owner=True)`, which skips the role switch. Nothing else
+  constructs one, and it never handles tenant input.
+* **Uploads are off for reviewers** (Brent, 2026-10-10). Creating, deleting
+  and uploading to corpora need a new `corpora:write` scope; reviewer and demo
+  keys have the research scopes but not this one, so they can ask the public
+  corpus and add nothing to the server. The admin key (`*`) can.
+* **UI.** The welcome panel offers a one-click research question over the
+  docs when the server has `waypoint-docs`, and links the retrieval case
+  study.
+
+Differences from the design: seeding is a boot task rather than a deploy
+step, so `git pull && docker compose up -d --build` is the whole update; and
+reviewer uploads are off rather than capped.
+
 ## References
 
 * [Claude docs: search results](https://platform.claude.com/docs/en/build-with-claude/search-results)

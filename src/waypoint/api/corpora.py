@@ -5,6 +5,10 @@ stored (``documents``, status ``pending``) and an ``ingest`` run is started on
 them. The response is ``202`` with that run's id; follow it on its events URL
 like any other run. A file whose exact bytes are already in the corpus is not
 ingested again.
+
+Creating, deleting and uploading need the ``corpora:write`` scope; listing and
+searching do not. The demo's reviewer keys lack it: they can ask the public
+corpus, and add nothing to the server.
 """
 
 import uuid
@@ -14,12 +18,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 
 from waypoint.agents.runtime import AgentRuntime, get_runtime
-from waypoint.api.deps import Reader, Writer
+from waypoint.api.deps import CorpusWriter, Reader
 from waypoint.errors import BadRequest, NotFound, PayloadTooLarge, ServiceUnavailable
 from waypoint.rag.parse import MEDIA_TYPES, media_type_for
 from waypoint.rag.store import NewDocument
 from waypoint.schemas import (
     SCOPE_RUN,
+    SCOPE_WRITE,
     CorpusList,
     CorpusOut,
     CreateCorpus,
@@ -48,7 +53,7 @@ Rag = Annotated[AgentRuntime, Depends(_rag_runtime)]
 
 
 @router.post("", status_code=201)
-async def create(payload: CreateCorpus, runtime: Rag, principal: Writer) -> CorpusOut:
+async def create(payload: CreateCorpus, runtime: Rag, principal: CorpusWriter) -> CorpusOut:
     embed_model = runtime.settings.rag.embeddings_model
     assert embed_model is not None  # _rag_runtime checked
     corpus = await runtime.corpora.create_corpus(principal.tenant_id, payload.name, embed_model)
@@ -71,7 +76,7 @@ async def show(corpus_id: str, runtime: Rag, principal: Reader) -> CorpusOut:
 
 
 @router.delete("/{corpus_id}", status_code=204)
-async def destroy(corpus_id: str, runtime: Rag, principal: Writer) -> Response:
+async def destroy(corpus_id: str, runtime: Rag, principal: CorpusWriter) -> Response:
     """Deletes its documents and chunks too. Public corpora cannot be deleted here."""
     if not await runtime.corpora.delete_corpus(principal.tenant_id, corpus_id):
         raise NotFound(f"Unknown corpus {corpus_id!r}.")
@@ -91,7 +96,7 @@ async def upload(
     corpus_id: str,
     request: Request,
     runtime: Rag,
-    principal: Writer,
+    principal: CorpusWriter,
     files: Annotated[list[UploadFile], File(description="Markdown, HTML, PDF or text.")],
 ) -> UploadAccepted:
     """Store the files and start an ``ingest`` run on them.
@@ -101,7 +106,8 @@ async def upload(
     source list. Limits: ``RAG__MAX_UPLOAD_MB`` per file, 8 MB per request,
     100 files per request.
     """
-    principal.require(SCOPE_RUN)
+    principal.require(SCOPE_RUN)  # it starts an ingest run, on a new thread
+    principal.require(SCOPE_WRITE)
     if not files:
         raise BadRequest("Send at least one file in the 'files' field.")
     if len(files) > MAX_FILES:

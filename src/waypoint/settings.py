@@ -168,8 +168,21 @@ class RagSettings(BaseModel):
         default="rerank-3",
         description="Voyage reranker used when `rerank` is on.",
     )
+    seed_dir: str | None = Field(
+        default=None,
+        description=(
+            "A directory of documents to keep indexed as a public corpus, readable by "
+            "every tenant. Reconciled in the background at every boot (Postgres only): "
+            "new and changed files are indexed, removed ones deleted. Titles are paths "
+            "relative to the working directory, e.g. docs/DEPLOY.md. Unset -> no seeding."
+        ),
+    )
+    seed_corpus: str = Field(
+        default="waypoint-docs",
+        description="Name of the public corpus `seed_dir` is indexed into.",
+    )
 
-    @field_validator("embeddings_model", mode="before")
+    @field_validator("embeddings_model", "seed_dir", mode="before")
     @classmethod
     def _blank_is_unset(cls, v: object) -> object:
         if isinstance(v, str) and not v.strip():

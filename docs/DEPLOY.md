@@ -51,6 +51,13 @@ Fill in `.env`:
 | `ANTHROPIC_API_KEY` | The demo workspace's key |
 | `BOOTSTRAP_API_KEY` | `python3 -c "import secrets; print(f'ak_{secrets.token_hex(6)}.{secrets.token_urlsafe(32)}')"`; first boot only |
 | `WEB_PORT` | `8080` for this demo; a different loopback port for each other demo on the host |
+| `VOYAGE_API_KEY` | From [dashboard.voyageai.com](https://dashboard.voyageai.com/), with a payment method on the account (without one, Voyage allows 3 requests a minute, too few to index `docs/`). Embeds and reranks the public docs corpus. |
+
+The example file already sets `RAG__EMBEDDINGS_MODEL=voyageai:voyage-4` and
+`RAG__SEED_DIR=docs`: the API image contains this repository's `docs/`, and
+every boot keeps them indexed as the public `waypoint-docs` corpus, which
+every key can search. Leave `RAG__EMBEDDINGS_MODEL` empty to run without
+documents.
 
 `COMPOSE_FILE` in that file makes every `docker compose` command below use
 `compose.yaml` plus `compose.prod.yaml`.
@@ -62,7 +69,13 @@ docker compose up -d --build
 docker compose ps                                  # all healthy
 curl -s 127.0.0.1:8080/api/v1/readyz               # {"status":"ready",...}
 docker compose logs api | grep "bootstrap API key active"
+docker compose logs api | grep "seeded waypoint-docs"     # 18 indexed, ... in ~10s
 ```
+
+Seeding runs in the background, so the API answers before it finishes. The
+first boot embeds all of `docs/` (about 60k tokens, inside Voyage's free
+tier); later boots re-embed only the pages a deploy changed and delete the
+ones it removed.
 
 ## 4. Caddy
 
@@ -108,6 +121,10 @@ sed -i 's/^BOOTSTRAP_API_KEY=.*/BOOTSTRAP_API_KEY=/' .env
 docker compose up -d api
 ```
 
+Neither key above can create corpora or upload documents except the admin
+key (`*`): that needs the `corpora:write` scope. Every key can search the
+public `waypoint-docs` corpus.
+
 Visitors paste the demo key into the connection bar. All of them share the
 `demo` tenant: its rate limits (`LIMITS__RPM`, `LIMITS__CONCURRENT_RUNS`) are
 for everyone together, and threads are shared because the user is the same.
@@ -129,7 +146,9 @@ Opening the link stores the key in the browser and removes it from the
 address bar. The key travels in the URL fragment, which browsers never send to
 the server, so it is not in access logs. Each reviewer is their own tenant:
 their threads are private, they get their own rate limits, and revoking one
-key (the script prints the command) affects no one else. The Anthropic
+key (the script prints the command) affects no one else. They can run research
+over the public `waypoint-docs` corpus (the welcome panel has a one-click
+example) but cannot upload: their keys lack `corpora:write`. The Anthropic
 workspace's spend limit still caps all of them together.
 
 Who has tried it, and when:
@@ -146,6 +165,7 @@ docker compose exec postgres psql -U waypoint -c \
 | Update to `main` | `git pull && docker compose up -d --build` |
 | Logs | `docker compose logs -f api`; `journalctl -u caddy -f` |
 | Restart one service | `docker compose restart api` |
+| Re-index the docs corpus now | `docker compose exec api python -m waypoint.seed` (prints what it indexed, kept and removed) |
 | Back up Postgres | `docker compose exec -T postgres pg_dump -U waypoint waypoint \| gzip > ~/backups/waypoint-$(date +%F).sql.gz` |
 | Restore | `gunzip -c <file> \| docker compose exec -T postgres psql -U waypoint waypoint` |
 | Stop the demo | `docker compose down` (data stays in the volumes) |

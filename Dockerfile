@@ -37,6 +37,9 @@ RUN groupadd --system waypoint \
 
 WORKDIR /waypoint
 COPY --from=builder --chown=waypoint:waypoint /waypoint /waypoint
+# The documentation, for the public demo corpus (RAG__SEED_DIR=docs). A few
+# hundred KB; seeding re-embeds only the pages a deploy changed.
+COPY --chown=waypoint:waypoint docs ./docs
 
 USER waypoint
 EXPOSE 8000

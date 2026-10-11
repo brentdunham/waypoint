@@ -1,6 +1,14 @@
 const REPO = "https://github.com/brentdunham/waypoint";
 
-const EXAMPLES: { agent: string; label: string; text: string }[] = [
+/** ``corpus``: the example also searches that corpus, and is shown only when
+ *  the server has it (the public demo corpus of this repository's docs). */
+const EXAMPLES: { agent: string; label: string; text: string; corpus?: string }[] = [
+  {
+    agent: "research",
+    label: "Research the docs",
+    text: "how Waypoint recovers when a client's event stream drops in the middle of a run",
+    corpus: "waypoint-docs",
+  },
   {
     agent: "research",
     label: "Research",
@@ -32,11 +40,15 @@ const EXAMPLES: { agent: string; label: string; text: string }[] = [
  *  what to watch for. Shown until the thread has messages. */
 export function Welcome({
   hasKey,
+  corpora,
   onTry,
 }: {
   hasKey: boolean;
-  onTry: (agent: string, text: string) => void;
+  /** Names of the corpora this key can search. */
+  corpora: string[];
+  onTry: (agent: string, text: string, corpus?: string) => void;
 }) {
+  const examples = EXAMPLES.filter((e) => !e.corpus || corpora.includes(e.corpus));
   return (
     <section className="card welcome">
       <h3>Durable, evaluated LLM agents</h3>
@@ -50,12 +62,12 @@ export function Welcome({
         <>
           <p className="small muted">Start with an example. A research run takes one to three minutes.</p>
           <div className="examples">
-            {EXAMPLES.map((example) => (
+            {examples.map((example) => (
               <button
                 key={example.text}
                 type="button"
                 className="example"
-                onClick={() => onTry(example.agent, example.text)}
+                onClick={() => onTry(example.agent, example.text, example.corpus)}
               >
                 <span className="chip">{example.label}</span>
                 {example.text}
@@ -85,6 +97,13 @@ export function Welcome({
           <strong>Checked citations.</strong> Every sentence's <code>[n]</code> is verified against the
           quoted source text before the briefing is shown.
         </li>
+        {corpora.includes("waypoint-docs") && (
+          <li>
+            <strong>Your documents.</strong> Pick <code>waypoint-docs</code> under Documents: the
+            research agent also searches this project's own docs, and passages it cites carry a
+            document badge. Retrieval was tuned on a gold set; the case study below shows how.
+          </li>
+        )}
         <li>
           <strong>Time travel.</strong> Checkpoints, below, list every step. Resume from an earlier
           one to branch the conversation.
@@ -105,6 +124,14 @@ export function Welcome({
           rel="noreferrer noopener"
         >
           Case study: raising citation quality with evals
+        </a>
+        {" · "}
+        <a
+          href={`${REPO}/blob/main/docs/case-studies/retrieval.md`}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          Case study: which retrieval techniques earned their place
         </a>
         {" · "}
         <a href={REPO} target="_blank" rel="noreferrer noopener">
