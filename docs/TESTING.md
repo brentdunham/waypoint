@@ -134,8 +134,8 @@ How it fits together (`evals/`):
   `summary.md`, `transcripts.jsonl`. The fingerprint hashes prompts, models per
   role, agent settings (for research, the `RAG__*` settings a run reads too),
   judge, rubric and dataset, so two scorecards with the
-  same fingerprint measured the same thing. Cost uses `prices.toml`; a model
-  not listed there shows tokens only.
+  same fingerprint measured the same thing. Cost uses `src/waypoint/prices.toml`
+  through `waypoint.usage`; a model not listed there shows tokens only.
 * **Baseline gate** — `baselines/<agent>.json`. A metric fails when it drops
   by more than twice the baseline's spread across trials, and never less than
   0.10 (check pass rate) or 0.25 (criterion mean). `accept` refuses a

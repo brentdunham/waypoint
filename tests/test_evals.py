@@ -398,16 +398,6 @@ def test_replay_key_sees_max_uses_and_masks_the_date() -> None:
     assert _input_key([today]) != _input_key([other_day])
 
 
-def test_long_prompts_are_priced_at_the_long_rate() -> None:
-    from evals.scorecard import call_cost
-
-    price = {"input": 0.1, "output": 0.5, "long_threshold": 100_000,
-             "long_input": 0.5, "long_output": 2.5, "search": 0.01}  # fmt: skip
-    assert call_cost(price, 50_000, 1_000, 2) == pytest.approx(0.005 + 0.0005 + 0.02)
-    assert call_cost(price, 200_000, 1_000, 0) == pytest.approx(0.1 + 0.0025)
-    assert call_cost({"input": 2.0, "output": 10.0}, 1_000_000, 0, 5) == pytest.approx(2.0)
-
-
 def test_accept_needs_three_trials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from evals.scorecard import AcceptError, accept
 

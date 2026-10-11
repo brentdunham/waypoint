@@ -1,6 +1,6 @@
 # Design: observability and cost
 
-Status: **not started.** Written 2026-10-11 as roadmap item 4.
+Status: **phase 0 done (2026-10-11); phase 1 next.** Written 2026-10-11 as roadmap item 4.
 This note is the hand-off for the coding sessions: what to build, what is
 decided, what is still open, and in what order. Read it with
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [rag.md](rag.md), which set the
@@ -88,34 +88,16 @@ The design builds on these; check them before changing anything.
 | O8 | **A run is its own trace, linked to the request that started it.** The run span is a new root with a span link to the `POST /runs` request span; a resume starts a new run trace linked the same way, and both carry `waypoint.thread_id`. | A run outlives its request by minutes and may be resumed hours later from another worker. Parenting it under the request would show a 50 ms request with a 4-minute child. | One trace per thread (unbounded), or runs as children of the request. |
 | O9 | **No content in spans by default.** Prompts, completions, retrieved passages and document text stay out unless `TRACING__CONTENT=true`, which is for local debugging only. | Tenant documents and questions are tenant data; a trace backend is another place to secure and another processor. | Capturing content by default, as most LLM tracing tools do. |
 
-## Open decisions (settle in phase 0)
+## Decisions settled in phase 0
 
-1. **Budget numbers.** Proposed: `BUDGET__TENANT_USD_PER_DAY=2.00` (about six
-   research runs), `BUDGET__GLOBAL_USD_PER_DAY=10.00`, and an override map
-   `BUDGET__TENANTS` (JSON, like `MODELS__*`) for Brent's own tenant. Brent
-   decides the numbers and which tenant is exempt or raised. Also decide
-   whether the budget is off when unset (proposed: off in development, required
-   in production, like `SECRET_KEY`).
-2. **Trace backend in production.** Candidates:
-   * *Jaeger v2 all-in-one* on Bob behind Caddy with basic auth: one small
-     container, OTLP in, a good waterfall view, no LLM-specific views. Confirm
-     the image tag and a persistent storage option at implementation time.
-   * *Langfuse Cloud* (free tier): LLM-aware views with cost per generation
-     out of the box; data leaves the server (ids and numbers only, per O9).
-     Confirm current free-tier limits and region.
-   * *Self-hosted Langfuse*: needs Postgres, ClickHouse, Redis and object
-     storage plus web and worker containers; too heavy for Bob next to future
-     demos. Rejected unless Bob grows.
+Brent settled these on 2026-10-11.
 
-   Development uses Jaeger in `compose.dev.yaml` either way.
-3. **Price table ownership.** Moving `prices.toml` into the package means the
-   service reads it at boot. Decide whether a model missing from the table is a
-   boot error in production (proposed: yes, when budgets are on, since an
-   unpriced model would spend without being charged) or a warning.
-4. **What the reviewer sees.** Proposed: cost per run is shown to every key
-   (it is the tenant's own spend), and a `GET /usage` endpoint returns the
-   tenant's balance and today's spend. Decide whether reviewers see the global
-   balance (proposed: no, only that the server is over budget, in the 429).
+| # | Decision | Why |
+|---|---|---|
+| D1 | **Budgets: `BUDGET__TENANT_USD_PER_DAY=0.35`, `BUDGET__GLOBAL_USD_PER_DAY=0.70`**, both as the per-day bucket in O4. Brent's own tenant is exempt from both through `BUDGET__TENANTS`. Unset means off in development and is a boot error in production, like `SECRET_KEY`. | Brent's limit for the public demo is $20 a month. A bucket refills continuously, so what it caps over any 30 days is its capacity plus 30 days of refill. At $0.70 a day that is about $21. A bucket holding $20 and refilling over 30 days would allow about $40 in the same window. $0.35 is about one research run (about $0.30) per reviewer per day; $0.70 is about two across all reviewers. Exempting Brent's tenant keeps his own use from spending the reviewers' allowance. |
+| D2 | **Production trace backend: decided in phase 4.** Development uses Jaeger in `compose.dev.yaml`. The lean is Jaeger v2 on Bob behind Caddy. | Phases 1 to 3 do not depend on it. Jaeger keeps trace data on the server and has no free-tier limits to watch; self-hosted Langfuse stays rejected as too heavy for Bob. |
+| D3 | **A chat model missing from `prices.toml` is a boot error when budgets are on**, and a warning when they are off. | An unpriced model would spend money without being charged against the budget. |
+| D4 | **Reviewers see their own spend, not the server's.** Every key sees its runs' cost and `GET /usage` (the tenant's balance and today's spend). The global balance is not exposed; a 429 for the global cap says only that the server is over budget. | A run's cost is the tenant's own data. The global balance would tell one reviewer what the others spend. |
 
 ## Data model
 
@@ -203,7 +185,7 @@ Each phase ends green: `uv run python -m pytest`, ruff, mypy, `npm test`,
 | 1 | `Meter` in every run; usage on `RunRecord`, events and `run_audit`; rerank and embedding tokens reported; `run_id` in the log context; UI cost line; `GET /usage`. | A fake run reports scripted usage end to end; a live run on Bob shows its cost in the UI. |
 | 2 | Budgets: `admit` / `charge` Lua, settings, 429 with `Retry-After` on runs and uploads; DEPLOY.md and `.env.production.example` updated. | A tenant over budget gets a clean 429; the global cap applies across reviewer tenants. Deployed to Bob. |
 | 3 | Tracing: `setup_tracing`, ASGI spans, run spans with links, `TraceHandler`, retrieval spans, `trace_id` in logs and `run_audit`; Jaeger in `compose.dev.yaml`. | One research run reads end to end in local Jaeger with cost on every model span. |
-| 4 | Production backend from open decision 2; Caddy route or exporter secrets; the case study with a real run's breakdown by node and role. | A reviewer's run on Bob can be followed in the production backend; case study written. |
+| 4 | Production backend (D2: choose it here); Caddy route or exporter secrets; the case study with a real run's breakdown by node and role. | A reviewer's run on Bob can be followed in the production backend; case study written. |
 
 Phases 1 and 2 are the urgent part (they protect the public demo) and do not
 depend on tracing. Phase 3 can be built and reviewed without touching budgets.
@@ -230,8 +212,8 @@ a smaller ROADMAP item), which this work makes measurable per run.
   verification plan compares against the console. A wrong price under-charges
   the budget silently, so keep the table's source and date current.
 * **Span volume.** A research run makes roughly 20 to 40 model calls and as
-  many node spans. Check that against the chosen backend's limits in phase 0
-  (open decision 2); sample if traffic grows. SSE stream reads (`XREAD` every 5 s per
+  many node spans. Check that against the chosen backend's limits in phase 4
+  (D2); sample if traffic grows. SSE stream reads (`XREAD` every 5 s per
   open stream) are not traced; Redis and Postgres instrumentation stays off in
   v1 for the same reason.
 * **Context across tasks.** OTel context lives in contextvars; the run runs in
@@ -241,7 +223,37 @@ a smaller ROADMAP item), which this work makes measurable per run.
 
 ## Implementation log
 
-Nothing built yet.
+### Phase 0: shared pricing (2026-10-11)
+
+* Open decisions settled: D1 to D4 above.
+* `evals/prices.toml` moved to `src/waypoint/prices.toml` (`git mv`; only the
+  header comments changed). It is package data: the built wheel contains
+  `waypoint/prices.toml`, checked with `uv build --wheel`.
+* `src/waypoint/usage.py`: `Price` (a frozen dataclass, so a malformed row
+  fails when the table loads, not when a call is priced), `PriceTable`,
+  `parse_prices`, `load_prices` (read once per process through
+  `importlib.resources`) and `call_cost`, moved from `evals/scorecard.py`
+  with the same rules.
+* `evals/scorecard.py` and `evals/retrieval.py` import them; the eval copies
+  and their `PRICES` path are gone.
+* `tests/test_usage.py`: `call_cost` cases (long rate, threshold boundary,
+  searches), table loading, and the parity tests. The pre-move `call_cost` is
+  kept in the test as the oracle; the moved one must agree with it for every
+  priced model at every rate boundary, and `usage_summary` must give the same
+  total and per-run cost on a research-shaped run.
+* Parity on real data: every saved transcript under `evals/results/` (27
+  result sets, 2,843 calls) re-priced with `usage_summary` before and after the
+  move gives identical summaries, and the 18 sets that have a `scorecard.json`
+  match the cost stored in it exactly ($122.63 across all 27). This replaces
+  the `--trials 1` replay run in the verification plan: it checks the same
+  thing on more runs and costs nothing.
+
+Deviation: `call_cost` does not yet price cache reads and writes. It moves to
+phase 1 with the `Meter`, which is the first caller that sees cached tokens.
+langchain's `input_tokens` includes the cached parts, so the cache rates need
+the split `rag/contextualize.py: Usage.add` already does, and the meter's tests
+are where that gets checked. `evals/retrieval.py` keeps its own
+`CACHE_READ` / `CACHE_WRITE` multipliers until then.
 
 ## References
 

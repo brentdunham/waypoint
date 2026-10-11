@@ -27,6 +27,7 @@ from waypoint.rag.index import index_document
 from waypoint.rag.retrieve import WordOverlapReranker, retrieve
 from waypoint.rag.store import MemoryCorpusStore, NewDocument, StoredChunk
 from waypoint.rag.voyage import context_groups
+from waypoint.usage import Price
 
 RAG = {"embeddings_model": "voyageai:voyage-4", "embeddings_dims": 64}
 DOC = b"""# Streams
@@ -124,7 +125,7 @@ def test_context_cost_prices_cache_reads_and_writes() -> None:
         "cache_write_tokens": 1_000_000,
         "output_tokens": 1_000_000,
     }
-    price = {"input": 0.10, "output": 0.50}
+    price = Price(input=0.10, output=0.50)
     # 1M plain + 1M x 0.1 read + 1M x 1.25 write, at $0.10; 1M out at $0.50
     assert rv._context_cost(usage, price) == pytest.approx(0.10 * 2.35 + 0.50)
     assert rv._context_cost(None, price) is None

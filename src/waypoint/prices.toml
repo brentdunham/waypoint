@@ -1,9 +1,11 @@
-# USD per million tokens, used only to put a cost on scorecards and comparisons.
+# USD per million tokens: what waypoint.usage prices model, embedding and rerank
+# calls with, for eval scorecards and (from phase 1 of the observability design)
+# the service's per-run cost and budgets.
 # Source: https://platform.claude.com/docs/en/about-claude/pricing
 # A model missing here shows tokens only ("cost unknown"); add it to get cost.
 # search = USD per web search request (server tool), charged on top of tokens.
 # long_threshold / long_input / long_output: rates for prompts above the
-# threshold, for models priced by prompt length (scorecard.call_cost).
+# threshold, for models priced by prompt length (usage.call_cost).
 # Cache reads and writes are modelled only for the contextualizer's index cost
 # (evals/retrieval.py: CACHE_READ, CACHE_WRITE); no agent call site caches.
 as_of = "2026-10-08 (Haiku and Sonnet rows checked against the page; Opus 4.5 not)"

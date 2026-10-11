@@ -383,8 +383,9 @@ facts went stale. The transcripts say which.
 | Research corpus cases live, 5 cases x 3 trials, web cases replayed | $2.84 to $3.04 | 2026-10-10 scorecards |
 | Citation retry, 13 cases x 3 trials, corpus cases live | $3.97 | 2026-10-10 scorecard |
 
-Judge calls are not priced on scorecards. `evals/prices.toml` holds the rates
-used, with the date they were checked.
+Judge calls are not priced on scorecards. `src/waypoint/prices.toml` holds the
+rates used, with the date they were checked; `waypoint/usage.py` applies them,
+the same code the service will use to price runs.
 
 ## 5.14 What this approach does not do
 

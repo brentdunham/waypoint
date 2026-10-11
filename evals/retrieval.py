@@ -29,7 +29,6 @@ import json
 import os
 import statistics
 import sys
-import tomllib
 from collections import defaultdict
 from collections.abc import Coroutine, Sequence
 from dataclasses import asdict, dataclass, field
@@ -49,7 +48,7 @@ from evals.corpus import (
     load_manifest,
     read_corpus,
 )
-from evals.scorecard import BASELINES, PRICES, RESULTS, git_sha
+from evals.scorecard import BASELINES, RESULTS, git_sha
 from waypoint.agents.models import (
     HashEmbeddings,
     build_contextualizer,
@@ -63,6 +62,7 @@ from waypoint.rag.parse import media_type_for, parse
 from waypoint.rag.retrieve import MODES, Mode, Reranker, retrieve
 from waypoint.rag.store import CorpusStore, MemoryCorpusStore, PgCorpusStore
 from waypoint.settings import Settings
+from waypoint.usage import Price, PriceTable, load_prices
 
 DATASET = DATASETS / "retrieval.jsonl"
 PROPOSED = DATASETS / "retrieval.proposed.jsonl"
@@ -339,15 +339,13 @@ def build_card(
     index_fp: str,
     cases: list[RetrievalCase],
     results: list[QueryResult],
-    prices: dict[str, Any],
+    prices: PriceTable,
 ) -> dict[str, Any]:
     k = settings.rag.top_k
-    price_per_m = prices.get("embeddings", {}).get(settings.rag.embeddings_model or "")
-    rerank_price = prices.get("rerank", {}).get(settings.rag.rerank_model)
+    price_per_m = prices.embeddings.get(settings.rag.embeddings_model or "")
+    rerank_price = prices.rerank.get(settings.rag.rerank_model)
     embed_cost = index.tokens * price_per_m / 1_000_000 if price_per_m is not None else None
-    context_cost = _context_cost(
-        index.context, prices.get("models", {}).get(settings.rag.context_model)
-    )
+    context_cost = _context_cost(index.context, prices.models.get(settings.rag.context_model))
     modes: dict[str, list[QueryResult]] = defaultdict(list)
     for r in results:
         modes[r.mode].append(r)
@@ -392,11 +390,11 @@ def build_card(
     }
 
 
-def _context_cost(usage: dict[str, int] | None, price: dict[str, float] | None) -> float | None:
+def _context_cost(usage: dict[str, int] | None, price: Price | None) -> float | None:
     """USD the contextualizer spent, cache reads and writes priced as such."""
     if not usage or not price:
         return None
-    rate_in, rate_out = price["input"], price["output"]
+    rate_in, rate_out = price.input, price.output
     tokens_in = (
         usage["input_tokens"]
         + usage["cache_read_tokens"] * CACHE_READ
@@ -640,7 +638,6 @@ async def measure(plan: Plan) -> dict[str, Any]:
     finally:
         if db is not None:
             await db.close()
-    prices = tomllib.loads(PRICES.read_text(encoding="utf-8"))
     return build_card(
         settings,
         corpus=plan.manifest,
@@ -650,7 +647,7 @@ async def measure(plan: Plan) -> dict[str, Any]:
         index_fp=index_fp,
         cases=plan.cases,
         results=results,
-        prices=prices,
+        prices=load_prices(),
     )
 
 

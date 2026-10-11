@@ -342,6 +342,11 @@ tokens, because a Sonnet token costs 20 times a Haiku token. Phases 1 and 2
 (cost per run, budgets) come before tracing, since the public demo has no
 spending cap today.
 
+**Progress.** Phase 0 done 2026-10-11: budgets set to $0.35 per tenant and
+$0.70 overall per day (Brent's $20 a month), and `prices.toml` and `call_cost`
+moved into `src/waypoint/usage.py` with a parity test. Phase 1 (cost per run)
+next.
+
 ### 5. MCP tools and tool-level approval
 
 **What.** Load tools from MCP servers listed in config via

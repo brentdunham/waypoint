@@ -6,7 +6,6 @@ import json
 import math
 import statistics
 import subprocess
-import tomllib
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -20,10 +19,10 @@ from evals.driver import Transcript
 from evals.judge import Grade, rubric_hash
 from waypoint.agents.registry import get_spec
 from waypoint.settings import Settings
+from waypoint.usage import call_cost, load_prices
 
 BASELINES = ROOT / "baselines"
 RESULTS = ROOT / "results"
-PRICES = ROOT / "prices.toml"
 
 CHECK_FLOOR = 0.10
 """Smallest pass-rate drop that fails the gate, whatever the observed spread."""
@@ -122,31 +121,8 @@ def _spread(values: list[float]) -> dict[str, float]:
     }
 
 
-def _prices() -> dict[str, dict[str, float]]:
-    if not PRICES.exists():
-        return {}
-    data = tomllib.loads(PRICES.read_text(encoding="utf-8"))
-    return {k: v for k, v in data.get("models", {}).items() if isinstance(v, dict)}
-
-
-def call_cost(
-    price: Mapping[str, float], input_tokens: int, output_tokens: int, searches: int
-) -> float:
-    """USD for one call. ``long_*`` rates apply above ``long_threshold`` input tokens.
-
-    A web-search call is several requests billed as one call here, so a call
-    whose summed input crosses the threshold is priced at the long rate even
-    when each request stayed under it. That overstates, never understates.
-    """
-    long = "long_threshold" in price and input_tokens > price["long_threshold"]
-    rate_in = price["long_input"] if long else price["input"]
-    rate_out = price["long_output"] if long else price["output"]
-    tokens = input_tokens * rate_in + output_tokens * rate_out
-    return tokens / 1_000_000 + searches * price.get("search", 0.0)
-
-
 def usage_summary(results: list[CaseResult]) -> dict[str, Any]:
-    prices = _prices()
+    prices = load_prices().models
     roles: dict[str, dict[str, Any]] = {}
     total_cost: float | None = 0.0
     for result in results:
