@@ -277,6 +277,22 @@ def test_a_prompt_change_changes_the_fingerprint(monkeypatch: pytest.MonkeyPatch
     assert fingerprint(settings, "research", {**models, "critic": "x"}) != before
 
 
+def test_service_only_settings_do_not_change_the_fingerprint() -> None:
+    """Seeding the service's docs at boot cannot change an eval's score."""
+    base = build_settings()
+    models = resolved(base, "research", {})
+    seeding = base.rag.model_copy(update={"seed_dir": "docs", "seed_corpus": "waypoint-docs"})
+    upload = base.rag.model_copy(update={"max_upload_mb": 99})
+    for rag in (seeding, upload):
+        assert fingerprint(base.model_copy(update={"rag": rag}), "research", models) == fingerprint(
+            base, "research", models
+        )
+    top_k = base.rag.model_copy(update={"top_k": base.rag.top_k + 1})
+    assert fingerprint(base.model_copy(update={"rag": top_k}), "research", models) != fingerprint(
+        base, "research", models
+    )
+
+
 def test_usage_is_summed_per_role_with_cost_when_priced() -> None:
     from evals.scorecard import CaseResult, usage_summary
 

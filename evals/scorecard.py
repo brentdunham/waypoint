@@ -68,10 +68,16 @@ current default."""
 
 
 def rag_settings(settings: Settings, agent: str) -> dict[str, Any] | None:
-    """The retrieval settings a research run reads; not the upload cap."""
+    """The retrieval settings a research run reads.
+
+    Not the upload cap, and not the service's boot-time seeding of its own docs
+    (``seed_dir``, ``seed_corpus``): an eval indexes its pinned corpora in
+    memory and never seeds, so those cannot change a score. Counting them made
+    a developer's ``.env`` with seeding on look like a different configuration.
+    """
     if agent != "research":
         return None
-    dump = settings.rag.model_dump(exclude={"max_upload_mb"})
+    dump = settings.rag.model_dump(exclude={"max_upload_mb", "seed_dir", "seed_corpus"})
     return {k: v for k, v in dump.items() if k not in LEGACY_RAG or v != LEGACY_RAG[k]}
 
 
