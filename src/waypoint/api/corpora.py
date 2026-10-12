@@ -33,6 +33,7 @@ from waypoint.schemas import (
     UploadAccepted,
     UploadedDocument,
 )
+from waypoint.tracing import current_span_context
 
 router = APIRouter(prefix="/corpora", tags=["corpora"])
 
@@ -141,6 +142,7 @@ async def upload(
         principal=principal,
         request_id=str(getattr(request.state, "request_id", "-")),
         payload={"corpus_id": corpus_id, "document_ids": queued},
+        link=current_span_context(),
     )
     body.run_id = record.run_id
     body.thread_id = record.thread_id

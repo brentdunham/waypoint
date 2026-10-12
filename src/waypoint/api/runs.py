@@ -22,6 +22,7 @@ from waypoint.api.deps import Reader, Runner, Runtime
 from waypoint.errors import BadRequest
 from waypoint.infra.bus import TERMINAL
 from waypoint.schemas import Run, RunResult, RunStarted, StartRun
+from waypoint.tracing import current_span_context
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ async def start(
         checkpoint_id=payload.checkpoint_id,
         durability=payload.durability,
         models=models,
+        link=current_span_context(),
     )
     await runtime.threads.touch(thread_id, title=payload.message or None)
 

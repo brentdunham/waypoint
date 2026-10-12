@@ -27,6 +27,7 @@ from langchain_core.embeddings import Embeddings
 from waypoint.rag.chunk import estimate_tokens
 from waypoint.rag.store import ChunkHit, CorpusStore, StoredChunk
 from waypoint.settings import RagSettings
+from waypoint.tracing import child_span
 from waypoint.usage import report_embedding, report_rerank
 
 type Mode = Literal["vector", "keyword", "hybrid"]
@@ -212,18 +213,35 @@ class Retriever:
         mode: Mode | None = None,
     ) -> Retrieval:
         mode = mode or self.settings.mode
-        result = await retrieve(
-            self.store,
-            self.embeddings,
-            tenant_id,
-            corpus_id,
-            query,
-            k=k or self.settings.top_k,
-            mode=mode,
-            candidates=self.settings.candidates,
-            rrf_k=self.settings.rrf_k,
-            reranker=self.reranker,
-        )
+        k = k or self.settings.top_k
+        with child_span(
+            "rag.retrieve",
+            **{
+                "waypoint.rag.mode": mode,
+                "waypoint.rag.k": k,
+                "waypoint.rag.candidates": self.settings.candidates,
+                "waypoint.rag.rerank": self.reranker is not None,
+                "waypoint.rag.corpus_id": corpus_id,
+            },
+        ) as span:
+            result = await retrieve(
+                self.store,
+                self.embeddings,
+                tenant_id,
+                corpus_id,
+                query,
+                k=k,
+                mode=mode,
+                candidates=self.settings.candidates,
+                rrf_k=self.settings.rrf_k,
+                reranker=self.reranker,
+            )
+            if span is not None:
+                span.set_attribute("waypoint.rag.hits", len(result.hits))
+                span.set_attribute("waypoint.rag.embed_s", result.embed_s)
+                span.set_attribute("waypoint.rag.search_s", result.search_s)
+                span.set_attribute("waypoint.rag.rerank_s", result.rerank_s)
+                span.set_attribute("waypoint.rag.rerank_tokens", result.rerank_tokens)
         # Into the current run's meter, if there is one (not in the evals).
         if mode != "keyword":
             report_embedding(self.settings.embeddings_model, estimate_tokens(query))

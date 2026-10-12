@@ -11,6 +11,7 @@ import time
 import uuid
 from typing import Any
 
+from opentelemetry import trace
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -24,6 +25,25 @@ PROBES = frozenset({"/api/v1/healthz", "/api/v1/readyz"})
 """Hit every 30 s by Docker's healthcheck and by orchestrators. A successful
 probe is logged at DEBUG, so the access log shows traffic; a failing one is
 still logged at INFO, since that is the line you go looking for."""
+
+
+def _name_span_by_route(scope: Scope) -> None:
+    """``POST /api/v1/threads/{thread_id}/runs``: the route, known once routed.
+
+    The tracing middleware names its span before routing, so it starts as the
+    method alone; ids in span names would make each request its own
+    operation in a trace backend.
+    """
+    span = trace.get_current_span()
+    if scope.get("route") is None or not span.is_recording():
+        return  # no route matched (a 404): the method alone is the name
+    # The route's own path is relative to its router, so rebuild the full
+    # template from the URL by putting each path parameter's name back.
+    params = {str(v): k for k, v in (scope.get("path_params") or {}).items()}
+    segments = str(scope.get("path", "")).split("/")
+    path = "/".join(f"{{{params[s]}}}" if s in params else s for s in segments)
+    span.update_name(f"{scope.get('method', 'HTTP')} {path}")
+    span.set_attribute("http.route", path)
 
 
 class RequestContext:
@@ -41,13 +61,19 @@ class RequestContext:
         state: dict[str, Any] = scope.setdefault("state", {})
         state["request_id"] = request_id
         started = time.perf_counter()
-        token = bind(request_id=request_id)
+        # Under the tracing middleware, when it is on: log lines join traces.
+        span = trace.get_current_span().get_span_context()
+        if span.is_valid:
+            token = bind(request_id=request_id, trace_id=format(span.trace_id, "032x"))
+        else:
+            token = bind(request_id=request_id)
         status = 500
         response_started = False
 
         async def send_with_id(message: Message) -> None:
             nonlocal status, response_started
             if message["type"] == "http.response.start":
+                _name_span_by_route(scope)
                 response_started = True
                 status = message["status"]
                 MutableHeaders(scope=message)["X-Request-ID"] = request_id

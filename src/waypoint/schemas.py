@@ -193,6 +193,8 @@ class Run(Out):
     """Role -> model this run used."""
     usage: RunUsage | None = None
     """Set when the run ends (and when it pauses at an interrupt)."""
+    trace_id: str | None = None
+    """The run's OpenTelemetry trace id, when tracing is on."""
 
 
 class RunStarted(Run):

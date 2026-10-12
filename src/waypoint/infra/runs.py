@@ -13,12 +13,14 @@ import contextlib
 import datetime as dt
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
+from opentelemetry import trace
+from opentelemetry.trace import Span, SpanContext
 from psycopg.types.json import Jsonb
 
 from waypoint.agents.context import AgentContext
@@ -31,6 +33,15 @@ from waypoint.infra.security import Principal
 from waypoint.log_config import bind, unbind
 from waypoint.serialization import jsonable, message_to_dict
 from waypoint.settings import Settings
+from waypoint.tracing import (
+    NOOP,
+    TRACE,
+    TraceHandler,
+    Tracing,
+    end_run_span,
+    start_run_span,
+    trace_id_of,
+)
 from waypoint.usage import METER, Meter
 
 log = logging.getLogger(__name__)
@@ -53,6 +64,8 @@ class RunRecord:
     usage: dict[str, Any] | None = None
     """Cost, tokens and searches, per role and in total (``Meter.summary``).
     ``None`` while running, and for runs from before metering existed."""
+    trace_id: str | None = None
+    """The run's OpenTelemetry trace (32 hex digits); ``None`` with tracing off."""
 
     def public(self) -> dict[str, Any]:
         return asdict(self)
@@ -67,7 +80,9 @@ class RunManager:
         limiter: Limiter | None,
         settings: Settings,
         graphs: dict[str, Graph],
+        tracing: Tracing = NOOP,
     ) -> None:
+        self._tracing = tracing
         self._bus = bus
         self._db = db
         self._limiter = limiter
@@ -123,7 +138,9 @@ class RunManager:
         checkpoint_id: str | None = None,
         durability: str = "async",
         models: dict[str, str] | None = None,
+        link: SpanContext | None = None,
     ) -> RunRecord:
+        """``link``: the span of the request that started the run, if traced."""
         graph = self._graphs.get(agent)
         if graph is None:
             raise NotFound(f"No agent named {agent!r}.")
@@ -139,13 +156,29 @@ class RunManager:
             created_at=dt.datetime.now(dt.UTC).isoformat(),
             models=dict(models or {}),
         )
+        # The run is its own trace, linked to the request (O8). Started here so
+        # the trace id is on the record and the run.started event from the start.
+        span = start_run_span(
+            self._tracing,
+            agent=agent,
+            run_id=run_id,
+            thread_id=thread_id,
+            tenant_id=principal.tenant_id,
+            resume=resume is not None,
+            link=link,
+        )
+        record.trace_id = trace_id_of(span)
 
         # Take a concurrency slot *before* returning, so an over-quota caller
         # gets a 429 from the POST rather than a mysterious failed run.
         release: Any = None
         if self._limiter is not None:
             release = self._limiter.slot(principal.tenant_id)
-            await release.__aenter__()
+            try:
+                await release.__aenter__()
+            except BaseException:
+                end_run_span(span, "refused", None, None)
+                raise
 
         # From here until the task exists, nothing owns the slot but this frame.
         # If anything below fails -- Redis blips on set_meta, the caller's
@@ -157,7 +190,13 @@ class RunManager:
             await self._bus.append(
                 run_id,
                 "run.started",
-                {"run_id": run_id, "thread_id": thread_id, "agent": agent, "models": record.models},
+                {
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "agent": agent,
+                    "models": record.models,
+                    "trace_id": record.trace_id,
+                },
             )
 
             task = asyncio.create_task(
@@ -170,11 +209,13 @@ class RunManager:
                     request_id=request_id,
                     durability=durability,
                     release=release,
+                    span=span,
                 ),
                 name=f"run-{run_id}",
             )
         except BaseException as exc:
             await self._abandon(record, release, exc)
+            end_run_span(span, "failed", record.error, None)
             raise
         self._tasks[run_id] = task
         task.add_done_callback(lambda _t: self._tasks.pop(run_id, None))
@@ -204,6 +245,7 @@ class RunManager:
         request_id: str,
         durability: str,
         release: Any,
+        span: Span,
     ) -> None:
         run_id = record.run_id
         limits = self._settings.limits
@@ -234,9 +276,8 @@ class RunManager:
         # callbacks; embeddings and reranking find it through METER. This task
         # has its own copy of the context, so neither leaks to other runs.
         meter = Meter(charge=self._charger(record.tenant_id))
-        config["callbacks"] = [meter]
-        meter_token = METER.set(meter)
-        log_token = bind(run_id=run_id, agent=record.agent, tenant_id=record.tenant_id)
+        observed = _Observed.open(self._tracing, record, span, meter)
+        config["callbacks"] = observed.callbacks
 
         status, error = "completed", None
         try:
@@ -307,8 +348,7 @@ class RunManager:
             except Exception:
                 # Spend is never lost silently: if Postgres missed it, the log has it.
                 log.warning("could not write the run's audit row", extra={"usage": record.usage})
-            METER.reset(meter_token)
-            unbind(log_token)
+            observed.close(status, error, record.usage)
             if release is not None:
                 with contextlib.suppress(Exception):
                     await release.__aexit__(None, None, None)
@@ -434,8 +474,9 @@ class RunManager:
             return
         with contextlib.suppress(Exception):
             await self._db.execute(
-                """insert into run_audit (run_id, thread_id, tenant_id, user_id, agent, status)
-                   values (%s, %s, %s, %s, %s, %s)
+                """insert into run_audit
+                       (run_id, thread_id, tenant_id, user_id, agent, status, trace_id)
+                   values (%s, %s, %s, %s, %s, %s, %s)
                    on conflict (run_id) do nothing""",
                 (
                     record.run_id,
@@ -444,6 +485,7 @@ class RunManager:
                     record.user_id,
                     record.agent,
                     record.status,
+                    record.trace_id,
                 ),
             )
 
@@ -468,6 +510,65 @@ class RunManager:
                 record.run_id,
             ),
         )
+
+
+@dataclass(slots=True)
+class _Observed:
+    """What a run's task sets up so it can be measured and traced, and undoes.
+
+    Every chat model call reports to the meter (callbacks); embeddings and
+    reranking find it through ``METER``. With tracing on, ``TraceHandler``
+    makes node and model spans under the run span, and retrieval finds it
+    through ``TRACE``. The run span is current for the task, so anything
+    traced inside belongs to the run's trace, and log lines carry its ids.
+    The task has its own copy of the context, so none of this leaks to other
+    runs.
+    """
+
+    callbacks: list[Any]
+    span: Span
+    tracer: TraceHandler | None
+    tokens: Sequence[Callable[[], object]]
+
+    @classmethod
+    def open(cls, tracing: Tracing, record: RunRecord, span: Span, meter: Meter) -> _Observed:
+        tracer = None
+        if tracing.enabled:
+            tracer = TraceHandler(
+                tracing,
+                span,
+                attributes={
+                    "waypoint.run_id": record.run_id,
+                    "waypoint.tenant_id": record.tenant_id,
+                    "waypoint.agent": record.agent,
+                },
+            )
+        meter_token = METER.set(meter)
+        trace_token = TRACE.set(tracer)
+        scope = trace.use_span(span, end_on_exit=False)
+        scope.__enter__()
+        log_token = bind(
+            run_id=record.run_id,
+            agent=record.agent,
+            tenant_id=record.tenant_id,
+            trace_id=record.trace_id,
+        )
+        undo = [
+            lambda: unbind(log_token),
+            lambda: scope.__exit__(None, None, None),
+            lambda: TRACE.reset(trace_token),
+            lambda: METER.reset(meter_token),
+        ]
+        callbacks: list[Any] = [meter] if tracer is None else [meter, tracer]
+        return cls(callbacks=callbacks, span=span, tracer=tracer, tokens=undo)
+
+    def close(self, status: str, error: str | None, usage: dict[str, Any] | None) -> None:
+        if self.tracer is not None:
+            self.tracer.close()
+        with contextlib.suppress(Exception):
+            end_run_span(self.span, status, error, usage)
+        for undo in self.tokens:
+            undo()
 
 
 def _now() -> str:

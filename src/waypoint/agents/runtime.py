@@ -37,6 +37,7 @@ from waypoint.infra.threads import ThreadStore
 from waypoint.rag.seed import describe, seed_public_corpus
 from waypoint.rag.store import CorpusStore, MemoryCorpusStore, PgCorpusStore
 from waypoint.settings import Settings
+from waypoint.tracing import NOOP, Tracing
 
 log = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ class AgentRuntime:
         self._closers.clear()
 
 
-async def create_runtime(settings: Settings) -> AgentRuntime:
+async def create_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> AgentRuntime:
     # Before any connection opens: a typo in MODELS__* is a config error, and
     # finding it at the first run of that agent would be far from the cause.
     check_model_config(settings, roles_by_agent())
@@ -160,7 +161,9 @@ async def create_runtime(settings: Settings) -> AgentRuntime:
     corpora = await _corpus_store(settings, db)
     graphs = build_all(settings, corpora=corpora, **compile_kwargs)
 
-    runs = RunManager(bus=bus, db=db, limiter=limiter, settings=settings, graphs=graphs)
+    runs = RunManager(
+        bus=bus, db=db, limiter=limiter, settings=settings, graphs=graphs, tracing=tracing
+    )
     await runs.start_listener()
 
     keys = KeyStore(db) if db is not None else None
@@ -318,9 +321,9 @@ async def _seed_bootstrap_key(keys: KeyStore, db: Database | None, settings: Set
     )
 
 
-async def start_runtime(settings: Settings) -> AgentRuntime:
+async def start_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> AgentRuntime:
     async with asyncio.timeout(STARTUP_TIMEOUT_S):
-        runtime = await create_runtime(settings)
+        runtime = await create_runtime(settings, tracing=tracing)
     log.info(
         "agent runtime ready",
         extra={"agents": sorted(runtime.graphs), "model": settings.model},

@@ -104,6 +104,18 @@ class BudgetSettings(BaseModel):
         return self.active and tenant_id in self.tenants and self.tenants[tenant_id] is None
 
 
+class TracingSettings(BaseModel):
+    """OpenTelemetry tracing. On when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set."""
+
+    content: bool = Field(
+        default=False,
+        description=(
+            "Put prompts, completions and tool inputs on spans. For local debugging only: "
+            "they are tenant data, and a trace backend is one more place to secure."
+        ),
+    )
+
+
 class StreamSettings(BaseModel):
     """Redis Stream backing the run event bus."""
 
@@ -437,6 +449,14 @@ class Settings(BaseSettings):
     rag: RagSettings = Field(default_factory=RagSettings)
 
     # --- tracing -------------------------------------------------------------
+    otel_exporter_otlp_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "OTLP/HTTP base URL, e.g. http://localhost:4318; spans go to <url>/v1/traces. "
+            "Unset -> no tracing. OTEL_EXPORTER_OTLP_HEADERS etc. are read by the SDK."
+        ),
+    )
+    tracing: TracingSettings = Field(default_factory=TracingSettings)
     langsmith_tracing: bool = False
     langsmith_project: str = "waypoint"
 
@@ -474,6 +494,7 @@ class Settings(BaseSettings):
         "embeddings_model",
         "database_url",
         "redis_url",
+        "otel_exporter_otlp_endpoint",
         mode="before",
     )
     @classmethod
