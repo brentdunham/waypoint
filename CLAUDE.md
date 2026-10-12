@@ -11,7 +11,7 @@ rediscovering it.
   glossary). Keep it in step with any architecture change.
 * `docs/ROADMAP.md`: what is done and what is next.
 * `docs/design/`: design docs. **Current: observability and cost,
-  `docs/design/observability.md`; phases 0 and 1 done (live check passed on Bob), phase 2 (budgets) next.** `rag.md` is
+  `docs/design/observability.md`; phases 0 and 1 done, phase 2 (budgets) built, its check on Bob next.** `rag.md` is
   complete (all five phases, deployed 2026-10-11) and is the model for format.
   Build it phase by phase as written; record any deviation in the doc and in
   ROADMAP.md.

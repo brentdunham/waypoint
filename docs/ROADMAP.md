@@ -349,7 +349,10 @@ moved into `src/waypoint/usage.py` with a parity test. Phase 1 built
 terminal event, `run_audit` and a line in the UI, and `GET /usage` sums a
 tenant's spend. Live check on Bob passed the same day: one research run's tokens
 (316,151 across Sonnet 5 and Haiku 5.5) and web searches (15) match the Claude
-Console exactly. Budgets (phase 2) next.
+Console exactly. Phase 2 built 2026-10-12: daily budgets in dollars per
+tenant and for the server, checked before each run and upload and charged per
+model call, with a clean `429 over-budget` and `Retry-After`. Its check on Bob
+waits for a deploy.
 
 ### 5. MCP tools and tool-level approval
 

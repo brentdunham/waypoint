@@ -18,6 +18,12 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
       LIMITS__RPM: ${LIMITS__RPM:-60}
       LIMITS__CONCURRENT_RUNS: ${LIMITS__CONCURRENT_RUNS:-4}
+      # Off by default on a laptop; compose.prod.yaml turns budgets on and
+      # requires the amounts. Set both amounts to try them locally.
+      BUDGET__ENABLED: ${BUDGET__ENABLED:-false}
+      BUDGET__TENANT_USD_PER_DAY: ${BUDGET__TENANT_USD_PER_DAY:-}
+      BUDGET__GLOBAL_USD_PER_DAY: ${BUDGET__GLOBAL_USD_PER_DAY:-}
+      BUDGET__TENANTS: ${BUDGET__TENANTS:-}
       EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-}
       EMBEDDINGS_DIMS: ${EMBEDDINGS_DIMS:-1536}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

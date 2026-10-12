@@ -54,7 +54,9 @@ flowchart TD
     models -- no --> e400b[400 bad-request]
     models -- yes --> rpm{Token bucket<br/>LIMITS__RPM per tenant}
     rpm -- empty --> e429[429 rate-limited<br/>with retry_after]
-    rpm -- ok --> slot{Concurrency slot<br/>LIMITS__CONCURRENT_RUNS}
+    rpm -- ok --> usd{Tenant and server<br/>budget balances above zero?}
+    usd -- no --> e429c[429 over-budget<br/>Retry-After]
+    usd -- yes --> slot{Concurrency slot<br/>LIMITS__CONCURRENT_RUNS}
     slot -- none free --> e429b[429 rate-limited]
     slot -- taken --> meta[Write run record to Redis,<br/>audit row to Postgres,<br/>append run.started]
     meta --> task[asyncio.create_task drive]
@@ -181,6 +183,7 @@ task exists. A cancel for a run that already ended returns `409`.
 | Limit | Default | Enforced by |
 |---|---|---|
 | Run starts per tenant | 60 per minute (`LIMITS__RPM`) | Lua token bucket in Redis |
+| Spend per tenant, and for the server | US dollars per day (`BUDGET__*`; the demo: $0.35 and $0.70) | Lua bucket in Redis, refilling continuously; checked before a run, charged per model call |
 | Concurrent runs per tenant | 4 (`LIMITS__CONCURRENT_RUNS`) | Lua semaphore; lease = run timeout + 30 s |
 | Wall-clock per run | 300 s (`LIMITS__RUN_TIMEOUT_S`) | `asyncio.timeout` around the graph |
 | Super-steps per run | 40 (`LIMITS__RECURSION_LIMIT`) | LangGraph recursion limit |

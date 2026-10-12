@@ -30,8 +30,10 @@ CDN's origin timeout.
 
 Create a separate workspace in the Claude Console for the demo, set its
 monthly spend limit, and create an API key in it. Anyone using the demo spends
-from this workspace, so the limit is the real cap on cost; the rate limits
-below only shape it.
+from this workspace, so the limit is the backstop on cost. The service's own
+daily budgets (`BUDGET__*`, below) are the cap you set: $0.70 a day across
+all reviewers, so about $21 in any 30 days, with a clean `429` instead of
+failed runs when it is reached. Set the workspace limit a little above that.
 
 ## 2. Code and configuration
 
@@ -52,6 +54,18 @@ Fill in `.env`:
 | `BOOTSTRAP_API_KEY` | `python3 -c "import secrets; print(f'ak_{secrets.token_hex(6)}.{secrets.token_urlsafe(32)}')"`; first boot only |
 | `WEB_PORT` | `8080` for this demo; a different loopback port for each other demo on the host |
 | `VOYAGE_API_KEY` | From [dashboard.voyageai.com](https://dashboard.voyageai.com/), with a payment method on the account (without one, Voyage allows 3 requests a minute, too few to index `docs/`). Embeds and reranks the public docs corpus. |
+
+The example file sets the budgets to $0.35 per tenant and $0.70 for the server
+per day. Exempt your own tenant so your use never spends the reviewers'
+allowance; find it after the first boot with
+
+```bash
+docker compose exec postgres psql -U waypoint -tc \
+  "select distinct tenant_id from api_keys where 'keys:admin' = any(scopes)"
+```
+
+and set `BUDGET__TENANTS='{"<that tenant>": null}'` (single quotes: the value
+is JSON), then `docker compose up -d` to apply it.
 
 The example file already sets `RAG__EMBEDDINGS_MODEL=voyageai:voyage-4` and
 `RAG__SEED_DIR=docs`: the API image contains this repository's `docs/`, and

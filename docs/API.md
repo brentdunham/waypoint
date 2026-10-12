@@ -16,9 +16,11 @@ and the `request_id`, which also comes back in the `X-Request-ID` header.
 ```
 
 Slugs: `bad-request`, `unauthorized`, `forbidden`, `not-found`, `conflict`,
-`payload-too-large` (bodies over 8 MB), `rate-limited`, `validation-failed`,
+`payload-too-large` (bodies over 8 MB), `rate-limited`, `over-budget` (a daily
+spending budget is used up; `scope` is `tenant` or `server`), `validation-failed`,
 `upstream-error`, `unavailable`, `internal-error`, `http-error`, and `error`
-for anything unexpected. A `validation-failed` problem lists `errors`, each
+for anything unexpected. Every `429` carries a `Retry-After` header in whole
+seconds as well as `retry_after` in the body. A `validation-failed` problem lists `errors`, each
 with a `loc`: a body field by name (`["agent"]`), a query parameter with its
 prefix (`["query", "limit"]`).
 
@@ -304,9 +306,15 @@ kept indexed by the service itself (`RAG__SEED_DIR`, CONFIGURATION.md).
 Summed from `run_audit` over runs that started in the window and have ended.
 `unpriced_runs` counts runs with no recorded cost: one used a model missing
 from the price table, or ran before metering existed. Only the caller's own
-tenant: no key sees the server's total or another tenant's spend. Budgets and
-the remaining balance join this response with budget enforcement
-(observability design, phase 2).
+tenant: no key sees the server's total or another tenant's spend.
+
+With budgets on (CONFIGURATION.md, Budgets) the response also has the
+tenant's `budget_usd_per_day` and `balance_usd`, what is left of it now. The
+balance refills continuously and can be below zero after runs that were
+already going when it ran out. Both are `null` with budgets off; an exempt
+tenant has `"exempt": true` and no budget. Starting a run or uploading
+documents needs the balance above zero (and the server's, which no key can
+read), else `429 over-budget` with `Retry-After`.
 
 ## Keys
 

@@ -1,6 +1,6 @@
 # Design: observability and cost
 
-Status: **phases 0 and 1 done (2026-10-11, live check passed on Bob); phase 2 (budgets) next.** Written 2026-10-11 as roadmap item 4.
+Status: **phases 0 and 1 done (2026-10-11, live check passed on Bob); phase 2 (budgets) built 2026-10-12, its production check waits for a deploy.** Written 2026-10-11 as roadmap item 4.
 This note is the hand-off for the coding sessions: what to build, what is
 decided, what is still open, and in what order. Read it with
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [rag.md](rag.md), which set the
@@ -339,6 +339,62 @@ Deviations:
 * Unpriced models make a run's `cost_usd` `null`, like the scorecards. Phase
   2 needs a number to charge; D3 (boot error when budgets are on) is what
   guarantees one.
+
+### Phase 2: budgets (2026-10-12)
+
+* `settings.BudgetSettings` (`BUDGET__TENANT_USD_PER_DAY`,
+  `BUDGET__GLOBAL_USD_PER_DAY`, `BUDGET__TENANTS`, `BUDGET__ENABLED`), with
+  D1's validation: half a budget is an error, and `ENV=production` refuses to
+  boot without a decision. `null` in `BUDGET__TENANTS` exempts a tenant from
+  its own and the global budget; a number overrides its own.
+* `infra/ratelimit.py`: one Lua script over the O4 buckets, read-only for
+  `Limiter.admit` and subtracting for `Limiter.charge`, touching the tenant's
+  key and `rl:{global}:usd` in one call; `Limiter.balance` for `GET /usage`.
+  Balances refill at budget / 86,400 per second, cap at the budget, may go
+  negative, and keys expire once they would have refilled anyway.
+* Admission in `POST /threads/<id>/runs` (after the RPM check, before the
+  slot) and in corpus uploads, before any document is stored. `OverBudget` is
+  a `RateLimited` with slug `over-budget` and `scope` `tenant` or `server`;
+  the server variant names no amounts (D4).
+* Charging: `Meter` takes a `charge` callback; each chat model call's cost is
+  charged when the call ends, with any embedding or rerank cost reported since,
+  and `RunManager._drive` flushes the rest when the run ends. The amount is
+  counted before the await, so concurrent calls never charge twice. A failed
+  charge is logged at WARNING and the run carries on; `run_audit` still has
+  the spend.
+* D3: `usage.check_prices` at app creation. With budgets on, a model the
+  service may call (`MODEL`, `MODELS__*`, `MODELS_ALLOWED`, and the
+  contextualizer's when on) missing from `prices.toml` is a boot error;
+  otherwise a warning.
+* `GET /usage` gains `budget_usd_per_day`, `balance_usd` and `exempt`.
+* Deploy: `compose.prod.yaml` sets `BUDGET__ENABLED=true` and requires both
+  amounts (`${...:?}`); `deploy/.env.production.example` has D1's numbers and
+  how to find the tenant to exempt.
+* Tests (`tests/test_budget.py`): settings, D3, the 429's shape, the meter
+  charging each cost once and surviving a failed charge, and against Redis:
+  admission at zero, refill (by ageing the bucket's timestamp), the global
+  cap across tenants including a raised one, an exempt tenant untouched, two
+  admissions at the edge both passing with both runs charged (O3's bound),
+  and end to end, a chat run that spends a tiny budget and a second request
+  refused with `Retry-After`, `GET /usage` showing the negative balance.
+
+Deviations:
+
+* **`BUDGET__ENABLED`**, not in the design. `compose.yaml` sets
+  `ENV=production` for the local Docker stack too, so "required in
+  production" alone would have stopped that stack on the next pull. It
+  defaults to `false` in `compose.yaml` and is forced to `true` in
+  `compose.prod.yaml`, which is the production that matters.
+* **`Retry-After` on every 429.** The RPM limit only had `retry_after` in the
+  body; the error handler now sets the header for any problem that carries
+  one, rounded up to whole seconds.
+* **One Redis, not a cluster.** The script touches a tenant's key and the
+  global key together, which a cluster refuses across hash slots. Bob runs one
+  Redis; a cluster would need the two charges as separate calls.
+* **The production check uses a tiny override, not the real budget.** Proving
+  the global cap live would refuse every reviewer for hours; the Redis tests
+  cover it. Live, one throwaway tenant with a budget of $0.001 shows the
+  admit, charge, 429 and `GET /usage` path.
 
 ## References
 

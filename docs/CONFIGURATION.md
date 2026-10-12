@@ -220,6 +220,39 @@ with one search each and one follow-up took about 70 seconds.
 | `LIMITS__RECURSION_LIMIT` | `40` | LangGraph super-steps per run. The backstop against a looping agent. |
 | `LIMITS__RUN_TIMEOUT_S` | `300` | Wall clock per run. |
 
+## Budgets (US dollars per day, enforced in Redis)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `BUDGET__TENANT_USD_PER_DAY` | unset | Each tenant's daily budget. The demo uses `0.35`, about one research run per reviewer a day. |
+| `BUDGET__GLOBAL_USD_PER_DAY` | unset | All non-exempt tenants together. The demo uses `0.70`: any 30 days cost at most about $21. |
+| `BUDGET__TENANTS` | `{}` | JSON overrides. A number raises (or lowers) one tenant's budget; `null` exempts the tenant from its own and the global budget: `'{"brent": null, "acme": 2.0}'`. |
+| `BUDGET__ENABLED` | unset | Unset: on when both amounts are set. `false`: off, even in production. `true`: on, both amounts required. |
+
+Each budget is a bucket that holds a day's amount and refills continuously
+(budget / 86,400 per second), so there is no midnight reset where every
+tenant's budget returns at once. Starting a run (or uploading documents)
+needs the tenant's balance and the global one above zero; otherwise the
+request gets `429` with slug `over-budget`, `scope` (`tenant` or `server`) and
+a `Retry-After` header. Each model call's cost is charged when the call ends,
+priced from `src/waypoint/prices.toml`. A run already going is never stopped,
+so a balance can go below zero by what in-flight runs spend: at most
+`LIMITS__CONCURRENT_RUNS` runs per tenant, each bounded by the research
+limits and `LIMITS__RUN_TIMEOUT_S`.
+
+Why dollars rather than tokens: a Sonnet token costs 20 times a Haiku token
+and a web search costs a cent whatever its tokens, so a token budget would be
+wrong by an order of magnitude depending on routing (observability design,
+O2). Why not stop a run mid-way: its cost is known only as it goes, and
+stopping leaves a half-written briefing for at most one run's saving (O3).
+
+Unset in development means off. `ENV=production` refuses to boot until both
+amounts are set or `BUDGET__ENABLED=false` says otherwise; `compose.prod.yaml`
+turns budgets on and requires the amounts. With budgets on, a model the
+service may call that `prices.toml` does not price is a boot error, since its
+calls would never be charged. Budgets need `REDIS_URL`; without Redis nothing
+is enforced.
+
 ## Streaming
 
 | Variable | Default | Notes |
@@ -279,6 +312,7 @@ Built by Vite, so these are baked in at build time.
 - [ ] `BOOTSTRAP_API_KEY` **unset**; real keys minted via `POST /keys`
 - [ ] `DATABASE_URL` and `REDIS_URL` both set — without them you have no durability and no limits
 - [ ] `LIMITS__*` sized for your tenants; `LIMITS__RUN_TIMEOUT_S` below your proxy's read timeout
+- [ ] `BUDGET__TENANT_USD_PER_DAY` and `BUDGET__GLOBAL_USD_PER_DAY` set, your own tenant exempted in `BUDGET__TENANTS`
 - [ ] Proxy buffering **off** on `/api/`, read timeout above the longest run (see `web/nginx.conf`)
 - [ ] Schema migrations run at boot under an advisory lock, so parallel workers are safe; for large fleets run them as a one-shot step instead
 - [ ] Redis `maxmemory-policy noeviction` — evicting a run stream mid-stream looks like a hang
