@@ -1,6 +1,6 @@
 # Design: observability and cost
 
-Status: **phases 0 and 1 done (2026-10-11, live check passed on Bob); phase 2 (budgets) done 2026-10-12, checked on Bob; phase 3 (tracing) done 2026-10-12, a live research run read end to end in local Jaeger with cost on every model span; phase 4 next.** Written 2026-10-11 as roadmap item 4.
+Status: **phases 0 and 1 done (2026-10-11, live check passed on Bob); phase 2 (budgets) done 2026-10-12, checked on Bob; phase 3 (tracing) done 2026-10-12, a live research run read end to end in local Jaeger with cost on every model span; phase 4 under way: Jaeger on Bob and the reviewer timeline built, the cost case study next.** Written 2026-10-11 as roadmap item 4.
 This note is the hand-off for the coding sessions: what to build, what is
 decided, what is still open, and in what order. Read it with
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [rag.md](rag.md), which set the
@@ -95,9 +95,20 @@ Brent settled these on 2026-10-11.
 | # | Decision | Why |
 |---|---|---|
 | D1 | **Budgets: `BUDGET__TENANT_USD_PER_DAY=0.35`, `BUDGET__GLOBAL_USD_PER_DAY=0.70`**, both as the per-day bucket in O4. Brent's own tenant is exempt from both through `BUDGET__TENANTS`. Unset means off in development and is a boot error in production, like `SECRET_KEY`. | Brent's limit for the public demo is $20 a month. A bucket refills continuously, so what it caps over any 30 days is its capacity plus 30 days of refill. At $0.70 a day that is about $21. A bucket holding $20 and refilling over 30 days would allow about $40 in the same window. $0.35 is about one research run (about $0.30) per reviewer per day; $0.70 is about two across all reviewers. Exempting Brent's tenant keeps his own use from spending the reviewers' allowance. |
-| D2 | **Production trace backend: decided in phase 4.** Development uses Jaeger in `compose.dev.yaml`. The lean is Jaeger v2 on Bob behind Caddy. | Phases 1 to 3 do not depend on it. Jaeger keeps trace data on the server and has no free-tier limits to watch; self-hosted Langfuse stays rejected as too heavy for Bob. |
+| D2 | **Production trace backend: decided in phase 4** (D5 to D7 below). Development uses Jaeger in `compose.dev.yaml`. The lean is Jaeger v2 on Bob behind Caddy. | Phases 1 to 3 do not depend on it. Jaeger keeps trace data on the server and has no free-tier limits to watch; self-hosted Langfuse stays rejected as too heavy for Bob. |
 | D3 | **A chat model missing from `prices.toml` is a boot error when budgets are on**, and a warning when they are off. | An unpriced model would spend money without being charged against the budget. |
 | D4 | **Reviewers see their own spend, not the server's.** Every key sees its runs' cost and `GET /usage` (the tenant's balance and today's spend). The global balance is not exposed; a 429 for the global cap says only that the server is over budget. | A run's cost is the tenant's own data. The global balance would tell one reviewer what the others spend. |
+
+## Decisions settled for phase 4
+
+Brent settled these on 2026-10-12.
+
+| # | Decision | Why |
+|---|---|---|
+| D5 | **Jaeger v2 on Bob, Badger storage, traces kept 7 days, every trace kept (no sampling).** One container next to the API, OTLP in on the compose network, data on a named volume. | A week is all Brent wants to keep. Badger expires spans by TTL itself, so nothing needs pruning. The demo makes tens of runs a day at about 40 spans each, so sampling (keeping only a fraction of traces) would save nothing worth the gaps. |
+| D6 | **Jaeger's own UI is private.** Not published through Caddy; Brent reaches it over an SSH tunnel (`ssh -L 16686:127.0.0.1:16686 bob`). | It shows every tenant's traces, which reviewers must not see (D4), and a tunnel needs no DNS record, certificate or password to manage. A Caddy route with basic auth can be added later without code changes. |
+| D7 | **Reviewers see their own runs' traces in the app**, as a "How this run went" timeline under each finished run, behind `TRACING__PANEL` (off by default). The API reads the trace from Jaeger's query API after checking the run is the caller's tenant's, and returns only whitelisted attributes. | Jaeger's UI is an engineer's tool and cannot be scoped to a tenant. A timeline in the product's own terms (plan, workers, review, writing, citation check, each with time, model and cost) reads well for a reviewer and shows only their own data. Off by default so a deployment without a trace backend shows nothing broken. |
+| D8 | **The case study is about cost, and it reduces it.** Start from the phase 1 and 3 breakdowns (web search fees are 55% of a research run), then measure the levers with the research eval, each for quality and cost: fewer web searches, documents before the web, a cheaper critic. Keep what holds quality. | The traces showed tokens are the smaller cost, so prompt caching (the first idea) can save a few cents at most. Each experiment runs live and costs real money; the cost of each run is stated before it starts. |
 
 ## Data model
 
@@ -185,7 +196,7 @@ Each phase ends green: `uv run python -m pytest`, ruff, mypy, `npm test`,
 | 1 | `Meter` in every run; usage on `RunRecord`, events and `run_audit`; rerank and embedding tokens reported; `run_id` in the log context; UI cost line; `GET /usage`. | A fake run reports scripted usage end to end; a live run on Bob shows its cost in the UI. |
 | 2 | Budgets: `admit` / `charge` Lua, settings, 429 with `Retry-After` on runs and uploads; DEPLOY.md and `.env.production.example` updated. | A tenant over budget gets a clean 429; the global cap applies across reviewer tenants. Deployed to Bob. |
 | 3 | Tracing: `setup_tracing`, ASGI spans, run spans with links, `TraceHandler`, retrieval spans, `trace_id` in logs and `run_audit`; Jaeger in `compose.dev.yaml`. | One research run reads end to end in local Jaeger with cost on every model span. |
-| 4 | Production backend (D2: choose it here); Caddy route or exporter secrets; the case study with a real run's breakdown by node and role. | A reviewer's run on Bob can be followed in the production backend; case study written. |
+| 4 | Jaeger on Bob (D5, D6); `GET /runs/<id>/trace` and the reviewer timeline (D7); the cost case study and the changes it keeps (D8). | A reviewer's run on Bob shows its timeline in the app and its full trace in Jaeger over the tunnel; case study written with eval-measured savings. |
 
 Phases 1 and 2 are the urgent part (they protect the public demo) and do not
 depend on tracing. Phase 3 can be built and reviewed without touching budgets.
@@ -498,6 +509,56 @@ reranking, which have no model span, that is the run's $0.310202 exactly. The
 trace also shows where the 115 seconds went: workers 97.8 s in total (they run
 in parallel within a round), critique 43.5 s, verification 24.0 s, writing
 13.7 s. The plan run cost $0.006062 and the document's ingestion $0.000004.
+
+### Phase 4, part 1: Jaeger on Bob and the reviewer timeline (2026-10-12)
+
+* `deploy/jaeger/config.yaml`: Jaeger v2 with OTLP over HTTP in, Badger
+  storage with `ttl.spans: 168h`, the query service on 16686, no sampling
+  (D5). `compose.prod.yaml` adds the `jaeger` service (512 MB memory limit,
+  UI and query API on `127.0.0.1:16686` only, D6), its `jaeger-data` volume,
+  and points the API at it (`OTEL_EXPORTER_OTLP_ENDPOINT`,
+  `TRACING__QUERY_URL`), with `TRACING__PANEL` from `.env`.
+* `GET /runs/<id>/trace` (`waypoint/timeline.py`, D7): finds the trace id
+  through the run record or, once that has expired from Redis, `run_audit`,
+  both checked against the caller's tenant; reads Jaeger's
+  `/api/traces/<id>`; refuses a trace whose spans name another run or tenant;
+  copies only whitelisted attributes. `pending` until the run span is stored
+  (spans arrive in batches), `503` when Jaeger cannot be read, `404` with the
+  panel off. `TRACING__PANEL=true` without `TRACING__QUERY_URL` is a boot
+  error.
+* UI: `RunTimeline` under a finished run, collapsed to one summary line
+  (duration, cost, model calls, web and document searches). Open, one row per
+  graph step on a shared time axis, numbered when steps run in parallel
+  (research workers), with model calls, document searches and tools drawn
+  inside each step; a click lists them in words (role, model, time, tokens,
+  searches, cost). It polls while the trace is pending and renders nothing on
+  a 404. Series colours come from the data-viz reference palette and pass its
+  validator in both modes (one contrast warning in light mode, covered by the
+  text line every bar has).
+* Tests: `tests/test_timeline.py` (the endpoint against a stand-in for
+  Jaeger's API built from the run's own spans: steps, nesting, cost, the
+  whitelist dropping prompt text even with `TRACING__CONTENT` on, pending,
+  503, another tenant's run, a trace naming another run, a partial trace, and
+  against Postgres and Redis, the trace still readable after the run record
+  expired), `web/src/timeline.test.ts` (rows, numbering, the summary and step
+  lines).
+
+Checked on the Windows dev machine with the production Jaeger config: the
+container started with a fresh volume, stored a probe trace, and still
+returned it after a restart. A research run's timeline read `pending`
+straight after the run and `ready` seven seconds later, with 14 steps (7
+nodes, 4 model calls, 3 document searches, each search and searcher call
+under its worker), parsed from Jaeger's real JSON. An unknown run id was a
+404.
+
+Deviations:
+
+* **A one-shot `jaeger-volume` service.** The image runs as uid 10001 and a
+  new named volume belongs to root, so Badger could not create its
+  directories (seen on the first try). A busybox container sets the volume's
+  owner before Jaeger starts.
+* **The timeline is for the latest run**, like the cost line, for the same
+  reason: messages in a checkpoint do not say which run wrote them.
 
 ## References
 

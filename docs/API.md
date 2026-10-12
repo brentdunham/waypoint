@@ -289,6 +289,32 @@ listed for every key and searchable by every research run, and no key can
 change them. The demo's `waypoint-docs` is one: this repository's `docs/`,
 kept indexed by the service itself (`RAG__SEED_DIR`, CONFIGURATION.md).
 
+## Run timeline
+
+| Method | Path | Scope | Notes |
+|---|---|---|---|
+| GET | `/runs/<run_id>/trace` | `threads:read` | The run's steps with time, model, tokens and cost. Only with `TRACING__PANEL` on (else 404) |
+
+```jsonc
+{"status": "ready", "run_id": "…", "trace_id": "60f9…", "duration_ms": 115230.4, "cost_usd": 0.310202,
+ "steps": [
+   {"id": "a1…", "parent": null, "kind": "node", "name": "node investigate", "node": "investigate",
+    "start_ms": 12.3, "duration_ms": 21544.0, "error": false},
+   {"id": "b2…", "parent": "a1…", "kind": "retrieval", "name": "rag.retrieve",
+    "start_ms": 18.0, "duration_ms": 380.2, "mode": "hybrid", "hits": 8, "rerank_tokens": 926},
+   {"id": "c3…", "parent": "a1…", "kind": "model", "name": "chat claude-haiku-5-5", "role": "searcher",
+    "model": "claude-haiku-5-5", "input_tokens": 24489, "output_tokens": 1990, "searches": 1, "cost_usd": 0.0129, "…": "…"}]}
+```
+
+`kind` is `node` (a graph step), `model`, `tool` or `retrieval`; a step's
+`parent` is the node it ran inside. `start_ms` counts from the start of the
+run. Read from the trace backend (Jaeger), which receives spans in batches:
+right after a run ends the answer is `{"status": "pending", ...}`, so poll
+every couple of seconds. Only the caller's tenant's runs, found through the
+run record or `run_audit` (a run is readable as long as its trace is kept, a
+week on the demo), and only whitelisted fields: no prompt or document text,
+whatever the spans hold. `503` when the trace backend cannot be read.
+
 ## Usage
 
 | Method | Path | Scope | Notes |

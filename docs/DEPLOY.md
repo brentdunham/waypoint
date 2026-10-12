@@ -191,6 +191,15 @@ docker compose exec postgres psql -U waypoint -c \
 | Back up Postgres | `docker compose exec -T postgres pg_dump -U waypoint waypoint \| gzip > ~/backups/waypoint-$(date +%F).sql.gz` |
 | Restore | `gunzip -c <file> \| docker compose exec -T postgres psql -U waypoint waypoint` |
 | Stop the demo | `docker compose down` (data stays in the volumes) |
+| Open Jaeger (all traces, 7 days) | on your machine: `ssh -L 16686:127.0.0.1:16686 brent@bob`, then http://localhost:16686 |
+| Find a run's trace | `trace_id` is on the run record and in `run_audit`; paste it into Jaeger's search |
+
+Traces go to the `jaeger` service in `compose.prod.yaml` (Jaeger v2, Badger
+storage on the `jaeger-data` volume, kept 7 days by `deploy/jaeger/config.yaml`).
+Its UI shows every tenant's runs, so it is published on Bob's loopback only and
+never through Caddy; reach it over SSH. Reviewers see their own runs' timelines
+in the app instead (`TRACING__PANEL=true`). Turning the timeline off is
+`TRACING__PANEL=false` and `docker compose up -d`; tracing itself keeps going.
 
 A nightly backup, kept for 14 days:
 
@@ -206,3 +215,4 @@ mkdir -p ~/backups
    loopback port (`127.0.0.1:8081`), and a unique compose project `name`.
 3. A file in `/etc/caddy/sites/` with its hostname and that port, then
    `sudo systemctl reload caddy`.
+4. If it runs its own Jaeger, a different loopback port than 16686 for its UI.

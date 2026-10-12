@@ -288,6 +288,8 @@ Scheduled runs).
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP/HTTP base URL; spans go to `<url>/v1/traces`. Unset: no tracing and no overhead. `http://localhost:4318` with `compose.dev.yaml`'s Jaeger (UI on `:16686`). |
 | `OTEL_EXPORTER_OTLP_HEADERS` | unset | Read by the OpenTelemetry SDK, for backends that need auth (`Authorization=Basic ...`). Other standard `OTEL_*` variables work too. |
 | `TRACING__CONTENT` | `false` | `true` puts prompts, completions and tool inputs on spans, up to 8,000 characters each. Local debugging only. |
+| `TRACING__PANEL` | `false` | Serve `GET /runs/<id>/trace`, the "How this run went" timeline the UI shows under a finished run. Needs `TRACING__QUERY_URL`. Off: the endpoint is a 404 and the UI shows no timeline. |
+| `TRACING__QUERY_URL` | unset | Jaeger's query service, read for the timeline: `http://jaeger:16686` in `compose.prod.yaml`, `http://localhost:16686` with `compose.dev.yaml`. |
 | `LANGSMITH_TRACING` | `false` | |
 | `LANGSMITH_PROJECT` | `waypoint` | |
 | `LANGSMITH_API_KEY` | — | Read by LangSmith directly from the environment. |
