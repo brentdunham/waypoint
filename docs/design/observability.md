@@ -1,6 +1,6 @@
 # Design: observability and cost
 
-Status: **phases 0 and 1 done (2026-10-11, live check passed on Bob); phase 2 (budgets) built 2026-10-12, its production check waits for a deploy.** Written 2026-10-11 as roadmap item 4.
+Status: **phases 0 and 1 done (2026-10-11, live check passed on Bob); phase 2 (budgets) done 2026-10-12, checked on Bob; phase 3 (tracing) next.** Written 2026-10-11 as roadmap item 4.
 This note is the hand-off for the coding sessions: what to build, what is
 decided, what is still open, and in what order. Read it with
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [rag.md](rag.md), which set the
@@ -393,8 +393,23 @@ Deviations:
   Redis; a cluster would need the two charges as separate calls.
 * **The production check uses a tiny override, not the real budget.** Proving
   the global cap live would refuse every reviewer for hours; the Redis tests
-  cover it. Live, one throwaway tenant with a budget of $0.001 shows the
-  admit, charge, 429 and `GET /usage` path.
+  cover it.
+
+Production check on Bob (2026-10-12, `b62cbaf`): budgets at D1's numbers,
+`brent` exempt, and a throwaway tenant `rev-budgetcheck` overridden to
+$0.0001 a day. One chat message was admitted (the bucket started full) and
+charged as its model call ended. `GET /usage` with that key then reported:
+
+| Field | Value | Check |
+|---|---|---|
+| `runs`, `cost_usd` | 1, $0.002874 | 867 in and 114 out on Sonnet 5 at $2 / $10 per million: 0.001734 + 0.00114 |
+| `budget_usd_per_day` | 0.0001 | the override |
+| `balance_usd` | -0.002774 | 0.0001 - 0.002874: the whole cost charged once, below zero as O3 allows |
+| `exempt` | false | |
+
+With the balance below zero, the next message was refused with
+`429 over-budget`, and no second run was recorded. The key was revoked and
+the override removed afterwards.
 
 ## References
 

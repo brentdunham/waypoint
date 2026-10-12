@@ -351,8 +351,9 @@ tenant's spend. Live check on Bob passed the same day: one research run's tokens
 (316,151 across Sonnet 5 and Haiku 5.5) and web searches (15) match the Claude
 Console exactly. Phase 2 built 2026-10-12: daily budgets in dollars per
 tenant and for the server, checked before each run and upload and charged per
-model call, with a clean `429 over-budget` and `Retry-After`. Its check on Bob
-waits for a deploy.
+model call, with a clean `429 over-budget` and `Retry-After`. Deployed and
+checked on Bob 2026-10-12: a throwaway tenant's one run was charged exactly
+its $0.002874 and its next request refused. Tracing (phase 3) next.
 
 ### 5. MCP tools and tool-level approval
 
