@@ -61,7 +61,7 @@ allowance; find it after the first boot with
 
 ```bash
 docker compose exec postgres psql -U waypoint -tc \
-  "select distinct tenant_id from api_keys where 'keys:admin' = any(scopes)"
+  "select distinct tenant_id from api_keys where revoked_at is null and ('*' = any(scopes) or 'keys:admin' = any(scopes))"
 ```
 
 and set `BUDGET__TENANTS='{"<that tenant>": null}'` (single quotes: the value
