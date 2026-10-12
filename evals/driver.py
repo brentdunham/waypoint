@@ -63,6 +63,10 @@ class Transcript:
     """Live model calls. Replayed ones are counted in ``replayed`` instead."""
     replayed: dict[str, int] = field(default_factory=dict)
     """Role -> model calls answered from the replay store (not billed)."""
+    replayed_calls: list[Call] = field(default_factory=list)
+    """Those calls with the usage recorded with them: what they would cost live."""
+    replayed_unknown: dict[str, int] = field(default_factory=dict)
+    """Role -> replayed calls recorded without usage (before it was stored)."""
     error: str | None = None
     elapsed_s: float = 0.0
 
@@ -102,6 +106,17 @@ class Transcript:
                 for c in self.calls
             ],
             "replayed": self.replayed,
+            "replayed_calls": [
+                {
+                    "role": c.role,
+                    "model": c.model,
+                    "input_tokens": c.input_tokens,
+                    "output_tokens": c.output_tokens,
+                    "searches": c.searches,
+                }
+                for c in self.replayed_calls
+            ],
+            "replayed_unknown": self.replayed_unknown,
             "error": self.error,
             "elapsed_s": round(self.elapsed_s, 2),
         }
@@ -299,5 +314,25 @@ async def _run_case(
     transcript.elapsed_s = time.perf_counter() - started
     transcript.calls = recorder.calls
     if replay is not None:
-        transcript.replayed = dict(sorted(replay.replayed.items()))
+        _record_replays(transcript, replay)
     return transcript
+
+
+def _record_replays(transcript: Transcript, replay: Replay) -> None:
+    """What the replayed calls were, and what they cost when recorded."""
+    transcript.replayed = dict(sorted(replay.replayed.items()))
+    unknown: dict[str, int] = {}
+    for r in replay.replayed_calls:
+        if r.usage is None:
+            unknown[r.role] = unknown.get(r.role, 0) + 1
+            continue
+        transcript.replayed_calls.append(
+            Call(
+                r.role,
+                r.model,
+                input_tokens=r.usage.total_input_tokens,
+                output_tokens=r.usage.output_tokens,
+                searches=r.usage.searches,
+            )
+        )
+    transcript.replayed_unknown = dict(sorted(unknown.items()))

@@ -17,9 +17,16 @@ sees different findings, writes again. The planner and the first wave of
 searches replay. ``--fresh`` ignores stored answers and records new ones.
 
 Replayed calls are not billed and are not in a scorecard's token counts;
-``usage.replayed`` says how many there were per role. The trial is part of the
-key, so three trials replay three independent samples, not one sample three
-times.
+``usage.replayed`` says how many there were per role. What they cost when
+they were recorded is stored with them (``usage``), so a scorecard can also say
+what a run of this configuration costs when every call runs live: the number
+to compare configurations by, since how much of a run replays depends on what
+was recorded before it, not on the configuration. Calls recorded before usage
+was stored carry none if their answer is structured output (a message carries
+its own ``usage_metadata``); the scorecard counts those as unknown.
+
+The trial is part of the key, so three trials replay three independent
+samples, not one sample three times.
 """
 
 import datetime as dt
@@ -29,16 +36,21 @@ import json
 import sqlite3
 import warnings
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from langchain_core._api import LangChainBetaWarning
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.language_models import BaseChatModel
 from langchain_core.load import dumpd, load
 from langchain_core.load.serializable import Serializable
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import LLMResult
 from langchain_core.runnables import Runnable, RunnableBinding, RunnableConfig, RunnableLambda
 from pydantic import BaseModel
+
+from waypoint.usage import CallUsage, replies, usage_of
 
 FILENAME = "replay.sqlite"
 """Kept beside the results (``--out``), which is gitignored and, in the eval
@@ -56,21 +68,85 @@ class ReplayStore:
             "CREATE TABLE IF NOT EXISTS calls ("
             " key TEXT PRIMARY KEY, role TEXT, model TEXT, value TEXT, recorded TEXT)"
         )
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(calls)")}
+        if "usage" not in columns:  # stores from before usage was recorded
+            self._db.execute("ALTER TABLE calls ADD COLUMN usage TEXT")
         self._db.commit()
 
-    def get(self, key: str) -> str | None:
-        row = self._db.execute("SELECT value FROM calls WHERE key = ?", (key,)).fetchone()
-        return row[0] if row else None
+    def get(self, key: str) -> tuple[str, str | None] | None:
+        """The stored answer and the usage recorded with it, if any."""
+        row = self._db.execute("SELECT value, usage FROM calls WHERE key = ?", (key,)).fetchone()
+        return (row[0], row[1]) if row else None
 
-    def put(self, key: str, role: str, model: str, value: str) -> None:
+    def put(self, key: str, role: str, model: str, value: str, usage: str | None = None) -> None:
         self._db.execute(
-            "INSERT OR REPLACE INTO calls VALUES (?, ?, ?, ?, ?)",
-            (key, role, model, value, dt.datetime.now(dt.UTC).isoformat(timespec="seconds")),
+            "INSERT OR REPLACE INTO calls (key, role, model, value, recorded, usage)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                key,
+                role,
+                model,
+                value,
+                dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+                usage,
+            ),
         )
         self._db.commit()
 
     def close(self) -> None:
         self._db.close()
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayedCall:
+    """A call answered from the store, with what it cost when it was recorded."""
+
+    role: str
+    model: str
+    usage: CallUsage | None
+    """``None``: recorded before usage was stored, and not a message."""
+
+
+class _UsageTap(AsyncCallbackHandler):
+    """Sums the usage of the chat model calls inside one live call."""
+
+    def __init__(self) -> None:
+        self.usage: list[CallUsage] = []
+
+    async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        self.usage.extend(usage_of(m) for m in replies(response))
+
+
+def _total(parts: list[CallUsage]) -> CallUsage:
+    return CallUsage(
+        input_tokens=sum(u.input_tokens for u in parts),
+        cache_read_tokens=sum(u.cache_read_tokens for u in parts),
+        cache_write_5m_tokens=sum(u.cache_write_5m_tokens for u in parts),
+        cache_write_1h_tokens=sum(u.cache_write_1h_tokens for u in parts),
+        output_tokens=sum(u.output_tokens for u in parts),
+        searches=sum(u.searches for u in parts),
+    )
+
+
+def _usage_json(usage: CallUsage) -> str:
+    return json.dumps(
+        {
+            "input_tokens": usage.input_tokens,
+            "cache_read_tokens": usage.cache_read_tokens,
+            "cache_write_5m_tokens": usage.cache_write_5m_tokens,
+            "cache_write_1h_tokens": usage.cache_write_1h_tokens,
+            "output_tokens": usage.output_tokens,
+            "searches": usage.searches,
+        }
+    )
+
+
+def _stored_usage(raw: str | None, value: Any) -> CallUsage | None:
+    if raw:
+        return CallUsage(**json.loads(raw))
+    if isinstance(value, AIMessage) and value.usage_metadata:
+        return usage_of(value)  # recorded before usage was stored; a message carries it
+    return None
 
 
 class Replay:
@@ -82,6 +158,7 @@ class Replay:
         self.trial = trial
         self.read = read
         self.replayed: Counter[str] = Counter()
+        self.replayed_calls: list[ReplayedCall] = []
 
     def wrap(self, agent: str, role: str, model: str, runnable: Any) -> Any:
         signature = _signature(runnable)
@@ -101,28 +178,34 @@ class Replay:
             stored = self.store.get(key)
             if stored is None:
                 return False, None
+            value, usage = stored
+            out = decode(json.loads(value))
             self.replayed[role] += 1
-            return True, decode(json.loads(stored))
+            self.replayed_calls.append(ReplayedCall(role, model, _stored_usage(usage, out)))
+            return True, out
 
-        def record(key: str, out: Any) -> None:
+        def record(key: str, out: Any, tap: _UsageTap) -> None:
             encoded = encode(out)
             if encoded is not None:
-                self.store.put(key, role, model, json.dumps(encoded, ensure_ascii=False))
+                usage = _usage_json(_total(tap.usage)) if tap.usage else None
+                self.store.put(key, role, model, json.dumps(encoded, ensure_ascii=False), usage)
 
         def call(value: Any, config: RunnableConfig) -> Any:
             key = key_for(value)
             hit, out = lookup(key)
             if not hit:
+                # Sync calls cannot run the async tap; their usage is not stored.
                 out = runnable.invoke(value, config)
-                record(key, out)
+                record(key, out, _UsageTap())
             return out
 
         async def acall(value: Any, config: RunnableConfig) -> Any:
             key = key_for(value)
             hit, out = lookup(key)
             if not hit:
-                out = await runnable.ainvoke(value, config)
-                record(key, out)
+                tap = _UsageTap()
+                out = await runnable.with_config(callbacks=[tap]).ainvoke(value, config)
+                record(key, out, tap)
             return out
 
         return RunnableLambda(call, afunc=acall, name=f"replay:{role}")

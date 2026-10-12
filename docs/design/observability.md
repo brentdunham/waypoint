@@ -560,6 +560,28 @@ Deviations:
 * **The timeline is for the latest run**, like the cost line, for the same
   reason: messages in a checkpoint do not say which run wrote them.
 
+Deployed to Bob 2026-10-12 (`637f9a4`) with `TRACING__PANEL=true`. Brent
+checked a research run there: its timeline in the app, and its trace in
+Jaeger over the SSH tunnel.
+
+### Phase 4, part 2: preparing the cost case study (2026-10-12)
+
+* **Fingerprint.** The research fingerprint counted `RAG__SEED_DIR` and
+  `RAG__SEED_CORPUS`, which only the server reads at boot. A `.env` with
+  seeding on (Brent's, since the public corpus) made the current
+  configuration `b3dbde692b5e` instead of the accepted baseline's
+  `3bd69055c49a`, so every experiment would have read as a different setup.
+  They are now left out, like the upload cap.
+* **Cost if live.** A scorecard's cost is what the run was billed, and replay
+  makes that small: the accepted baseline shows $0.1017 per run while a live
+  research run costs about $0.31 (phase 3). The replay store now keeps each
+  live call's usage, captured with a callback around the call, and scorecards
+  add "cost per run if every call ran live": billed calls plus replayed ones
+  at their recorded usage. Calls recorded earlier keep their usage only when
+  the answer is a message (searcher, writer); planner, critic and verifier
+  answers are structured output, so for them the figure is a floor until they
+  are recorded again.
+
 ## References
 
 * [OpenTelemetry semantic conventions for generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/)

@@ -134,8 +134,15 @@ How it fits together (`evals/`):
   `summary.md`, `transcripts.jsonl`. The fingerprint hashes prompts, models per
   role, agent settings (for research, the `RAG__*` settings a run reads too),
   judge, rubric and dataset, so two scorecards with the
-  same fingerprint measured the same thing. Cost uses `src/waypoint/prices.toml`
-  through `waypoint.usage`; a model not listed there shows tokens only.
+  same fingerprint measured the same thing. Settings only the server reads at
+  boot (`RAG__SEED_DIR`, `RAG__SEED_CORPUS`, the upload cap) are left out.
+  Cost uses `src/waypoint/prices.toml` through `waypoint.usage`; a model not
+  listed there shows tokens only. "Cost per run" is what the run was billed,
+  which replay makes small; "cost per run if every call ran live" adds the
+  replayed calls at the usage recorded with them, and is the figure to compare
+  configurations by. Calls recorded before usage was stored with them
+  (2026-10-12) recall it only if their answer is a message, so for older
+  stores that figure is marked as a floor.
 * **Baseline gate** — `baselines/<agent>.json`. A metric fails when it drops
   by more than twice the baseline's spread across trials, and never less than
   0.10 (check pass rate) or 0.25 (criterion mean). `accept` refuses a

@@ -390,6 +390,52 @@ def test_replay_keeps_trials_apart_and_fresh_does_not_read(tmp_path: Path) -> No
     assert _run(settings, store, fresh=True).replayed == {}
 
 
+def test_replayed_calls_keep_what_they_cost_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run's cost if live: billed calls plus replayed ones at their recorded usage."""
+    from evals.replay import ReplayStore
+    from evals.scorecard import CaseResult, usage_summary
+    from waypoint.agents.models import ScriptedChatModel
+
+    monkeypatch.setattr(
+        ScriptedChatModel,
+        "usage_script",
+        staticmethod(lambda _t: {"input_tokens": 1_000, "output_tokens": 100, "searches": 1}),
+    )
+    settings = build_settings(model="claude-haiku-5-5")
+    store = ReplayStore(tmp_path / "replay.sqlite")
+    live = usage_summary([CaseResult(_research_case(), _run(settings, store), [])])
+    again = usage_summary([CaseResult(_research_case(), _run(settings, store), [])])
+
+    assert live["cost_usd_per_run"] > 0
+    assert again["cost_usd_per_run"] == 0  # everything replayed: nothing billed
+    assert again["cost_usd_if_live_per_run"] == live["cost_usd_per_run"]
+    # The scripted model answers structured output without a chat model call,
+    # so those replays have no usage to recall: the figure says it is a floor.
+    assert set(again["replayed_without_usage"]) <= {"planner", "critic", "verifier"}
+    assert "searcher" not in again["replayed_without_usage"]
+
+
+def test_a_store_from_before_usage_was_recorded_still_opens(tmp_path: Path) -> None:
+    import sqlite3
+
+    from evals.replay import ReplayStore
+
+    path = tmp_path / "replay.sqlite"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE calls (key TEXT PRIMARY KEY, role TEXT, model TEXT, value TEXT, recorded TEXT)"
+    )
+    old.execute("INSERT INTO calls VALUES ('k', 'writer', 'm', '{}', 'then')")
+    old.commit()
+    old.close()
+    store = ReplayStore(path)
+    assert store.get("k") == ("{}", None)
+    store.put("k2", "writer", "m", "{}", '{"input_tokens": 1}')
+    assert store.get("k2") == ("{}", '{"input_tokens": 1}')
+
+
 def test_replay_key_sees_max_uses_and_masks_the_date() -> None:
     import datetime as dt
 

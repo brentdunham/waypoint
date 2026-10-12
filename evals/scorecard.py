@@ -156,9 +156,19 @@ def usage_summary(results: list[CaseResult]) -> dict[str, Any]:
             elif total_cost is not None:
                 total_cost += call_cost(price, call.input_tokens, call.output_tokens, call.searches)
     replayed: dict[str, int] = defaultdict(int)
+    unknown: dict[str, int] = defaultdict(int)
+    live_cost = total_cost
     for result in results:
         for role, n in result.transcript.replayed.items():
             replayed[role] += n
+        for role, n in result.transcript.replayed_unknown.items():
+            unknown[role] += n
+        for call in result.transcript.replayed_calls:
+            price = prices.get(call.model)
+            if price is None:
+                live_cost = None
+            elif live_cost is not None:
+                live_cost += call_cost(price, call.input_tokens, call.output_tokens, call.searches)
     runs = len(results) or 1
     for row in roles.values():
         row["models"] = sorted(row["models"])
@@ -170,6 +180,12 @@ def usage_summary(results: list[CaseResult]) -> dict[str, Any]:
         "replayed": dict(sorted(replayed.items())),
         "cost_usd": round(total_cost, 4) if total_cost is not None else None,
         "cost_usd_per_run": round(total_cost / runs, 4) if total_cost is not None else None,
+        # What a run of this configuration costs with nothing replayed: billed
+        # calls plus replayed ones at the usage recorded with them. The number
+        # to compare configurations by. A lower bound while any replayed call
+        # has no recorded usage (``replayed_without_usage``).
+        "cost_usd_if_live_per_run": round(live_cost / runs, 4) if live_cost is not None else None,
+        "replayed_without_usage": dict(sorted(unknown.items())),
     }
 
 
@@ -408,6 +424,17 @@ def render_markdown(
             + ", ".join(f"{role} {n}" for role, n in replayed.items())
             + " calls.",
         ]
+        if_live = usage.get("cost_usd_if_live_per_run")
+        if if_live is not None:
+            missing = usage.get("replayed_without_usage") or {}
+            note = (
+                " (at least: no usage recorded for "
+                + ", ".join(f"{role} {n}" for role, n in missing.items())
+                + " replayed calls)"
+                if missing
+                else ""
+            )
+            lines += ["", f"Cost per run if every call ran live: ${if_live:.4f}{note}."]
     lines += ["", "Grounded means grounded in what the agent retrieved; the judge does not browse."]
     if found is not None:
         lines += ["", "## Baseline gate", ""]
