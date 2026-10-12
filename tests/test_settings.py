@@ -74,6 +74,10 @@ def test_the_full_compose_environment_parses(monkeypatch: pytest.MonkeyPatch) ->
         CORS_ORIGINS="http://localhost:8080",
         LIMITS__RPM="60",
         LIMITS__CONCURRENT_RUNS="4",
+        BUDGET__ENABLED="false",
+        BUDGET__TENANT_USD_PER_DAY="",
+        BUDGET__GLOBAL_USD_PER_DAY="",
+        BUDGET__TENANTS="",
         EMBEDDINGS_MODEL="",
     )
     assert settings.is_production

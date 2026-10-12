@@ -13,7 +13,7 @@ import contextlib
 import datetime as dt
 import logging
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -233,7 +233,7 @@ class RunManager:
         # Every chat model call in the graph reports to the meter through the
         # callbacks; embeddings and reranking find it through METER. This task
         # has its own copy of the context, so neither leaks to other runs.
-        meter = Meter()
+        meter = Meter(charge=self._charger(record.tenant_id))
         config["callbacks"] = [meter]
         meter_token = METER.set(meter)
         log_token = bind(run_id=run_id, agent=record.agent, tenant_id=record.tenant_id)
@@ -298,6 +298,8 @@ class RunManager:
         finally:
             record.status, record.error = status, error
             self._usage(record, meter)  # the terminal append may not have been reached
+            # Costs reported after the last model call (a final rerank, say).
+            await asyncio.shield(meter.flush())
             with contextlib.suppress(Exception):
                 await self._bus.set_meta(run_id, record.public())
             try:
@@ -310,6 +312,17 @@ class RunManager:
             if release is not None:
                 with contextlib.suppress(Exception):
                     await release.__aexit__(None, None, None)
+
+    def _charger(self, tenant_id: str) -> Callable[[float], Awaitable[None]] | None:
+        """What the run's meter charges its costs to: the tenant's budget, if any."""
+        limiter = self._limiter
+        if limiter is None or not limiter.budgets_on:
+            return None
+
+        async def charge(usd: float) -> None:
+            await limiter.charge(tenant_id, usd)
+
+        return charge
 
     @staticmethod
     def _usage(record: RunRecord, meter: Meter) -> dict[str, Any] | None:

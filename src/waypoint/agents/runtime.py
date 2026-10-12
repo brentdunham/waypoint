@@ -143,6 +143,7 @@ async def create_runtime(settings: Settings) -> AgentRuntime:
             rpm=settings.limits.rpm,
             concurrent=settings.limits.concurrent_runs,
             lease_s=settings.limits.run_timeout_s + 30,
+            budget=settings.budget,
         )
         if settings.node_cache_ttl_s:
             cache = RedisCache(redis_client, default_ttl=settings.node_cache_ttl_s)

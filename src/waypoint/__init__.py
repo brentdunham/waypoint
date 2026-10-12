@@ -22,6 +22,7 @@ from waypoint.errors import register_error_handlers
 from waypoint.log_config import configure_logging
 from waypoint.middleware import RequestContext
 from waypoint.settings import Settings, get_settings
+from waypoint.usage import check_prices
 
 __all__ = ["API_PREFIX", "create_app"]
 
@@ -45,6 +46,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Here as well as in the runtime: a typo in MODELS__* should stop the
     # import, before a server binds a port, not surface in the lifespan.
     check_model_config(settings, roles_by_agent())
+    if unpriced := check_prices(settings):  # raises instead when budgets are on
+        log.warning("no price for %s: their runs report cost as unknown", ", ".join(unpriced))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

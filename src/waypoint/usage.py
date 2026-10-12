@@ -19,15 +19,18 @@ run's meter through :data:`METER` and do nothing when there is none.
 import logging
 import tomllib
 import uuid
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import cache
 from importlib.resources import files
-from typing import Any, Self, override
+from typing import TYPE_CHECKING, Any, Self, override
 
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.outputs import LLMResult
+
+if TYPE_CHECKING:
+    from waypoint.settings import Settings
 
 log = logging.getLogger(__name__)
 
@@ -234,11 +237,15 @@ class RoleUsage:
     """Embedding or rerank tokens (estimated for embeddings, see report_embedding)."""
     cost_usd: float | None = 0.0
     """``None`` once a call by a model missing from the price table is counted."""
+    priced_usd: float = 0.0
+    """The cost of the priced calls alone: what the budget is charged."""
 
     def charge(self, usd: float | None) -> None:
         if usd is None:
             self.cost_usd = None
-        elif self.cost_usd is not None:
+            return
+        self.priced_usd += usd
+        if self.cost_usd is not None:
             self.cost_usd += usd
 
     def summary(self) -> dict[str, Any]:
@@ -268,12 +275,26 @@ class Meter(AsyncCallbackHandler):
     default (``raise_error`` stays off), and every method here also catches
     its own errors and logs them at WARNING, so a pricing bug costs a usage
     line, never a run.
+
+    With ``charge`` (the budget, ``Limiter.charge`` bound to the run's tenant)
+    each chat model call's cost is charged as soon as the call ends, along
+    with any embedding and rerank cost reported since the last charge;
+    :meth:`flush` charges what is left when the run ends. A failed charge is
+    logged and not retried: the spend is still in the summary and
+    ``run_audit``, only not enforced (observability design, Risks).
     """
 
-    def __init__(self, prices: PriceTable | None = None) -> None:
+    def __init__(
+        self,
+        prices: PriceTable | None = None,
+        *,
+        charge: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
         self.prices = prices if prices is not None else load_prices()
         self.roles: dict[str, RoleUsage] = {}
         self._open: dict[uuid.UUID, tuple[str, str]] = {}
+        self._charge = charge
+        self.charged_usd = 0.0
 
     def _role(self, role: str) -> RoleUsage:
         return self.roles.setdefault(role, RoleUsage())
@@ -306,6 +327,25 @@ class Meter(AsyncCallbackHandler):
                 self.add_call(*role_model, usage_of(message))
         except Exception:
             log.warning("could not meter a model call", exc_info=True)
+        await self.flush()
+
+    def priced_usd(self) -> float:
+        """What the priced calls so far cost; unpriced ones count as zero here."""
+        return sum(row.priced_usd for row in self.roles.values())
+
+    async def flush(self) -> None:
+        """Charge the budget for everything not yet charged."""
+        if self._charge is None:
+            return
+        due = self.priced_usd() - self.charged_usd
+        if due <= 0:
+            return
+        # Counted before the await, so concurrent calls never charge twice.
+        self.charged_usd += due
+        try:
+            await self._charge(due)
+        except Exception:
+            log.warning("could not charge the budget", exc_info=True, extra={"usd": due})
 
     @override
     async def on_llm_error(self, error: BaseException, *, run_id: uuid.UUID, **kwargs: Any) -> None:
@@ -384,3 +424,28 @@ def report_rerank(model: str, tokens: int) -> None:
     meter.add(
         "rerank", model, tokens=tokens, usd=tokens * rate / 1_000_000 if rate is not None else None
     )
+
+
+class UnpricedModelError(ValueError):
+    """A model the service may call is not in the price table."""
+
+
+def check_prices(settings: Settings, prices: PriceTable | None = None) -> list[str]:
+    """Models the service may call that ``prices.toml`` does not list (D3).
+
+    With budgets on that is a boot error: an unpriced model would spend money
+    without being charged to anyone's budget. Off, it is returned for a
+    warning, and those runs report their cost as unknown.
+    """
+    prices = prices if prices is not None else load_prices()
+    named = set(settings.allowed_models)
+    if settings.rag.contextual and settings.rag.enabled:
+        named.add(settings.rag.context_model)
+    missing = sorted(m for m in named if m not in prices.models)
+    if missing and settings.budget.active and not settings.fake_model:
+        raise UnpricedModelError(
+            f"Budgets are on, but src/waypoint/prices.toml has no price for: "
+            f"{', '.join(missing)}. Add them (platform.claude.com pricing), or the "
+            "service would spend without charging any budget."
+        )
+    return missing

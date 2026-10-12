@@ -112,6 +112,9 @@ async def upload(
         raise BadRequest("Send at least one file in the 'files' field.")
     if len(files) > MAX_FILES:
         raise BadRequest(f"At most {MAX_FILES} files per request; send the rest separately.")
+    if runtime.limiter is not None:
+        # Before storing anything: refused documents would sit pending forever.
+        await runtime.limiter.admit(principal.tenant_id)
     limit = int(runtime.settings.rag.max_upload_mb * 1024 * 1024)
     new_docs = [await _read(f, limit) for f in files]
 

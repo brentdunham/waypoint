@@ -3,7 +3,8 @@
 Read from ``run_audit``, which records each run's cost when it ends, so the
 numbers outlive the run's Redis record. Only the caller's own tenant: the
 server's total and other tenants' spend are not exposed (observability
-design, D4). Budgets and the remaining balance join this in phase 2.
+design, D4), so the response has the tenant's own budget and balance and
+never the global one.
 """
 
 import datetime as dt
@@ -43,7 +44,12 @@ async def usage(
         raise ServiceUnavailable("Usage needs the database (DATABASE_URL is unset).")
     since = dt.datetime.now(dt.UTC) - dt.timedelta(days=days)
     rows = await runtime.db.fetch_all(SPEND_SQL, (principal.tenant_id, since))
+    limiter = runtime.limiter
+    balance = await limiter.balance(principal.tenant_id) if limiter is not None else None
     return TenantUsage(
+        budget_usd_per_day=balance.budget_usd_per_day if balance else None,
+        balance_usd=round(balance.balance_usd, 6) if balance else None,
+        exempt=runtime.settings.budget.exempt(principal.tenant_id),
         tenant_id=principal.tenant_id,
         days=days,
         since=since.isoformat(timespec="seconds"),

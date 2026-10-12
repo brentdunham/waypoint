@@ -27,6 +27,83 @@ class LimitSettings(BaseModel):
     run_timeout_s: float = Field(default=300.0, gt=0)
 
 
+class BudgetSettings(BaseModel):
+    """Spending caps in US dollars per day (observability design, O2 to O4, D1).
+
+    Each is a bucket in Redis that holds a day's budget and refills
+    continuously at budget / 86 400 per second. A run is admitted while the
+    tenant's balance and the server's are above zero; each model call's cost
+    is charged when it ends, so a balance can go below zero by what runs
+    already in flight spend. Unset means off in development; production
+    refuses to boot without a decision (set both numbers, or ENABLED=false).
+    """
+
+    enabled: bool | None = Field(
+        default=None,
+        description=(
+            "Unset: on when both daily budgets are set. false: off, also in production. "
+            "true: on, and both budgets are required."
+        ),
+    )
+    tenant_usd_per_day: float | None = Field(
+        default=None,
+        gt=0,
+        description="Each tenant's daily budget, unless BUDGET__TENANTS says otherwise.",
+    )
+    global_usd_per_day: float | None = Field(
+        default=None, gt=0, description="All tenants together, exempt ones aside."
+    )
+    tenants: dict[str, float | None] = Field(
+        default_factory=dict,
+        description=(
+            'Per-tenant overrides, as JSON: {"acme": 5.0} raises a tenant\'s budget, '
+            '{"brent": null} exempts a tenant from both its own and the global budget.'
+        ),
+    )
+
+    @field_validator("tenant_usd_per_day", "global_usd_per_day", "enabled", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, v: object) -> object:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("tenants", mode="before")
+    @classmethod
+    def _blank_is_empty(cls, v: object) -> object:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return {}
+        return v
+
+    @field_validator("tenants")
+    @classmethod
+    def _positive(cls, v: dict[str, float | None]) -> dict[str, float | None]:
+        for tenant, usd in v.items():
+            if usd is not None and usd <= 0:
+                raise ValueError(
+                    f"BUDGET__TENANTS[{tenant!r}]={usd}: a budget must be above zero; "
+                    "use null to exempt the tenant."
+                )
+        return v
+
+    @property
+    def active(self) -> bool:
+        if self.enabled is False:
+            return False
+        return self.tenant_usd_per_day is not None and self.global_usd_per_day is not None
+
+    def tenant_budget(self, tenant_id: str) -> float | None:
+        """The tenant's daily budget; ``None`` when it is exempt or budgets are off."""
+        if not self.active:
+            return None
+        if tenant_id in self.tenants:
+            return self.tenants[tenant_id]
+        return self.tenant_usd_per_day
+
+    def exempt(self, tenant_id: str) -> bool:
+        return self.active and tenant_id in self.tenants and self.tenants[tenant_id] is None
+
+
 class StreamSettings(BaseModel):
     """Redis Stream backing the run event bus."""
 
@@ -353,6 +430,7 @@ class Settings(BaseSettings):
 
     # --- nested ------------------------------------------------------------
     limits: LimitSettings = Field(default_factory=LimitSettings)
+    budget: BudgetSettings = Field(default_factory=BudgetSettings)
     stream: StreamSettings = Field(default_factory=StreamSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
     evals: EvalSettings = Field(default_factory=EvalSettings)
@@ -420,6 +498,29 @@ class Settings(BaseSettings):
                 f"STREAM__BLOCK_MS={self.stream.block_ms} must be at least 1s shorter than "
                 f"REDIS_SOCKET_TIMEOUT_S={self.redis_socket_timeout_s:g}, or idle event "
                 "streams time out. Lower the block or raise the timeout."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _budget_is_decided(self) -> Settings:
+        """A public deployment must not spend without a cap by accident."""
+        b = self.budget
+        missing = [
+            name
+            for name, value in (
+                ("BUDGET__TENANT_USD_PER_DAY", b.tenant_usd_per_day),
+                ("BUDGET__GLOBAL_USD_PER_DAY", b.global_usd_per_day),
+            )
+            if value is None
+        ]
+        if b.enabled is False or not missing:
+            return self
+        if b.enabled is True or len(missing) == 1:
+            raise ValueError(f"Budgets need both daily amounts; {' and '.join(missing)} unset.")
+        if self.is_production:
+            raise ValueError(
+                "ENV=production needs spending caps: set BUDGET__TENANT_USD_PER_DAY and "
+                "BUDGET__GLOBAL_USD_PER_DAY, or BUDGET__ENABLED=false to run without them."
             )
         return self
 

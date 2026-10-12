@@ -234,6 +234,12 @@ class TenantUsage(Out):
     output_tokens: int
     searches: int
     by_agent: dict[str, AgentSpend] = Field(default_factory=dict)
+    budget_usd_per_day: float | None = None
+    """The tenant's daily budget; ``null`` when budgets are off or it is exempt."""
+    balance_usd: float | None = None
+    """What is left of it now. It refills continuously and can be below zero
+    after runs that were already going when it ran out."""
+    exempt: bool = False
 
 
 class KeyCreated(Out):

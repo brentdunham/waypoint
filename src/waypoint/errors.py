@@ -5,6 +5,7 @@ stable ``type`` slug, so clients can branch on the slug instead of parsing prose
 """
 
 import logging
+import math
 from collections.abc import Sequence
 from http import HTTPStatus
 from typing import Any
@@ -63,6 +64,12 @@ class RateLimited(AppError):
     status, title, slug = 429, "Too Many Requests", "rate-limited"
 
 
+class OverBudget(RateLimited):
+    """A daily spending budget is used up (observability design, phase 2)."""
+
+    slug = "over-budget"
+
+
 class UpstreamError(AppError):
     status, title, slug = 502, "Upstream Error", "upstream-error"
 
@@ -110,7 +117,11 @@ def problem(
 ) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None)
     body = problem_body(status, title, detail, slug, request_id=request_id, **extra)
-    return JSONResponse(body, status_code=status, media_type=CONTENT_TYPE)
+    headers = {}
+    if isinstance(retry := extra.get("retry_after"), int | float):
+        # Whole seconds, rounded up (RFC 9110): retrying at the stated time must work.
+        headers["Retry-After"] = str(max(1, math.ceil(retry)))
+    return JSONResponse(body, status_code=status, media_type=CONTENT_TYPE, headers=headers)
 
 
 def validation_errors(errors: Sequence[Any]) -> list[dict[str, Any]]:

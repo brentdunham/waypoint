@@ -70,6 +70,7 @@ async def start(
 
     if runtime.limiter is not None:
         await runtime.limiter.enforce(principal.tenant_id)
+        await runtime.limiter.admit(principal.tenant_id)
 
     record = await runtime.runs.start(
         agent=thread["agent"],
