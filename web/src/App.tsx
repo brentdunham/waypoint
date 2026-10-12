@@ -5,6 +5,7 @@ import type { ChatMessage, Corpus, Finding } from "./api/types";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { ConnectionBar } from "./components/ConnectionBar";
 import { ResearchProgress } from "./components/ResearchProgress";
+import { RunTimeline } from "./components/RunTimeline";
 import { Sidebar } from "./components/Sidebar";
 import { TimeTravel } from "./components/TimeTravel";
 import { Transcript } from "./components/Transcript";
@@ -178,6 +179,7 @@ export default function App() {
               {formatUsage(run.usage, run.durationMs)}
             </p>
           )}
+          {run.runId && run.usage && !run.busy && <RunTimeline runId={run.runId} />}
 
           {activeAgent === "research" && <ResearchProgress progress={run.progress} />}
 

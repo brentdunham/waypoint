@@ -19,9 +19,16 @@ from waypoint.agents import get_spec
 from waypoint.agents.models import ModelChoiceError
 from waypoint.agents.registry import models_for
 from waypoint.api.deps import Reader, Runner, Runtime
-from waypoint.errors import BadRequest
+from waypoint.errors import BadRequest, NotFound, ServiceUnavailable
 from waypoint.infra.bus import TERMINAL
-from waypoint.schemas import Run, RunResult, RunStarted, StartRun
+from waypoint.schemas import Run, RunResult, RunStarted, RunTrace, StartRun
+from waypoint.timeline import (
+    TraceMismatchError,
+    TraceNotReadyError,
+    TraceUnavailableError,
+    fetch_trace,
+    timeline,
+)
 from waypoint.tracing import current_span_context
 
 log = logging.getLogger(__name__)
@@ -105,6 +112,33 @@ async def start(
 @router.get("/runs/{run_id}")
 async def show(run_id: str, runtime: Runtime, principal: Reader) -> Run:
     return Run.model_validate((await runtime.runs.require(run_id, principal)).public())
+
+
+@router.get("/runs/{run_id}/trace")
+async def trace(run_id: str, runtime: Runtime, principal: Reader) -> RunTrace:
+    """The run's timeline: its steps, model calls and searches, with time and cost.
+
+    Only with ``TRACING__PANEL`` on. ``pending`` until the trace backend has
+    stored the run (spans are exported in batches, a few seconds after it
+    ends); poll again. Only the caller's own tenant's runs.
+    """
+    settings = runtime.settings.tracing
+    if not settings.panel or not settings.query_url:
+        raise NotFound("Run timelines are not enabled on this server.")
+    trace_id = await runtime.runs.trace_id(run_id, principal)
+    if trace_id is None:
+        raise NotFound("This run was not traced.")
+    try:
+        raw = await fetch_trace(settings.query_url, trace_id)
+        return RunTrace.model_validate(timeline(raw, run_id=run_id, tenant_id=principal.tenant_id))
+    except TraceNotReadyError:
+        return RunTrace(status="pending", run_id=run_id)
+    except TraceUnavailableError as exc:
+        log.warning("trace backend unreadable", extra={"run_id": run_id, "error": str(exc)})
+        raise ServiceUnavailable("The trace backend could not be read.") from None
+    except TraceMismatchError:
+        log.warning("trace does not match its run", extra={"run_id": run_id})
+        raise NotFound(f"Unknown run {run_id!r}.") from None
 
 
 @router.get(

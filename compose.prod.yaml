@@ -21,6 +21,13 @@ services:
       BUDGET__TENANT_USD_PER_DAY: ${BUDGET__TENANT_USD_PER_DAY:?set BUDGET__TENANT_USD_PER_DAY in .env}
       BUDGET__GLOBAL_USD_PER_DAY: ${BUDGET__GLOBAL_USD_PER_DAY:?set BUDGET__GLOBAL_USD_PER_DAY in .env}
       BUDGET__TENANTS: ${BUDGET__TENANTS:-}
+      # Traces to the jaeger service below (observability design, D5 to D7).
+      # TRACING__PANEL shows reviewers their own runs' timelines in the app.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      TRACING__QUERY_URL: http://jaeger:16686
+      TRACING__PANEL: ${TRACING__PANEL:-false}
+    depends_on:
+      jaeger: { condition: service_started }
 
   web:
     # WEB_PORT differs per demo on a shared host: 8080 here, 8081 for the next.
@@ -35,3 +42,31 @@ services:
 
   redis:
     ports: !reset []
+
+  # Jaeger v2: OTLP in from the api, traces in Badger on jaeger-data, kept 7
+  # days (deploy/jaeger/config.yaml). The UI and query API listen on
+  # 127.0.0.1:16686 only: Brent opens it over an SSH tunnel, never through
+  # Caddy, because it shows every tenant's traces.
+  jaeger:
+    image: jaegertracing/jaeger:2.20.0
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    volumes:
+      - ./deploy/jaeger/config.yaml:/etc/jaeger/config.yaml:ro
+      - jaeger-data:/badger
+    ports: ["127.0.0.1:16686:16686"]
+    depends_on:
+      jaeger-volume: { condition: service_completed_successfully }
+    mem_limit: 512m
+    restart: unless-stopped
+
+  # The image runs as uid 10001 and a new named volume belongs to root, so
+  # Badger could not create its directories. Runs once per `up`, in a second.
+  jaeger-volume:
+    image: busybox:1.37
+    command: ["chown", "-R", "10001:10001", "/badger"]
+    volumes:
+      - jaeger-data:/badger
+    restart: "no"
+
+volumes:
+  jaeger-data:

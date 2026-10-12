@@ -114,6 +114,33 @@ class TracingSettings(BaseModel):
             "they are tenant data, and a trace backend is one more place to secure."
         ),
     )
+    panel: bool = Field(
+        default=False,
+        description=(
+            "Serve GET /runs/<id>/trace, the run timeline the UI shows under a finished run "
+            "(observability design, D7). Needs query_url."
+        ),
+    )
+    query_url: str | None = Field(
+        default=None,
+        description="Jaeger's query service, e.g. http://jaeger:16686, read for the run timeline.",
+    )
+
+    @field_validator("query_url", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, v: object) -> object:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @model_validator(mode="after")
+    def _panel_needs_a_backend(self) -> TracingSettings:
+        if self.panel and not self.query_url:
+            raise ValueError(
+                "TRACING__PANEL=true needs TRACING__QUERY_URL (Jaeger's query service) to read "
+                "traces from."
+            )
+        return self
 
 
 class StreamSettings(BaseModel):

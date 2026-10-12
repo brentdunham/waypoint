@@ -1,0 +1,57 @@
+# Jaeger v2 for production (observability design, D5 and D6).
+#
+# OTLP over HTTP in from the API on the compose network; traces stored with
+# Badger on the jaeger-data volume and expired after 7 days; the query
+# service (UI and JSON API) on 16686, published on 127.0.0.1 only. Brent opens
+# the UI over an SSH tunnel; the API reads one run's trace from it for the
+# reviewer timeline (GET /runs/<id>/trace). Every trace is kept: no sampling.
+service:
+  extensions: [jaeger_storage, jaeger_query, healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    resource:
+      service.name: jaeger
+    logs:
+      level: info
+    metrics:
+      level: none
+
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: 0.0.0.0:13133
+
+  jaeger_query:
+    storage:
+      traces: badger_store
+    http:
+      endpoint: 0.0.0.0:16686
+
+  jaeger_storage:
+    backends:
+      badger_store:
+        badger:
+          directories:
+            keys: /badger/keys
+            values: /badger/values
+          ephemeral: false
+          ttl:
+            spans: 168h # 7 days
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: badger_store

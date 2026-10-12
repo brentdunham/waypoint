@@ -115,6 +115,39 @@ export interface RunUsage {
   roles: Record<string, RoleUsage>;
 }
 
+/** Mirrors `TraceStep` in src/waypoint/schemas.py. */
+export interface TraceStep {
+  id: string;
+  parent: string | null;
+  kind: "node" | "model" | "tool" | "retrieval";
+  name: string;
+  /** From the start of the run. */
+  start_ms: number;
+  duration_ms: number;
+  error: boolean;
+  node?: string | null;
+  role?: string | null;
+  model?: string | null;
+  tool?: string | null;
+  mode?: string | null;
+  cost_usd?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  searches?: number | null;
+  hits?: number | null;
+  rerank_tokens?: number | null;
+}
+
+/** Mirrors `RunTrace`: `GET /runs/<id>/trace`. */
+export interface RunTrace {
+  status: "ready" | "pending";
+  run_id: string;
+  trace_id?: string | null;
+  duration_ms?: number | null;
+  cost_usd?: number | null;
+  steps: TraceStep[];
+}
+
 // --- SSE frames -----------------------------------------------------------
 
 export type RunEvent =

@@ -214,6 +214,42 @@ class RunResult(Out):
     usage: RunUsage | None = None
 
 
+class TraceStep(Out):
+    """One step of a run's timeline. Which optional fields are set depends on ``kind``."""
+
+    id: str
+    parent: str | None
+    """The step this one ran inside (a model call's node); ``null`` for a top-level node."""
+    kind: Literal["node", "model", "tool", "retrieval"]
+    name: str
+    start_ms: float
+    """From the start of the run."""
+    duration_ms: float
+    error: bool = False
+    node: str | None = None
+    role: str | None = None
+    model: str | None = None
+    tool: str | None = None
+    mode: str | None = None
+    cost_usd: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    searches: int | None = None
+    hits: int | None = None
+    rerank_tokens: int | None = None
+
+
+class RunTrace(Out):
+    """``GET /runs/<id>/trace``: the run's timeline, or ``pending`` until it is stored."""
+
+    status: Literal["ready", "pending"]
+    run_id: str
+    trace_id: str | None = None
+    duration_ms: float | None = None
+    cost_usd: float | None = None
+    steps: list[TraceStep] = Field(default_factory=list)
+
+
 class AgentSpend(Out):
     runs: int
     cost_usd: float

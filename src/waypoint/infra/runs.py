@@ -456,6 +456,28 @@ class RunManager:
                 if event.type in TERMINAL:
                     return
 
+    async def trace_id(self, run_id: str, principal: Principal) -> str | None:
+        """The run's trace id, if it is the caller's tenant's run (404 otherwise).
+
+        The Redis record lives an hour after the run; ``run_audit`` keeps the
+        id for as long as the trace backend keeps the trace (a week).
+        """
+        record = await self.get(run_id)
+        if record is not None:
+            if record.tenant_id != principal.tenant_id:
+                raise NotFound(f"Unknown run {run_id!r}.")
+            return record.trace_id
+        row = None
+        if self._db is not None:
+            with contextlib.suppress(Exception):  # not a uuid: no such run
+                row = await self._db.fetch_one(
+                    "select tenant_id, trace_id from run_audit where run_id = %s", (run_id,)
+                )
+        if row is None or row["tenant_id"] != principal.tenant_id:
+            raise NotFound(f"Unknown run {run_id!r}.")
+        trace_id: str | None = row["trace_id"]
+        return trace_id
+
     async def cancel(self, run_id: str, principal: Principal) -> RunRecord:
         record = await self.require(run_id, principal)
         if record.status != "running":

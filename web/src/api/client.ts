@@ -3,6 +3,7 @@ import type {
   Corpus,
   Problem,
   RunRecord,
+  RunTrace,
   Snapshot,
   Thread,
 } from "./types";
@@ -122,6 +123,9 @@ export const api = {
   ) => request<RunRecord>(`/threads/${id}/runs`, { method: "POST", body: JSON.stringify(body) }),
 
   run: (runId: string) => request<RunRecord>(`/runs/${runId}`),
+
+  /** The run's timeline. 404 when the server has run timelines off. */
+  runTrace: (runId: string) => request<RunTrace>(`/runs/${runId}/trace`),
 
   cancel: (runId: string) =>
     request<RunRecord>(`/runs/${runId}/cancel`, { method: "POST" }),
