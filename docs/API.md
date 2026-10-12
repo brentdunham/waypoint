@@ -163,7 +163,7 @@ data: {"interrupts":[{"id":"6ac8…","value":{"kind":"approve_plan","plan":["…
 
 | Event | Meaning |
 |---|---|
-| `run.started` | Accepted and executing; carries the run's `models` map |
+| `run.started` | Accepted and executing; carries the run's `models` map and, with tracing on, its `trace_id` |
 | `token` | An LLM token, with the node that produced it |
 | `node` | A super-step finished; carries that node's state update |
 | `custom` | Whatever a node wrote via `get_stream_writer()`. The research agent writes `{"kind":"research","phase":…}` as each step *starts*: `planning`, `searching` (once per worker, with `question` and `round`), `reviewing` (with `round`), `writing` and `verifying` (the citation check; absent when `RESEARCH__VERIFY_CITATIONS=false`). `node` events say when each finished; the UI's research panel is built from both. |

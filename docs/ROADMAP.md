@@ -353,7 +353,12 @@ Console exactly. Phase 2 built 2026-10-12: daily budgets in dollars per
 tenant and for the server, checked before each run and upload and charged per
 model call, with a clean `429 over-budget` and `Retry-After`. Deployed and
 checked on Bob 2026-10-12: a throwaway tenant's one run was charged exactly
-its $0.002874 and its next request refused. Tracing (phase 3) next.
+its $0.002874 and its next request refused. Phase 3 built 2026-10-12:
+OpenTelemetry traces per run (node, model, tool and retrieval spans with cost),
+linked to their requests, off unless an OTLP endpoint is set; Jaeger in
+`compose.dev.yaml`, where a live research run reads end to end: its model
+spans' costs sum to the run's $0.31 exactly. Phase 4 (production trace
+backend, case study) next.
 
 ### 5. MCP tools and tool-level approval
 

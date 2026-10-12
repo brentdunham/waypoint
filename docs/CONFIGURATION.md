@@ -285,9 +285,30 @@ Scheduled runs).
 
 | Variable | Default | Notes |
 |---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP/HTTP base URL; spans go to `<url>/v1/traces`. Unset: no tracing and no overhead. `http://localhost:4318` with `compose.dev.yaml`'s Jaeger (UI on `:16686`). |
+| `OTEL_EXPORTER_OTLP_HEADERS` | unset | Read by the OpenTelemetry SDK, for backends that need auth (`Authorization=Basic ...`). Other standard `OTEL_*` variables work too. |
+| `TRACING__CONTENT` | `false` | `true` puts prompts, completions and tool inputs on spans, up to 8,000 characters each. Local debugging only. |
 | `LANGSMITH_TRACING` | `false` | |
 | `LANGSMITH_PROJECT` | `waypoint` | |
 | `LANGSMITH_API_KEY` | — | Read by LangSmith directly from the environment. |
+
+Each run is its own trace: a root span `run <agent>`, linked to the
+`POST /runs` request span rather than parented by it (a run outlives its
+request, and a resume may come hours later from another worker). Under it,
+one span per graph node (`node <name>`), and under each node its model calls
+(`chat <model>`, with `gen_ai.*` model and token attributes plus
+`waypoint.role`, `waypoint.cost_usd`, cache tokens and searches), tool calls
+and document retrieval (`rag.retrieve`, with mode, k, hits and rerank time and
+tokens). Every span carries `waypoint.run_id`, `waypoint.tenant_id` and
+`waypoint.agent`. The run's trace id is on the run record, the `run.started`
+event, `run_audit.trace_id` and every log line the run writes, so a log line
+leads to its trace. Requests are traced too, health probes excepted, and their
+log lines carry the request's trace id.
+
+Spans hold ids, names, numbers and timings, never prompt or document text,
+unless `TRACING__CONTENT=true`: a trace backend is one more place tenant data
+would have to be secured (observability design, O9). LangSmith tracing is
+separate and unchanged.
 
 ## Tests
 

@@ -77,7 +77,7 @@ Isolation is enforced at each place data could cross between tenants:
 | Corpora | Two guards: every query in `rag/store.py` filters `tenant_id`, and each runs as the `waypoint_tenant` role with `app.tenant_id` set, so Postgres row-level security filters again. The role is needed because the service's own user owns the tables (and is a superuser in compose), and owners bypass RLS. Public corpora are readable by all and written only as the owner, by the seeder for `RAG__SEED_DIR` ([ARCHITECTURE.md §8a](../ARCHITECTURE.md)); through the API, changing a corpus needs `corpora:write` |
 | Node cache | Keys hash node input only, so cached nodes carry `tenant_id` in their input; per-user nodes are not cached ([3.8](03-state-and-persistence.md#38-the-node-cache)) |
 | Limits | Buckets and slots are per tenant |
-| Traces | Each run is tagged `tenant:<id>` and `agent:<name>` |
+| Traces | Each run is tagged `tenant:<id>` and `agent:<name>`; OpenTelemetry spans carry `waypoint.tenant_id` and no prompt or document text unless `TRACING__CONTENT=true` |
 
 `tests/test_isolation.py` covers the cache cases; the integration tier covers
 keys and tenants against real Postgres and Redis, and `tests/test_rag_pg.py`
@@ -142,7 +142,7 @@ FastAPI exception handler, can still add `X-Request-ID`.
 | Run audit | `run_audit` table | Every run's tenant, user, agent, status, error, start and end, and its cost, tokens and searches (`GET /usage` sums them per tenant) |
 | Run events | Redis Streams | The full event history of a run for an hour after it ends |
 | Model attribution | Message, finding and briefing metadata; per-role run metadata | Which model produced what, kept in the checkpoint |
-| Traces | LangSmith when `LANGSMITH_TRACING=true` | Tagged by tenant and agent; roles visible in metadata |
+| Traces | OpenTelemetry over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (Jaeger in `compose.dev.yaml`); LangSmith when `LANGSMITH_TRACING=true` | One trace per run, linked to its request: node, model, tool and retrieval spans with model, tokens and cost. The trace id is on the run record, `run_audit` and every log line of the run |
 | Eval scorecards | `evals/results/` and CI artifacts | Quality, cost and latency per role over time |
 
 The middleware is a plain ASGI class, not Starlette's `BaseHTTPMiddleware`.

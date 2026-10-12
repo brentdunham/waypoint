@@ -2,6 +2,8 @@
 #   docker compose -f compose.dev.yaml up -d
 #   uv run python -m waypoint          # :8000
 #   cd web && npm run dev         # :5173
+# Traces: set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 for the API,
+# then open http://localhost:16686 (service "waypoint").
 name: waypoint-dev
 
 services:
@@ -26,3 +28,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # Jaeger v2 all-in-one: OTLP in, a waterfall view out. In-memory storage,
+  # so traces go when the container does; that is all local debugging needs.
+  jaeger:
+    image: jaegertracing/jaeger:2.20.0
+    ports:
+      - "16686:16686"   # UI
+      - "4318:4318"     # OTLP over HTTP

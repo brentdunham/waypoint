@@ -1,6 +1,6 @@
 # Design: observability and cost
 
-Status: **phases 0 and 1 done (2026-10-11, live check passed on Bob); phase 2 (budgets) done 2026-10-12, checked on Bob; phase 3 (tracing) next.** Written 2026-10-11 as roadmap item 4.
+Status: **phases 0 and 1 done (2026-10-11, live check passed on Bob); phase 2 (budgets) done 2026-10-12, checked on Bob; phase 3 (tracing) done 2026-10-12, a live research run read end to end in local Jaeger with cost on every model span; phase 4 next.** Written 2026-10-11 as roadmap item 4.
 This note is the hand-off for the coding sessions: what to build, what is
 decided, what is still open, and in what order. Read it with
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [rag.md](rag.md), which set the
@@ -410,6 +410,94 @@ charged as its model call ended. `GET /usage` with that key then reported:
 With the balance below zero, the next message was refused with
 `429 over-budget`, and no second run was recorded. The key was revoked and
 the override removed afterwards.
+
+### Phase 3: tracing (2026-10-12)
+
+* `waypoint/tracing.py`: `setup_tracing` (a `TracerProvider` with a batch
+  OTLP/HTTP exporter to `OTEL_EXPORTER_OTLP_ENDPOINT/v1/traces`, or the no-op
+  `NOOP` when it is unset), `start_run_span` / `end_run_span`,
+  `TraceHandler`, `TRACE` and `child_span`. OpenTelemetry 1.45 (SDK, OTLP
+  HTTP exporter) and the ASGI instrumentation 0.66b1 are new dependencies.
+* Requests: the ASGI middleware is outermost, probes excluded, and
+  `RequestContext` binds the request's trace id into the log context.
+* Runs: `RunManager.start` opens the run span as a new root linked to the
+  request span (O8; `api/runs.py` and the corpus upload pass the link), so
+  the trace id is on the record and the `run.started` event from the start
+  and goes into `run_audit.trace_id` with the start row. `_drive` makes the
+  span current for the run's task, binds `trace_id` into the log context,
+  adds `TraceHandler` to the callbacks beside the meter, and ends the span
+  with status, cost, tokens and searches.
+* `TraceHandler`: a span per graph node (a chain whose name is its
+  `langgraph_node`; inner runnables inherit that metadata but not the name),
+  per chat model call (`gen_ai.*` model and tokens, `waypoint.role`,
+  `waypoint.cost_usd` priced from the same table, cache tokens, searches) and
+  per tool call. Parents come from `parent_run_id`, walking up to the nearest
+  run that has a span, never from the current context. A `GraphInterrupt` (the
+  approval pause) ends its node span without an error.
+* Retrieval: `Retriever.search` opens `rag.retrieve` with `child_span`, which
+  finds the running node through LangChain's `var_child_runnable_config`
+  and the handler in `TRACE`, so it nests under the worker that searched.
+* `TRACING__CONTENT` (O9) adds prompts, completions and tool inputs, up to
+  8,000 characters each; off, no span holds any.
+* `compose.dev.yaml` has Jaeger 2.20.0 (UI `:16686`, OTLP `:4318`);
+  `compose.yaml` passes `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`
+  and `TRACING__CONTENT` through, empty by default, so phase 4 is a `.env`
+  change on Bob.
+* Tests (`tests/test_tracing.py`, in-memory exporter): off without an
+  endpoint; a chat run's run span is a root linked to its request, nodes
+  under it, the model span under its node with tokens, cost and role; no
+  attribute anywhere contains the prompt, unless content is on; probes make
+  no spans; the trace id is in `run.started`; a research plan and its resume
+  are two traces on one thread, the approval pause is not an error, every
+  `rag.retrieve` and searcher call sits under `node investigate`; and the
+  handler on its own nests interleaved calls by parent, closes spans a
+  cancelled run left open, and marks a failed model call.
+
+Deviations:
+
+* **The provider is built when the app is created, not in the lifespan.**
+  Same effect: gunicorn (no `--preload`) imports the app in each worker after
+  forking. It also lets the ASGI middleware be added at creation. It is not
+  registered as the global provider, so test apps each have their own.
+* **`receive` and `send` ASGI spans are off.** With them, an SSE stream makes
+  one span per event sent.
+* **Tool calls get spans too** (`execute_tool <name>`); the design listed
+  nodes and model calls only. Cheap, and the chat agent's memory tools show.
+* **`gen_ai.usage.cost` is set beside `waypoint.cost_usd`**: Langfuse reads
+  it, which keeps that option open for phase 4 at no cost.
+* **Request spans are named by route** (`POST /api/v1/threads/{thread_id}/runs`).
+  The ASGI middleware names a span from the raw path before routing, which
+  puts ids in span names and makes every request its own operation in a
+  backend. It now starts with the method alone, and `RequestContext` renames
+  it from the matched route when the response starts; an unmatched path (a
+  404) keeps the method only.
+
+Local check (2026-10-12, Windows dev machine): Jaeger 2.20.0 from
+`compose.dev.yaml`, the API on the host with `FAKE_MODEL=true`, no Postgres or
+Redis, and `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`. A document
+upload, then a research run over it, plan and resume. Jaeger's API returned
+the briefing run's trace with 15 spans: `run research` as root; `node approve`,
+three `node investigate`, `node critique`, `node synthesize` and `node verify`
+under it; under each worker its `rag.retrieve` (vector mode, 1 hit) and its
+`chat claude-haiku-5-5` (role searcher); under `node synthesize` the writer's
+`chat claude-sonnet-5`. The run span's link resolved to a separate trace
+holding `POST /api/v1/threads/{thread_id}/runs`. The scripted model reports no
+usage, so cost and tokens were zero on every model span.
+
+Live check, same setup with real models (Sonnet 5, searcher and verifier on
+Haiku 5.5, Voyage embeddings and reranking), one research run over a small
+uploaded document, plan approved. The briefing run reported $0.310202
+(225,891 tokens in, 25,660 out, 17 web searches) on its record. Its trace in
+Jaeger had 36 spans: `run research`; `node approve`, eight `node investigate`,
+two `node critique`, `node synthesize`,
+`node verify`; eight `rag.retrieve` under the workers; fourteen model spans
+(ten Haiku, four Sonnet). Every model span carried a cost. Summed over the
+trace, the model spans give $0.310136, the same tokens in and out and the same
+17 searches; with the $0.000020 of query embeddings and $0.000046 of
+reranking, which have no model span, that is the run's $0.310202 exactly. The
+trace also shows where the 115 seconds went: workers 97.8 s in total (they run
+in parallel within a round), critique 43.5 s, verification 24.0 s, writing
+13.7 s. The plan run cost $0.006062 and the document's ingestion $0.000004.
 
 ## References
 
