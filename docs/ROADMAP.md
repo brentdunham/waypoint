@@ -347,8 +347,9 @@ $0.70 overall per day (Brent's $20 a month), and `prices.toml` and `call_cost`
 moved into `src/waypoint/usage.py` with a parity test. Phase 1 built
 2026-10-11: every run reports its cost per role on the run record, the
 terminal event, `run_audit` and a line in the UI, and `GET /usage` sums a
-tenant's spend. Its live check on Bob waits for a deploy; budgets (phase 2)
-next.
+tenant's spend. Live check on Bob passed the same day: one research run's tokens
+(316,151 across Sonnet 5 and Haiku 5.5) and web searches (15) match the Claude
+Console exactly. Budgets (phase 2) next.
 
 ### 5. MCP tools and tool-level approval
 

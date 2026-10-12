@@ -1,6 +1,6 @@
 # Design: observability and cost
 
-Status: **phases 0 and 1 built (2026-10-11); phase 1's live check on Bob waits for a deploy, then phase 2.** Written 2026-10-11 as roadmap item 4.
+Status: **phases 0 and 1 done (2026-10-11, live check passed on Bob); phase 2 (budgets) next.** Written 2026-10-11 as roadmap item 4.
 This note is the hand-off for the coding sessions: what to build, what is
 decided, what is still open, and in what order. Read it with
 [ARCHITECTURE.md](../ARCHITECTURE.md) and [rag.md](rag.md), which set the
@@ -289,6 +289,37 @@ are where that gets checked. `evals/retrieval.py` keeps its own
   and research run (both legs) whose reported costs match prices computed by
   hand. `ScriptedChatModel.usage_script` gives the fake runs known usage. One
   integration test checks `run_audit` and `GET /usage` against Postgres.
+
+Live check on Bob (2026-10-11, commit `3aac965`): one research run over
+`waypoint-docs` with web search, in a fresh reviewer tenant (`rev-livecheck`),
+compared with the Claude Console's Usage page for the `waypoint-demo` key in
+the 20:00 UTC hour. Our side is `run_audit` (query in DEPLOY.md); the plan was
+made twice (two `planner` rows) before one was approved.
+
+| | `run_audit` | Console | |
+|---|---|---|---|
+| Sonnet 5, in + out (planner x2, critic, writer) | 34,561 | 34,561 | exact |
+| Haiku 5.5, in + out (searcher, verifier) | 281,590 | 281,590 | exact |
+| Tokens in | 286,897 | 286,897 | exact |
+| Tokens out | 29,254 | 29,254 | exact |
+| Web searches | 15 | 15 | exact |
+
+Console figures are the day's totals minus the 18:00 UTC hour, which was a
+run from before the deploy (its `run_audit` row has no cost, as designed).
+The Console's Cost page is daily and has no API key filter, so dollars were
+not compared directly; with tokens and searches exact, the dollars follow from
+the published rates in `prices.toml`.
+
+What the approved run cost, from its `usage` (total $0.3087, plus $0.0082 for
+the plan): searcher $0.1833 (59%; $0.15 of it is 15 web searches at $0.01),
+critic $0.0599, writer $0.0556, rerank $0.0064 (127,241 tokens), verifier
+$0.0036, query embeddings under $0.0001. Web searches, not tokens, are the
+largest single cost of a research run. The case study in phase 4 starts here.
+
+One more row is worth noting: a second plan at 20:24 was followed by a run
+that completed with no model calls and an empty `usage` (`cost_usd` 0). That
+is what a declined plan records: the graph ends without calling a model, so
+zero is the right answer rather than a missed meter.
 
 Deviations:
 
