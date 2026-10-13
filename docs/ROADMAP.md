@@ -363,7 +363,9 @@ Bob with 7-day retention and an in-app run timeline for reviewers, behind
 [cost case study](case-studies/cost.md): `RESEARCH__MAX_ROUNDS` now defaults
 to 1, which cut cost per research run from $0.2413 to $0.1496 (38%) with
 `covers` 0.11 lower, and `claims_cited` no longer counts uncited statements
-about the research. Deploying the new default to Bob is the last step.
+about the research. Deployed and checked on Bob 2026-10-13: research runs
+there take one round. Compose had kept a fallback of two rounds, so a test now
+holds every compose fallback to the code default. Observability is done.
 
 ### 5. MCP tools and tool-level approval
 
@@ -380,6 +382,11 @@ failures get unpredictable.
 **Done when.** Adding an MCP server to config gives an agent its tools; a
 sensitive tool call pauses for approval and survives a reload like the plan
 approval does.
+
+**Design.** [design/tools.md](design/tools.md), written 2026-10-13. It builds
+this as a new agent, `workspace`, leaving `chat` as it is, and adds a first
+step: documents, as a `search_documents` tool with verified citations and
+attachments under per-tenant limits, before any MCP server.
 
 ### 6. Durable run queue
 
