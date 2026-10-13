@@ -11,7 +11,7 @@ rediscovering it.
   glossary). Keep it in step with any architecture change.
 * `docs/ROADMAP.md`: what is done and what is next.
 * `docs/design/`: design docs. **Current: observability and cost,
-  `docs/design/observability.md`; phases 0 to 4 built; phase 4's case study (`docs/case-studies/cost.md`) changed the research default to one round, not yet deployed to Bob.** `rag.md` is
+  `docs/design/observability.md`; complete (all four phases, deployed 2026-10-13); its case study is `docs/case-studies/cost.md`.** Next per ROADMAP: MCP tools and tool-level approval (item 5), with prompt caching as a smaller open item. `rag.md` is
   complete (all five phases, deployed 2026-10-11) and is the model for format.
   Build it phase by phase as written; record any deviation in the doc and in
   ROADMAP.md.

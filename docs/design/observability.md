@@ -602,6 +602,13 @@ statements about the research (35/36 and 33/36 rechecked), and
 baseline was rechecked and re-accepted at `ed8a1508cbd4`. Spend: $8.94 in
 agent calls over five runs, plus judge calls, within the $15 to $20 planned.
 
+Deployed to Bob 2026-10-13. The first run there still took two rounds:
+`compose.yaml` passed `RESEARCH__MAX_ROUNDS:-2` to the container whenever
+`.env` left it unset, overriding the new code default. Fixed in `674abc9`,
+with a test that compares every `${KEY:-x}` fallback in the compose files to
+the settings default. After the fix Brent confirmed runs on Bob take one
+round. All four phases are done.
+
 ## References
 
 * [OpenTelemetry semantic conventions for generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
