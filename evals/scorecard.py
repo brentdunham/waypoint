@@ -189,6 +189,33 @@ def usage_summary(results: list[CaseResult]) -> dict[str, Any]:
     }
 
 
+def summarize_checks(results: list[CaseResult]) -> dict[str, Any]:
+    """Each check's pass rate per trial (mean and spread) and its counts."""
+    by_trial: dict[str, dict[int, list[bool]]] = defaultdict(lambda: defaultdict(list))
+    skipped: dict[str, int] = defaultdict(int)
+    for r in results:
+        for c in r.checks:
+            if c.passed is None:
+                skipped[c.name] += 1
+            else:
+                by_trial[c.name][r.transcript.trial].append(c.passed)
+    checks = {}
+    for name, trials_ in sorted(by_trial.items()):
+        rates = [sum(v) / len(v) for v in trials_.values() if v]
+        flat = [x for v in trials_.values() for x in v]
+        checks[name] = {
+            "pass_rate": _spread(rates),
+            "passed": sum(flat),
+            "applicable": len(flat),
+            "not_applicable": skipped.get(name, 0),
+        }
+    return checks
+
+
+def failed_checks(result: CaseResult) -> dict[str, str]:
+    return {c.name: c.detail for c in result.checks if c.passed is False}
+
+
 def build_scorecard(
     settings: Settings,
     agent: str,
@@ -198,30 +225,12 @@ def build_scorecard(
     trials: int,
     calibration: Mapping[str, str],
 ) -> dict[str, Any]:
-    by_trial_checks: dict[str, dict[int, list[bool]]] = defaultdict(lambda: defaultdict(list))
     by_trial_scores: dict[str, dict[int, list[int]]] = defaultdict(lambda: defaultdict(list))
-    skipped: dict[str, int] = defaultdict(int)
     for r in results:
-        trial = r.transcript.trial
-        for c in r.checks:
-            if c.passed is None:
-                skipped[c.name] += 1
-            else:
-                by_trial_checks[c.name][trial].append(c.passed)
         for g in r.grades:
             if g.score is not None:
-                by_trial_scores[g.criterion][trial].append(g.score)
-
-    checks = {}
-    for name, trials_ in sorted(by_trial_checks.items()):
-        rates = [sum(v) / len(v) for v in trials_.values() if v]
-        flat = [x for v in trials_.values() for x in v]
-        checks[name] = {
-            "pass_rate": _spread(rates),
-            "passed": sum(flat),
-            "applicable": len(flat),
-            "not_applicable": skipped.get(name, 0),
-        }
+                by_trial_scores[g.criterion][r.transcript.trial].append(g.score)
+    checks = summarize_checks(results)
 
     criteria = {}
     for name in sorted({g.criterion for r in results for g in r.grades}):
@@ -261,7 +270,7 @@ def build_scorecard(
                 "trial": r.transcript.trial,
                 "error": r.transcript.error,
                 "elapsed_s": round(r.transcript.elapsed_s, 1),
-                "failed_checks": {c.name: c.detail for c in r.checks if c.passed is False},
+                "failed_checks": failed_checks(r),
                 "grades": {
                     g.criterion: {"score": g.score, "reasoning": g.reasoning, "judge": g.judge}
                     for g in r.grades

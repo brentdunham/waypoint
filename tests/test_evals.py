@@ -323,6 +323,46 @@ def test_cli_run_accept_and_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert not (out / "replay.sqlite").exists()  # the scripted model is never recorded
 
 
+def test_recheck_rescores_saved_transcripts_and_keeps_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "results"
+    assert (
+        main(["run", "--fake", "--agent", "chat", "--case", "arithmetic", "--out", str(out)]) == 0
+    )
+    path = next(out.glob("chat/*/scorecard.json"))
+    original = json.loads(path.read_text())
+    tampered = {
+        **original,
+        "checks": {},
+        "runs": [{**r, "failed_checks": {"x": "y"}} for r in original["runs"]],
+    }
+    path.write_text(json.dumps(tampered))
+
+    assert main(["recheck", str(path.parent)]) == 0
+    card = json.loads(path.read_text())
+    assert card["checks"] == original["checks"]
+    assert [r["failed_checks"] for r in card["runs"]] == [
+        r["failed_checks"] for r in original["runs"]
+    ]
+    assert card["fingerprint"] == original["fingerprint"]
+    assert card["usage"] == original["usage"]
+    assert "rechecked" in card
+    assert "rechecked" not in original
+
+
+def test_a_transcript_survives_its_json_round_trip() -> None:
+    transcript = Transcript(agent="research", case_id="c", trial=2, models={"writer": "m"})
+    transcript.values = {"report": "x"}
+    transcript.calls = [Call("writer", "m", input_tokens=5, output_tokens=6, searches=1)]
+    transcript.replayed = {"planner": 1}
+    transcript.replayed_calls = [Call("planner", "m", input_tokens=3)]
+    transcript.error = "boom"
+    again = Transcript.from_dict(json.loads(json.dumps(transcript.to_dict())))
+    assert again.to_dict() == transcript.to_dict()
+
+
 def test_judge_knows_the_date_and_prompt_changes_invalidate_calibration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

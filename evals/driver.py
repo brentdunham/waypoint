@@ -86,6 +86,24 @@ class Transcript:
                 return str(message["content"])
         return ""
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Transcript:
+        """A transcript as ``to_dict`` wrote it (``transcripts.jsonl``)."""
+        return cls(
+            agent=data["agent"],
+            case_id=data["case_id"],
+            trial=data["trial"],
+            models=data.get("models") or {},
+            values=data.get("values") or {},
+            interrupts=data.get("interrupts") or [],
+            calls=[Call(**c) for c in data.get("calls") or []],
+            replayed=data.get("replayed") or {},
+            replayed_calls=[Call(**c) for c in data.get("replayed_calls") or []],
+            replayed_unknown=data.get("replayed_unknown") or {},
+            error=data.get("error"),
+            elapsed_s=data.get("elapsed_s", 0.0),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "agent": self.agent,

@@ -112,8 +112,8 @@ How it fits together (`evals/`):
 * **Checks** — deterministic, run first: `[n]` citations resolve, sources are
   used, every finding has sources (`findings_sourced`) and they came from
   citations rather than the search-results fallback (`findings_cited`), at
-  least 80% of the briefing's claim-length sentences carry an `[n]`
-  (`claims_cited`), a corpus case cites a document (`cites_documents`) or a
+  least 80% of the briefing's claim-length sentences carry an `[n]`, not
+  counting uncited statements about the research itself (`claims_cited`), a corpus case cites a document (`cites_documents`) or a
   web page as well (`cites_web`, for cases that need both),
   rounds and plan size stay in bounds, a declined plan searches nothing;
   for chat, the right tool was (or was not) called, facts were remembered and
@@ -186,6 +186,12 @@ Delete `replay.sqlite` to start over.
 
 `compare` shares the store too: when A and B differ only in the writer, both
 sides replay the same planner, searches and critic.
+
+Checks read only the saved transcript, so a corrected check costs nothing to
+apply to old runs: `uv run python -m evals recheck <results dir> [...]`
+re-runs them with each run's own research settings and rewrites
+`scorecard.json` and `summary.md`, keeping grades and usage. Recheck a
+baseline's run before re-accepting it.
 
 ### Scheduled runs
 

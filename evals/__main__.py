@@ -20,6 +20,8 @@ from typing import Any
 
 from evals.calibrate import calibrate
 from evals.cases import load_dataset
+from evals.checks import run_checks
+from evals.driver import Transcript
 from evals.judge import ROUTING, assign, load_rubric
 from evals.replay import FILENAME, ReplayStore
 from evals.retrieval import add_parser as add_retrieval_parser
@@ -31,10 +33,13 @@ from evals.scorecard import (
     CaseResult,
     accept,
     build_scorecard,
+    failed_checks,
     fingerprint,
+    git_sha,
     load_baseline,
     regressions,
     render_markdown,
+    summarize_checks,
 )
 from waypoint.agents.models import check_model_config
 from waypoint.agents.registry import listed_agents, roles_by_agent
@@ -215,6 +220,49 @@ def cmd_accept(args: argparse.Namespace) -> int:
     return 0
 
 
+def recheck(results_dir: Path, settings: Settings) -> dict[str, Any]:
+    """Re-run the programmatic checks on a results directory's saved transcripts.
+
+    Checks read only the transcript, so a corrected check can be applied to a
+    past run without calling a model. ``checks`` and each run's
+    ``failed_checks`` are replaced; grades, usage and the fingerprint are kept,
+    and ``rechecked`` records when and at which commit. The run's own research
+    settings are used, not the current ones.
+    """
+    path = results_dir / "scorecard.json"
+    card: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    agent = card["agent"]
+    if agent == "research" and card.get("settings"):
+        research = type(settings.research).model_validate(card["settings"])
+        settings = settings.model_copy(update={"research": research})
+    cases = {c.id: c for c in load_dataset(agent)}
+    results = []
+    with (results_dir / "transcripts.jsonl").open(encoding="utf-8") as fh:
+        for line in fh:
+            t = Transcript.from_dict(json.loads(line))
+            case = cases[t.case_id]
+            results.append(CaseResult(case, t, run_checks(t, case.checks, settings)))
+    by_run = {(r.case.id, r.transcript.trial): r for r in results}
+    card["checks"] = summarize_checks(results)
+    for run in card["runs"]:
+        run["failed_checks"] = failed_checks(by_run[(run["case"], run["trial"])])
+    card["rechecked"] = {
+        "date": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+        "git_sha": git_sha(),
+    }
+    path.write_text(json.dumps(card, indent=2) + "\n", encoding="utf-8")
+    (results_dir / "summary.md").write_text(render_markdown(card, None, None), encoding="utf-8")
+    return card
+
+
+def cmd_recheck(args: argparse.Namespace) -> int:
+    for results_dir in args.results:
+        card = recheck(Path(results_dir), Settings(fake_model=True))
+        rates = ", ".join(f"{k} {v['passed']}/{v['applicable']}" for k, v in card["checks"].items())
+        print(f"{results_dir}: {rates}")
+    return 0
+
+
 def cmd_fingerprint(args: argparse.Namespace) -> int:
     settings = _settings(args)
     for agent in _agents(args.agent):
@@ -276,6 +324,10 @@ def main(argv: list[str] | None = None) -> int:
     acc.add_argument("--min-trials", type=int, default=MIN_BASELINE_TRIALS,
                      help=f"refuse scorecards with fewer trials (default {MIN_BASELINE_TRIALS})")  # fmt: skip
     acc.set_defaults(fn=cmd_accept)
+
+    rec = sub.add_parser("recheck", help="re-run the checks on saved transcripts (no model calls)")
+    rec.add_argument("results", nargs="+", help="results directories (with transcripts.jsonl)")
+    rec.set_defaults(fn=cmd_recheck)
 
     add_retrieval_parser(sub)
 
