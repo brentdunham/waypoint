@@ -565,6 +565,42 @@ def test_claims_cited_counts_claim_sentences_and_moves_trailing_citations_back()
     assert CHECKS["claims_cited"](transcript, 0.6, build_settings()).passed is True
 
 
+def test_claims_cited_leaves_out_uncited_statements_about_the_research() -> None:
+    from evals.checks import about_the_research
+
+    gaps = [
+        "No field data below minus twenty degrees was found in any source.",
+        "Electrode corrosion's role could not be assessed from the available evidence.",
+        "Confidence here is low because the studies are small and mostly vendor funded.",
+        "No source directly compares the older and newer units in the field (confidence 0.5).",
+    ]
+    claims = [
+        "Sodium-ion cells cost about the same as LFP cells in 2025 at pack level.",
+        "Field trials found heat pumps kept eighty percent of capacity at minus fifteen.",
+        "Sodium-ion does not need lithium, which shields it from lithium price swings.",
+    ]
+    assert all(about_the_research(x) for x in gaps)
+    assert not any(about_the_research(x) for x in claims)
+
+    body = " ".join([*(f"{x[:-1]} [1]." for x in claims), *gaps])
+    transcript = Transcript(agent="research", case_id="c", trial=0, models={})
+    transcript.values = {"report": body + "\n\nSources\n[1] A - u"}
+    result = CHECKS["claims_cited"](transcript, True, build_settings())
+    assert result.passed is True
+    assert result.detail == "3/3 claim sentences cited, 4 uncited about the research not counted"
+
+
+def test_a_cited_statement_about_the_research_still_counts() -> None:
+    body = (
+        "The meta-analysis is genuine and verifiable, though it does not settle task type [1].\n"
+        "Remote workers reported higher output in three of the five large field studies."
+    )
+    transcript = Transcript(agent="research", case_id="c", trial=0, models={})
+    transcript.values = {"report": body + "\n\nSources\n[1] A - u"}
+    result = CHECKS["claims_cited"](transcript, True, build_settings())
+    assert result.detail == "1/2 claim sentences cited"
+
+
 def test_judge_sees_citation_numbers_quotes_and_retrieved_only_sources() -> None:
     from evals.judge import material_for
 

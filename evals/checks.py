@@ -22,6 +22,24 @@ SOURCE_LINE = re.compile(r"^\[(\d+)\] ", re.MULTILINE)
 MIN_CLAIM_WORDS = 8
 """Shorter sentences are mostly transitions and headings, not claims."""
 
+NEGATION = re.compile(r"\b(?:no|not|none|neither|nor|never|without|cannot)\b|n't\b", re.IGNORECASE)
+REPORTED = re.compile(
+    r"\b(?:found|located|verified|verifiable|identified|obtained|assessed|published|"
+    r"documented|undocumented|sourced|unsourced|reported|tested|untested)\b",
+    re.IGNORECASE,
+)
+CONFIDENCE = re.compile(
+    r"\bconfidence\b(?:[^.]{0,40})\b(?:is|varies|remains)\b|\(confidence [\d.]+",
+    re.IGNORECASE,
+)
+"""A sentence about the research rather than the topic: what it could not find
+(a negation and a reporting verb, "no field data below -20C was found") or how
+sure it is ("confidence here is low"). Nothing can cite an absence, so
+``claims_cited`` does not count these when they are uncited. Observability
+phase 4 (2026-10-12): with one research round, briefings report more gaps
+instead of filling them, and these sentences took claims_cited from 34/36 to
+29/36. Without them the two runs score 35/36 and 33/36."""
+
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:
@@ -113,23 +131,33 @@ def claim_sentences(body: str) -> list[str]:
     return [x for x in sentences if len(CITATION.sub("", x).split()) >= MIN_CLAIM_WORDS]
 
 
+def about_the_research(sentence: str) -> bool:
+    """A gap or confidence statement, which no source can support (see ``CONFIDENCE``)."""
+    text = CITATION.sub("", sentence)
+    return bool(CONFIDENCE.search(text)) or bool(NEGATION.search(text) and REPORTED.search(text))
+
+
 @check("claims_cited")
 def _claims_cited(t: Transcript, arg: Any, s: Settings) -> CheckResult:
     """Share of the briefing's claim-length sentences that carry an [n] (default 0.8).
 
     The deterministic half of ``grounded``: it cannot tell whether a citation
-    is the right one, only whether there is one. Summary and "nothing was
-    found" sentences legitimately go uncited, hence a share, not all.
+    is the right one, only whether there is one. Uncited sentences about the
+    research itself (``about_the_research``) are not counted; summary sentences
+    legitimately go uncited too, hence a share, not all.
     """
     if not s.research.web_search:
         return CheckResult("claims_cited", None, "web search off")
     body, _ = _briefing(t)
-    sentences = claim_sentences(body)
+    claims = claim_sentences(body)
+    sentences = [x for x in claims if CITATION.search(x) or not about_the_research(x)]
     if not sentences:
         return CheckResult("claims_cited", False, "no claim-length sentences")
     share = 0.8 if arg is True else float(arg)
     cited = sum(bool(CITATION.search(x)) for x in sentences)
     detail = f"{cited}/{len(sentences)} claim sentences cited"
+    if skipped := len(claims) - len(sentences):
+        detail += f", {skipped} uncited about the research not counted"
     return CheckResult("claims_cited", cited / len(sentences) >= share, detail)
 
 
