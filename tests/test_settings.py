@@ -138,3 +138,44 @@ def test_the_model_can_be_overridden_per_call(monkeypatch: pytest.MonkeyPatch) -
 def test_out_of_range_temperature_fails_at_boot(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(Exception, match="less than or equal to 1"):
         _settings(monkeypatch, MODEL_TEMPERATURE="2.0")
+
+
+def test_compose_fallbacks_match_the_settings_defaults() -> None:
+    """``${KEY:-x}`` in a compose file must not quietly override a code default.
+
+    compose.yaml kept ``RESEARCH__MAX_ROUNDS:-2`` after the default became 1
+    (cost case study), so Bob ran two rounds with no such line in its .env.
+    Fields whose default is None or built by a factory are derived, and skipped.
+    """
+    import re
+    from pathlib import Path
+
+    from pydantic import BaseModel
+    from pydantic_core import PydanticUndefined
+
+    root = Path(__file__).resolve().parents[1]
+    pattern = re.compile(r"^\s+([A-Z][A-Z0-9_]*__[A-Z0-9_]+): \$\{\1:-([^}]*)\}\s*$", re.M)
+    checked, wrong = 0, []
+    for name in ("compose.yaml", "compose.prod.yaml", "compose.dev.yaml"):
+        path = root / name
+        if not path.exists():
+            continue
+        for key, fallback in pattern.findall(path.read_text(encoding="utf-8")):
+            section, field = key.lower().split("__", 1)
+            model = Settings.model_fields[section].annotation
+            if not (isinstance(model, type) and issubclass(model, BaseModel)):
+                continue
+            default = model.model_fields[field].default
+            if default is None or default is PydanticUndefined:
+                continue
+            checked += 1
+            if isinstance(default, bool):
+                same = fallback == str(default).lower()
+            elif isinstance(default, int | float):
+                same = fallback != "" and float(fallback) == float(default)
+            else:
+                same = fallback == str(default)
+            if not same:
+                wrong.append(f"{name}: {key}:-{fallback} but the default is {default!r}")
+    assert checked >= 10
+    assert not wrong, wrong
