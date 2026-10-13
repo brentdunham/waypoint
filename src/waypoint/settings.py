@@ -193,6 +193,19 @@ class ResearchSettings(BaseModel):
     )
 
 
+class WorkspaceSettings(BaseModel):
+    """The workspace agent (docs/design/tools.md): chat over documents and tools."""
+
+    verify_citations: bool = Field(
+        default=True,
+        description=(
+            "Check every reply that cites documents against the passages it cites, with "
+            "the research agent's verifier: wrong or missing citations are fixed, and "
+            "unsupported sentences are rewritten once. One verifier call per citing reply."
+        ),
+    )
+
+
 class RagSettings(BaseModel):
     """Retrieval over tenant documents (docs/design/rag.md).
 
@@ -476,6 +489,7 @@ class Settings(BaseSettings):
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     stream: StreamSettings = Field(default_factory=StreamSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
+    workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     evals: EvalSettings = Field(default_factory=EvalSettings)
     rag: RagSettings = Field(default_factory=RagSettings)
 

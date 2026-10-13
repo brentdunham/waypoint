@@ -10,15 +10,20 @@ rediscovering it.
 * `docs/guide/`: the long-form design guide for reviewers (Mermaid diagrams,
   glossary). Keep it in step with any architecture change.
 * `docs/ROADMAP.md`: what is done and what is next.
-* `docs/design/`: design docs. **Current: observability and cost,
-  `docs/design/observability.md`; complete (all four phases, deployed 2026-10-13); its case study is `docs/case-studies/cost.md`.** Next per ROADMAP: MCP tools and tool-level approval (item 5), with prompt caching as a smaller open item. `rag.md` is
-  complete (all five phases, deployed 2026-10-11) and is the model for format.
+* `docs/design/`: design docs. **Current: the workspace agent,
+  `docs/design/tools.md` (ROADMAP item 5); phase 1 built 2026-10-13, its
+  baseline and deploy next, then phases 2 to 5.** Each phase updates every
+  document in that design's Documentation table in the same commit as its
+  code. `observability.md` is complete (deployed 2026-10-13; case study
+  `docs/case-studies/cost.md`). `rag.md` is complete (all five phases,
+  deployed 2026-10-11) and is the model for format.
   Build it phase by phase as written; record any deviation in the doc and in
   ROADMAP.md.
 * `docs/case-studies/`: write-ups of measured changes (`grounded.md` is the
   model to follow; `retrieval.md` covers RAG phase 4).
 * `src/waypoint/`: the service. `agents/graphs/research.py` is the research
-  agent; `agents/models.py` builds models and embeddings; `infra/db.py` owns
+  agent, `agents/graphs/workspace.py` the workspace agent, `agents/verify.py`
+  the shared citation checker; `agents/models.py` builds models and embeddings; `infra/db.py` owns
   the schema and `migrate()`.
 * `evals/`: datasets, rubrics, calibration, baselines, results.
 * `web/`: React/Vite UI.
@@ -70,7 +75,10 @@ or a command). Explain why, not only what.
 
 Small, one concern each, imperative subject. End messages with the attribution
 lines the session provides (Co-Authored-By and Claude-Session). Commit and push
-only when Brent asks. Write the message to a file with
+only when Brent asks. Before committing, check `git diff --cached --stat` lists every file you
+meant to change: a patch script that fails part-way can leave a file
+unchanged without stopping the commit (it happened to the workspace design,
+2026-10-13). Write the message to a file with
 `[IO.File]::WriteAllText` and use `git commit -F`.
 
 ## Deploy

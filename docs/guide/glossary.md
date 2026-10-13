@@ -7,7 +7,7 @@ definition gives the general meaning first, then what it means here.
 
 | Term | Definition |
 |---|---|
-| **Agent** | A program in which a model decides some of the steps. Here: a compiled LangGraph graph plus its entry in the registry (`chat`, `research`). |
+| **Agent** | A program in which a model decides some of the steps. Here: a compiled LangGraph graph plus its entry in the registry (`chat`, `research`, `workspace`, and `ingest`, which uploads start). |
 | **Approval** | The research agent's pause for a person to approve, edit or decline its plan. Implemented with an interrupt. |
 | **Briefing** | The research agent's final output: a cited summary with a source list appended from metadata. Stored as `report`. |
 | **Checkpoint** | A snapshot of a thread's graph state, written after each super-step. Enables pausing, resuming and time travel. |
@@ -30,7 +30,7 @@ definition gives the general meaning first, then what it means here.
 | **Quote** | Text from a source page that the searcher's answer drew on, taken from the citation's `cited_text`. Up to three per source. |
 | **Reducer** | A function that merges a node's update into a state key, for example `add_messages` or `merge_findings`. Keys without one are last-write-wins. |
 | **Retrieved-only source** | A page or passage given to the searcher when it cited nothing, even after being asked once more. Kept, marked `cited: false`, confidence capped at 0.3. |
-| **Role** | A model call site in an agent: `planner`, `searcher`, `critic`, `writer`, `verifier`, `assistant`. Each can use a different model. |
+| **Role** | A model call site in an agent: `planner`, `searcher`, `critic`, `writer`, `verifier`, `assistant` (chat and workspace). Each can use a different model. |
 | **Round / wave** | One pass of parallel workers followed by one critique. At most `RESEARCH__MAX_ROUNDS`. |
 | **Run** | One execution of a graph on a thread, from a start request to a terminal state. |
 | **Searcher** | The research role that answers one question with web search. One worker per question. |
@@ -41,8 +41,10 @@ definition gives the general meaning first, then what it means here.
 | **Super-step** | One round of graph execution: every node scheduled together runs, then state is checkpointed. |
 | **Thread** | A conversation with one agent, owned by one tenant and user, made of checkpoints. |
 | **Time travel** | Reading or writing an earlier checkpoint. Writing forks a new branch. |
-| **Verifier** | The research role that checks each briefing sentence against the sources' quotes. |
+| **Verifier** | The role that checks each sentence of a cited answer against its sources' quotes: research's briefings and workspace's cited replies. |
 | **Worker** | Two meanings: a gunicorn process serving requests, or a research `investigate` node instance answering one question. The text says which. |
+| **Workspace** | The agent that chats over a thread's selected documents, with checked citations and chat's memory; MCP tools and approval are its later phases. |
+| **`search_documents`** | Workspace's tool: searches the thread's corpus and returns passages as `search_result` blocks, which the reply cites. |
 | **Writer** | The research role that writes the briefing from the findings, and rewrites unsupported sentences during verification. |
 
 ## Platform

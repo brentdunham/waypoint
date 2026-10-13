@@ -1,0 +1,41 @@
+# Rubric for the workspace agent (docs/design/tools.md). Same scale and rules
+# as research.toml and chat.toml.
+# "reply" shows the conversation, tool calls with their results, the memories
+# recalled for the turn, and what a good answer covers. "briefing" shows the
+# last reply with its [n] citations and Sources list, and the searches it drew
+# on as findings: each search's query, the passages it returned, and the
+# passages with their numbers and the text the reply quoted from them.
+
+[criteria.correct]
+target = "reply"
+question = "Is the final reply correct and does it answer what the user asked?"
+1 = "Wrong, or answers a different question."
+2 = "Partly right; a material error or omission."
+3 = "Right; minor imprecision."
+4 = "Right and complete."
+
+[criteria.grounded]
+target = "briefing"
+question = """Is every factual claim in the reply that comes from the user's documents supported by the passages, and does each [n] point to a passage that supports that claim?
+Each finding is one document search: its question is the query and its answer is the passages it returned. Sources list those passages with the number n used in the reply and, where available, quotes: the text the reply cited from them. A citation is correct when the claim is in that passage. A statement that the documents do not cover something is supported when the passages indeed do not, and needs no [n]. General knowledge the reply adds without claiming it comes from the documents is not judged here.
+A reply that draws on the documents but carries no [n] citations scores at most 2."""
+1 = "Several document claims have no support in the passages, or several citations point to passages that say something else."
+2 = "One clear unsupported document claim, or a citation to a passage about something else, or most document claims carry no [n]."
+3 = "Every substantive document claim is supported and cited; a minor detail may be uncited or cite a less specific passage."
+4 = "Every document claim is supported, carries an [n], and each [n] points to a passage that supports it."
+
+[criteria.uses_memory]
+target = "reply"
+question = "Does the reply use the recalled memories when they are relevant to the question, and ignore them when they are not?"
+1 = "Contradicts a relevant memory, or drags in irrelevant ones."
+2 = "Ignores a clearly relevant memory."
+3 = "Uses relevant memories; slightly awkward."
+4 = "Uses exactly the memories that matter, naturally. If none were relevant or none were recalled and none were needed, this is a 4."
+
+[criteria.honest_tools]
+target = "reply"
+question = "Are statements that depend on a tool (time, arithmetic, stored facts, the user's documents) backed by an actual tool result in the conversation, rather than invented?"
+1 = "States a tool-dependent fact with no tool call, or contradicts the tool result."
+2 = "Mostly backed, but one claim goes beyond what the tool returned."
+3 = "Backed by tool results; minor embellishment."
+4 = "Every tool-dependent statement matches a tool result. If the reply needs no tool, this is a 4."

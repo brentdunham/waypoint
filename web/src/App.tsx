@@ -51,7 +51,17 @@ export default function App() {
   const thread = threads.find((t) => t.thread_id === threadId);
   // The open thread decides which agent a message goes to, not the picker.
   const activeAgent = thread?.agent ?? agent;
-  const findings: Finding[] = run.busy
+  // A workspace thread's documents are in its state: show them in the picker
+  // when the thread is opened or a run ends.
+  const threadCorpus = snapshot?.values["corpus_id"] as string | null | undefined;
+  useEffect(() => {
+    if (activeAgent === "workspace" && threadId && threadCorpus !== undefined) {
+      setCorpusId(threadCorpus ?? "");
+    }
+  }, [activeAgent, threadId, threadCorpus]);
+
+  // Research findings get their own card; a workspace reply lists its sources inline.
+  const findings: Finding[] = run.busy || activeAgent !== "research"
     ? []
     : (run.result?.findings ?? (snapshot?.values["findings"] as Finding[] | undefined) ?? []);
 
@@ -82,8 +92,13 @@ export default function App() {
       }
       const message = draft;
       setDraft("");
-      // The corpus goes with the research run's first input; the approval card
-      // can still switch it off.
+      // Research: the corpus goes with the run's first input, and the approval
+      // card can still switch it off. Workspace: every message carries the
+      // picker's choice, and the thread keeps it (none clears it).
+      if (activeAgent === "workspace") {
+        await run.launch(id, { message, input: { corpus_id: corpusId || null } });
+        return;
+      }
       const withDocuments = agent === "research" && corpusId && !threadId;
       await run.launch(id, withDocuments ? { message, input: { corpus_id: corpusId } } : { message });
     });
@@ -252,7 +267,11 @@ export default function App() {
             <textarea
               value={draft}
               placeholder={
-                activeAgent === "research" ? "Topic to research…" : "Ask something…"
+                activeAgent === "research"
+                  ? "Topic to research…"
+                  : activeAgent === "workspace" && corpusId
+                    ? "Ask about your documents…"
+                    : "Ask something…"
               }
               rows={2}
               onChange={(event) => setDraft(event.target.value)}

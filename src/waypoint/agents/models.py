@@ -82,7 +82,7 @@ class ScriptedChatModel(BaseChatModel):
 
         return RunnableLambda(answer, name=f"scripted_{schema.__name__}")
 
-    def _next(self, messages: list[BaseMessage]) -> AIMessage:
+    def _next(self, messages: list[BaseMessage]) -> AIMessage:  # noqa: PLR0911 - one reply per prompt shape
         content: Any = messages[-1].content if messages else ""
         blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
         # Document passages arrive as search_result blocks before the prompt.
@@ -93,6 +93,33 @@ class ScriptedChatModel(BaseChatModel):
             # Before the tool check: a document may quote the [[tool:...]] syntax.
             heading = text.split("<chunk>\n", 1)[-1].split("\n", 1)[0]
             return AIMessage(content=f"Scripted context: this chunk is from {heading}.")
+        if passages and getattr(messages[-1], "type", "") == "tool":
+            # search_documents came back (workspace): answer from the first
+            # passage and cite it, as the API does for search results in a
+            # tool result, so the citation path runs offline too.
+            first = passages[0]
+            quoted = str(first["content"][0]["text"])
+            return AIMessage(
+                content=[
+                    {"type": "text", "text": "From the documents: "},
+                    {
+                        "type": "text",
+                        "text": quoted.rstrip("."),
+                        "citations": [
+                            {
+                                "type": "search_result_location",
+                                "source": first["source"],
+                                "title": first["title"],
+                                "cited_text": quoted,
+                                "search_result_index": 0,
+                                "start_block_index": 0,
+                                "end_block_index": 1,
+                            }
+                        ],
+                    },
+                    {"type": "text", "text": "."},
+                ]
+            )
         if "[[tool:" in text:
             import json as _json
             import re

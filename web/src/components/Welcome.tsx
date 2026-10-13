@@ -10,6 +10,12 @@ const EXAMPLES: { agent: string; label: string; text: string; corpus?: string }[
     corpus: "waypoint-docs",
   },
   {
+    agent: "workspace",
+    label: "Ask the docs",
+    text: "How does Waypoint keep one tenant's memories away from another's?",
+    corpus: "waypoint-docs",
+  },
+  {
     agent: "research",
     label: "Research",
     text: "sodium-ion batteries versus lithium-ion for grid storage",
@@ -91,7 +97,7 @@ export function Welcome({
         </li>
         <li>
           <strong>Parallel workers.</strong> One web-searching worker per question, then a critic that
-          scores each finding and may ask follow-ups. The panel shows which model plays each role.
+          scores each finding (and, if follow-up rounds are turned on, asks more). The panel shows which model plays each role.
         </li>
         <li>
           <strong>Checked citations.</strong> Every sentence's <code>[n]</code> is verified against the
@@ -100,8 +106,9 @@ export function Welcome({
         {corpora.includes("waypoint-docs") && (
           <li>
             <strong>Your documents.</strong> Pick <code>waypoint-docs</code> under Documents: the
-            research agent also searches this project's own docs, and passages it cites carry a
-            document badge. Retrieval was tuned on a gold set; the case study below shows how.
+            research agent also searches this project's own docs, and the Workspace agent answers
+            from them in a conversation, with each cited sentence checked. Retrieval was tuned on a
+            gold set; the case study below shows how.
           </li>
         )}
         <li>
@@ -109,7 +116,8 @@ export function Welcome({
           one to branch the conversation.
         </li>
         <li>
-          <strong>Chat memory.</strong> Facts you ask it to remember carry over to new threads.
+          <strong>Memory.</strong> Facts you ask Chat or Workspace to remember carry over to new
+          threads of either.
         </li>
       </ol>
 

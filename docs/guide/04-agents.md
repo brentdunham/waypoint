@@ -5,7 +5,7 @@
 An **agent** here is a compiled LangGraph graph plus an entry in the registry.
 A **graph** is a set of **nodes** (async functions that read state and return
 an update) joined by **edges**, some of them conditional. A **role** is a
-model call site within an agent: the research agent has five.
+model call site within an agent: the research agent has five, workspace two.
 
 ## 4.1 The registry
 
@@ -42,7 +42,8 @@ flowchart LR
 
 What it demonstrates: typed runtime context, a store as memory that outlives a
 thread, node-level retries, and a tool loop. `recall_memories` is not cached
-([3.8](03-state-and-persistence.md#38-the-node-cache)).
+([3.8](03-state-and-persistence.md#38-the-node-cache)). It lives in
+`agents/memory.py`, shared with the workspace agent ([4.11](#411-the-workspace-agent)).
 
 ## 4.3 Model roles
 
@@ -79,6 +80,10 @@ the eval baseline and the scheduled evals run it as `claude-sonnet-5`.
 | critic | `MODEL` | Judgement: how good is each finding, what is missing |
 | writer | `MODEL` | Writing quality is what the reader sees |
 | verifier | Haiku 5.5 (`MODELS__RESEARCH__VERIFIER`) | Classifies sentences against short quotes; a narrow task |
+
+The workspace agent has two roles: `assistant` (`MODEL`, which also rewrites
+unsupported sentences) and `verifier` (Haiku 5.5, `MODELS__WORKSPACE__VERIFIER`,
+for the same reason as research's).
 
 Models are built lazily and cached per name, so a per-run choice costs one
 construction per process. Each role's runnable carries `model_role` and
@@ -236,8 +241,9 @@ counted by the `findings_cited` eval check.
 
 ## 4.7 The verify step
 
-`verify` in `research.py`. Evidence for it: the
-[grounded case study](../case-studies/grounded.md).
+`check_citations` in `agents/verify.py`, called by research's `verify` node
+and by workspace's `cite` node ([4.11](#411-the-workspace-agent)). Evidence
+for it: the [grounded case study](../case-studies/grounded.md).
 
 ```mermaid
 flowchart TD
@@ -312,3 +318,56 @@ strings because the research worker sends each as its own text block, and
 Claude cites whole blocks ([4.6](#46-citations-from-metadata)).
 
 No node is cached: every node writes to the database.
+
+## 4.11 The workspace agent
+
+`src/waypoint/agents/graphs/workspace.py`. Roles: `assistant`, `verifier`.
+Design: [design/tools.md](../design/tools.md).
+
+```mermaid
+flowchart LR
+    S((START)) --> sel[select_corpus<br/>resolve the thread's corpus<br/>for this tenant, when it changes]
+    sel --> recall[recall_memories<br/>shared with chat]
+    recall --> model[model<br/>system prompt + memories + messages;<br/>search_documents bound only<br/>when the thread has documents]
+    model -->|tool calls| tools[tools<br/>now, calculate, remember,<br/>recall, search_documents]
+    tools --> model
+    model -->|no tool calls| cite[cite<br/>number citations, list sources,<br/>verify with the research verifier]
+    cite --> E((END))
+```
+
+**Why a separate agent.** Documents, and in later phases external MCP tools
+and approval for tool calls, add moving parts. Keeping them out of `chat`
+keeps the simplest agent simple and its eval baseline still (decision
+[D25](07-decisions.md#d25-workspace-is-a-separate-agent-from-chat)).
+
+**The thread's documents are state.** A run may send `corpus_id` in its
+input; the checkpoint keeps it, so every later turn searches the same corpus
+until a run sends another one or `null`. The design first put the corpus on
+the thread's record; state needed no API change and survives time travel like
+everything else.
+
+**`search_documents`.** The model chooses only the query. The corpus comes
+from state (`InjectedState`) and the tenant from the run's context, so a
+prompt cannot point the tool at another corpus. It returns the passages as
+`search_result` blocks, which Claude cites in its reply with
+`search_result_location` citations: the same objects a research worker's
+document citations are, checked live on 2026-10-13 before building on it.
+
+**`cite`.** Turns the reply into what a research briefing looks like, so the
+verifier, the evals and the UI treat both the same way:
+
+1. Strip `[n]` marks the model typed itself; only citations the API attached
+   are real.
+2. Number the cited passages in the order the reply first cites them, and put
+   `[n]` after each cited span.
+3. Record one finding per search the reply drew on: the query, the passages
+   (the evidence the verifier reads) and the passages as sources, with the
+   text the reply quoted from each.
+4. Run `check_citations`, then append a `Sources` list of what the checked
+   text cites. The reply keeps its message id, so it replaces the streamed
+   draft.
+
+**Memory.** The same namespace as chat, `("memories", tenant, user)`, so a
+fact told to either agent holds in both and `/memories` stays one list
+(decision [D26](07-decisions.md#d26-workspace-shares-chats-memory)).
+

@@ -115,3 +115,28 @@ class WorkerInput(TypedDict):
     corpus_id: NotRequired[str | None]
     """The corpus to retrieve from, if any. In the input, so in the cache key:
     the same question with and without documents is a different answer."""
+
+
+class WorkspaceState(TypedDict, total=False):
+    """The workspace agent's state: chat's, plus the thread's documents and the
+    last reply's sources (docs/design/tools.md)."""
+
+    messages: Annotated[list[AnyMessage], add_messages]
+    recalled: list[str]
+    """Long-term memories loaded for this turn."""
+    step_count: int
+    corpus_id: str | None
+    """Run input: the corpus ``search_documents`` searches. Kept in the thread's
+    checkpoint, so it holds for later turns until a run sends another (or
+    ``None`` to stop searching documents)."""
+    corpus: dict[str, Any] | None
+    """``{"corpus_id", "name"}``, resolved for the tenant when ``corpus_id`` changes."""
+    findings: list[Finding]
+    """The last reply's evidence: one finding per ``search_documents`` call it
+    drew on (question = the query, answer = the passages, sources = the
+    passages with what the reply quoted). Replaced every turn. The verifier and
+    the evals read it, as they read research findings."""
+    report: str
+    """The last reply as shown: the answer with ``[n]`` citations, then the
+    ``Sources`` list, the same shape as a research briefing."""
+    metadata: dict[str, Any]

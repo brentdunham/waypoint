@@ -32,13 +32,18 @@ the agents against a baseline.
 
 ## What it does
 
-Two agents ship in the registry, chosen to exercise the hard parts:
+Three agents ship in the registry, chosen to exercise the hard parts:
 
 * **chat** — a tool-using assistant with long-term memory that persists across
   threads, scoped to tenant and user.
 * **research** — plans a topic into questions, **stops and waits for a human**
   to approve or edit the plan, fans the approved questions out to parallel
   workers, joins them, and writes a briefing.
+* **workspace** — chat over your documents: pick a corpus for the thread and
+  it answers from it through a `search_documents` tool, with `[n]` citations
+  that the research agent's verifier checks before you see them. Shares
+  chat's memory. MCP tools and approval for tool calls are next
+  ([design](docs/design/tools.md)).
 
 Around them:
 

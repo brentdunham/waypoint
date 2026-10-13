@@ -67,15 +67,19 @@ itself change a fingerprint, and turning one on always does, whatever the
 current default."""
 
 
+RETRIEVING_AGENTS = ("research", "workspace")
+"""Agents whose runs read the ``RAG__*`` settings, so they are in the fingerprint."""
+
+
 def rag_settings(settings: Settings, agent: str) -> dict[str, Any] | None:
-    """The retrieval settings a research run reads.
+    """The retrieval settings a research or workspace run reads.
 
     Not the upload cap, and not the service's boot-time seeding of its own docs
     (``seed_dir``, ``seed_corpus``): an eval indexes its pinned corpora in
     memory and never seeds, so those cannot change a score. Counting them made
     a developer's ``.env`` with seeding on look like a different configuration.
     """
-    if agent != "research":
+    if agent not in RETRIEVING_AGENTS:
         return None
     dump = settings.rag.model_dump(exclude={"max_upload_mb", "seed_dir", "seed_corpus"})
     return {k: v for k, v in dump.items() if k not in LEGACY_RAG or v != LEGACY_RAG[k]}
@@ -84,8 +88,8 @@ def rag_settings(settings: Settings, agent: str) -> dict[str, Any] | None:
 def fingerprint(settings: Settings, agent: str, models: dict[str, str]) -> str:
     """Changes when anything that could change a score changes.
 
-    Prompts, the resolved model per role, the agent's settings (for research,
-    retrieval's too), the judge model, the rubric and the dataset. Not the code
+    Prompts, the resolved model per role, the agent's settings (for research
+    and workspace, retrieval's too), the judge model, the rubric and the dataset. Not the code
     around them: that is what the git SHA is for, once there is one.
     """
     parts = {
@@ -98,6 +102,9 @@ def fingerprint(settings: Settings, agent: str, models: dict[str, str]) -> str:
         "rubric": rubric_hash(agent),
         "dataset": hashlib.sha256((DATASETS / f"{agent}.jsonl").read_bytes()).hexdigest(),
     }
+    if agent == "workspace":
+        # Added only for workspace, so research and chat fingerprints are unchanged.
+        parts["workspace"] = settings.workspace.model_dump()
     blob = json.dumps(parts, sort_keys=True, ensure_ascii=False).encode()
     return hashlib.sha256(blob).hexdigest()[:12]
 

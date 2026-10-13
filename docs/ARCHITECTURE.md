@@ -211,6 +211,45 @@ whole token budget reasoning) is retried once, and then the draft ships with
 `verification.skipped`. `RESEARCH__VERIFY_CITATIONS=false` removes the node.
 The evidence for it is in [case-studies/grounded.md](case-studies/grounded.md).
 
+The checking itself lives in `agents/verify.py` (`check_citations`), shared
+with the workspace agent (4d). It moved there from `graphs/research.py` with
+no change to a prompt, a schema or a decision, so research briefings, replay
+keys and eval fingerprints did not change.
+
+## 4d. Workspace: chat over documents, with the same citations
+
+`agents/graphs/workspace.py` is chat's tool loop plus documents, kept as a
+separate agent so chat stays the simple one ([design](design/tools.md), W1):
+
+```
+select_corpus -> recall_memories -> model <-> tools
+                                      |
+                                      v
+                                    cite -> END
+```
+
+* **The thread's corpus is state.** A run's input may carry `corpus_id`; the
+  checkpoint keeps it, so later turns search the same documents until a run
+  sends another one (or `null`). `select_corpus` resolves it for the caller's
+  tenant when it changes and fails the run on a corpus the tenant cannot read,
+  before any search.
+* **`search_documents` returns `search_result` blocks.** The tool takes only a
+  query; the corpus comes from state and the tenant from the run's context.
+  It is bound to the model only when the thread has documents. Claude cites
+  `search_result` blocks in a tool result with the same
+  `search_result_location` citations the research worker gets.
+* **`cite` makes the reply look like a briefing.** It numbers the cited
+  passages in the order the reply cites them, puts `[n]` after each cited
+  span, appends a `Sources` list, and records one finding per search (query,
+  passages, quotes). Then `check_citations` verifies it exactly as research's
+  `verify` does, with the `verifier` role on Haiku and unsupported sentences
+  revised by the assistant's model. The reply keeps its message id, so the
+  checked text replaces the streamed draft. Marks the model typed itself are
+  stripped first: only citations the API attached are real.
+* **Memory is chat's.** `agents/memory.py` holds the recall node and the
+  prompt block for both graphs, and the namespace has no agent in it, so a
+  fact told to chat holds in workspace (W2).
+
 ## 5. Context, state, config are three different things
 
 `src/waypoint/agents/context.py`.

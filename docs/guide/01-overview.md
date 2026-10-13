@@ -8,7 +8,7 @@ any number of watchers. The run can pause for a person and resume days later,
 and any past step can be rewound to and run down a new branch. It is a FastAPI
 and LangGraph backend with a React frontend, on Postgres and Redis.
 
-Two agents ship with it, chosen because between them they exercise the hard
+Three agents ship with it, chosen because between them they exercise the hard
 parts:
 
 * **chat**: a tool-using assistant with long-term memory per tenant and user.
@@ -18,6 +18,11 @@ parts:
   approve or edit the plan**, searches the web with parallel workers, has a
   critic review the findings and ask follow-ups, writes a cited briefing, and
   checks every citation in it.
+* **workspace**: chat over the user's documents. A thread picks a corpus, the
+  model searches it with a `search_documents` tool, and replies come back with
+  `[n]` citations checked by the research agent's verifier. It shares chat's
+  memory; MCP tools and approval for tool calls are its next phases
+  ([design](../design/tools.md)).
 
 Around the agents sits an **evaluation harness** that scores them against a
 dataset, with a judge model calibrated against human labels, a baseline that
@@ -114,7 +119,7 @@ flowchart TB
 
     subgraph rt[Runtime, built once in the lifespan]
         runs[RunManager<br/>infra/runs.py]
-        graphs[Compiled graphs<br/>chat, research]
+        graphs[Compiled graphs<br/>chat, research, workspace]
         bus[EventBus<br/>Redis Streams]
         lim[Limiter<br/>Lua token bucket + semaphore]
         keys[KeyStore<br/>30 s cache]
@@ -154,7 +159,10 @@ not WSGI ([decision 1](07-decisions.md#d1-asgi-fastapi-one-event-loop-per-worker
 | `src/waypoint/infra/threads.py` | Thread ownership, the one thing LangGraph does not track |
 | `src/waypoint/infra/db.py`, `cache.py` | Postgres pool and migrations; Redis-backed LangGraph node cache |
 | `src/waypoint/agents/registry.py` | The agent table; everything else reads from it |
-| `src/waypoint/agents/graphs/` | The chat and research graphs |
+| `src/waypoint/agents/graphs/` | The chat, research, workspace and ingest graphs |
+| `src/waypoint/agents/memory.py` | Long-term memory recall for chat and workspace |
+| `src/waypoint/agents/verify.py` | Citation checking, shared by research and workspace |
+| `src/waypoint/agents/tools.py` | Tools: time, arithmetic, memory, and workspace's `search_documents` |
 | `src/waypoint/agents/models.py` | Model construction, role routing, structured output, the scripted test model |
 | `src/waypoint/agents/citations.py` | Sources from citation metadata, quotes, numbering, sentence splitting |
 | `web/src/` | React 19 SPA: SSE client, run hook, approval card, research progress, time travel |

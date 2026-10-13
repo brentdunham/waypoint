@@ -1,12 +1,16 @@
 import type { AgentSpec, Corpus, Thread } from "../api/types";
 
+/** Agents that can search a corpus. Research takes one per run (its first
+ *  message); a workspace thread keeps the one it was last sent. */
+export const DOCUMENT_AGENTS = ["research", "workspace"];
+
 interface Props {
   agents: AgentSpec[];
   threads: Thread[];
   selected: string | null;
   agent: string;
   onAgent: (name: string) => void;
-  /** Corpora the research agent can search; the picker hides when there are none. */
+  /** Corpora the research and workspace agents can search; the picker hides when there are none. */
   corpora: Corpus[];
   corpusId: string;
   onCorpus: (corpusId: string) => void;
@@ -42,11 +46,11 @@ export function Sidebar({
         </select>
       </label>
       {spec && <p className="muted small">{spec.description}</p>}
-      {agent === "research" && corpora.length > 0 && (
+      {DOCUMENT_AGENTS.includes(agent) && corpora.length > 0 && (
         <label className="field">
           <span>Documents</span>
           <select value={corpusId} onChange={(event) => onCorpus(event.target.value)}>
-            <option value="">Web only</option>
+            <option value="">{agent === "research" ? "Web only" : "No documents"}</option>
             {corpora.map((c) => (
               <option key={c.corpus_id} value={c.corpus_id}>
                 {c.name} ({c.documents} docs{c.visibility === "public" ? ", public" : ""})

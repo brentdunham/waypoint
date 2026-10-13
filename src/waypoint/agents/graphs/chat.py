@@ -4,7 +4,6 @@ Demonstrates: typed runtime context, the store as memory that outlives a
 thread, node-level retries, and a tools loop.
 """
 
-import logging
 from typing import Any
 
 from langchain_core.messages import SystemMessage
@@ -14,13 +13,12 @@ from langgraph.runtime import Runtime
 from langgraph.types import RetryPolicy
 
 from waypoint.agents.context import AgentContext
+from waypoint.agents.memory import memory_block, recall_memories
 from waypoint.agents.models import ModelRouter, stamp_model
 from waypoint.agents.state import ChatState
 from waypoint.agents.tools import CHAT_TOOLS
 from waypoint.agents.types import Graph
 from waypoint.settings import Settings
-
-log = logging.getLogger(__name__)
 
 SYSTEM = """You are a concise, accurate assistant.
 Prefer calling a tool over guessing. When the user states a durable preference,
@@ -38,29 +36,8 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
         "assistant", lambda m: m.bind_tools(CHAT_TOOLS)
     )
 
-    async def recall_memories(
-        state: ChatState, runtime: Runtime[AgentContext]
-    ) -> dict[str, list[str]]:
-        """Load what we know about this user before the model sees the turn."""
-        store = runtime.store
-        if store is None:
-            return {"recalled": []}
-        last = state.get("messages", [])
-        query = str(last[-1].content) if last else ""
-        try:
-            items = await store.asearch(runtime.context.memory_namespace, query=query, limit=5)
-        except Exception:
-            log.warning("memory search failed", exc_info=True)
-            return {"recalled": []}
-        return {"recalled": [str(i.value.get("fact", "")) for i in items]}
-
     async def call_model(state: ChatState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-        memories = state.get("recalled") or []
-        block = (
-            "What you already know about this user:\n" + "\n".join(f"- {m}" for m in memories)
-            if memories
-            else ""
-        )
+        block = memory_block(state.get("recalled") or [])
         system = SYSTEM.format(locale=runtime.context.locale, memories=block)
         model = assistant(runtime.context)
         reply = await model.ainvoke([SystemMessage(system), *state.get("messages", [])])
@@ -72,12 +49,7 @@ def build(settings: Settings, **compile_kwargs: Any) -> Graph:
         return "tools" if getattr(last, "tool_calls", None) else END
 
     builder = StateGraph(ChatState, context_schema=AgentContext)
-    # Deliberately uncached. A node cache key is a hash of the node's *input
-    # state* only; the runtime context, and with it the memory namespace, is not
-    # part of it. Two callers in different tenants presenting identical state
-    # would share an entry and the second would read the first one's memories.
-    # The store lookup is one indexed query, and it is also the only way a fact
-    # saved with `remember` a few seconds ago shows up on the next turn.
+    # Deliberately uncached: see agents/memory.py.
     builder.add_node("recall_memories", recall_memories)
     builder.add_node(
         "model",

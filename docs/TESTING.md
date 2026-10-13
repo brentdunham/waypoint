@@ -100,7 +100,10 @@ How it fits together (`evals/`):
 * **Datasets** — `datasets/<agent>.jsonl`, one case per line: input, interrupt
   answers, seeded memories, programmatic checks, rubric criteria, what a good
   answer covers, and the date someone last reviewed it. A research case with
-  `"corpus": "waypoint-docs"` also searches that corpus: the driver indexes
+  `"corpus": "waypoint-docs"` also searches that corpus, and a workspace case
+  with it selects that corpus for the thread (`datasets/workspace.jsonl`: seven
+  document cases, including a follow-up turn, one the docs do not cover and one
+  that needs no documents, plus three memory and tool cases): the driver indexes
   the pinned corpus (see Retrieval eval) in memory once per run, so it needs
   `RAG__EMBEDDINGS_MODEL`, `VOYAGE_API_KEY` and `RAG__MODE=vector`, but no
   database. Under `--fake` it uses hash vectors. Document ids in that index

@@ -22,6 +22,9 @@ decision came from a measured failure, the entry says so.
 - **Retrieval**: [D22](#d22-passages-retrieved-before-the-worker-call-as-search_result-blocks) ·
 [D23](#d23-measure-retrieval-on-quoted-spans-before-any-answer) ·
 [D24](#d24-vector-search-then-a-reranker-nothing-else-earned-its-place)
+- **Workspace**: [D25](#d25-workspace-is-a-separate-agent-from-chat) ·
+[D26](#d26-workspace-shares-chats-memory) ·
+[D27](#d27-cited-workspace-replies-go-through-the-research-verifier)
 
 ---
 
@@ -396,3 +399,54 @@ were worse.
 is on. Better
 retrieval did not raise answer scores, which are now limited by citation
 attachment.
+
+## Workspace
+
+Decisions from [design/tools.md](../design/tools.md), 2026-10-13.
+
+### D25. Workspace is a separate agent from chat
+
+**Context.** Documents in chat, then MCP tools and approval for tool calls,
+were first designed as additions to the `chat` agent.
+
+**Decision.** A new agent, `workspace`, starts from chat's tool loop and
+memory and takes all of it. `chat` does not change.
+
+**Alternatives.** Growing `chat`: one agent fewer, but the simplest agent
+would become the most complex one, and every change to tools would move its
+eval baseline.
+
+**Consequences.** Two agents share a loop; `agents/memory.py` holds what both
+use so the copies cannot drift. Workspace has its own dataset, rubric and
+baseline.
+
+### D26. Workspace shares chat's memory
+
+**Context.** Workspace keeps long-term memory. Memories are stored under
+`("memories", tenant, user)`, with no agent in the key.
+
+**Decision.** Use the same namespace. A preference told to chat holds in
+workspace and the other way round.
+
+**Alternatives.** A namespace per agent: memories split by agent, and the
+`/memories` API would need an agent filter.
+
+**Consequences.** No schema or API change. A fact remembered in one agent
+can change the other's answers, which is what a user expects of "remember".
+
+### D27. Cited workspace replies go through the research verifier
+
+**Context.** Every other cited answer in the product is checked sentence by
+sentence before it is shown.
+
+**Decision.** Workspace's `cite` step shapes the reply like a briefing and
+calls the same `check_citations`, with its own Haiku `verifier` role. One
+call per reply that cites documents, about $0.003 and 5 to 15 seconds.
+
+**Alternatives.** Showing the API's citations unchecked: faster, but the
+grounded case study found wrong and missing citations in half the briefings
+before verification.
+
+**Consequences.** The verifier moved to `agents/verify.py` unchanged, so
+research's prompts, replay keys and fingerprint did not move.
+

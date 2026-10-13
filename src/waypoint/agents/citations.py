@@ -18,6 +18,7 @@ from typing import Any
 from langchain_core.messages import BaseMessage
 
 from waypoint.agents.state import Finding, Source
+from waypoint.rag.retrieve import Hit
 
 MAX_QUOTES = 3
 """Quotes kept per source. The judge reads them to check attribution, so they
@@ -57,7 +58,7 @@ def answer_and_sources(message: BaseMessage) -> tuple[str, list[Source]]:
                 source = seen.setdefault(
                     url, Source(url=url, title=str(citation.get("title") or url))
                 )
-            _add_quote(source, citation.get("cited_text"))
+            add_quote(source, citation.get("cited_text"))
     return "".join(parts).strip(), list(seen.values())
 
 
@@ -80,7 +81,7 @@ def is_document(source: Source) -> bool:
     return source.get("kind") == "document"
 
 
-def _add_quote(source: Source, text: Any) -> None:
+def add_quote(source: Source, text: Any) -> None:
     quote = " ".join(str(text or "").split())
     if not quote:
         return
@@ -157,3 +158,27 @@ def cite(sentence: str, numbers: Sequence[int]) -> str:
     stem = bare[: len(bare) - len(end)].rstrip() if end else bare
     marks = "".join(f"[{n}]" for n in dict.fromkeys(numbers))
     return f"{stem} {marks}{end}" if marks else f"{stem}{end}"
+
+
+# -- retrieved passages (moved from graphs/research.py, 2026-10-13) ---------------
+
+
+def search_result(hit: Hit) -> dict[str, Any]:
+    """A retrieved chunk as a Claude ``search_result`` content block.
+
+    One text block per paragraph: the API cites whole blocks, so this is what
+    lets a citation be narrower than the chunk. Citations must be enabled on
+    every search result in a request that also has the web search tool.
+    """
+    return {
+        "type": "search_result",
+        "source": hit.source,
+        "title": hit.chunk.heading,
+        "content": [{"type": "text", "text": p} for p in hit.chunk.paragraphs],
+        "citations": {"enabled": True},
+    }
+
+
+def passage_source(hit: Hit) -> Source:
+    """A retrieved passage as an uncited source, for the no-citations fallback."""
+    return Source(url=hit.source, title=hit.chunk.heading, kind="document")

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from waypoint.agents.graphs import chat, ingest, research
+from waypoint.agents.graphs import chat, ingest, research, workspace
 from waypoint.agents.models import check_overrides, resolve_models
 from waypoint.agents.types import Graph
 from waypoint.errors import NotFound
@@ -74,6 +74,26 @@ AGENTS: dict[str, AgentSpec] = {
         supports_interrupts=True,
         uses_corpora=True,
         example={"topic": "small modular reactors for datacentre power"},
+    ),
+    "workspace": AgentSpec(
+        name="workspace",
+        title="Workspace",
+        description=(
+            "Chat over your documents and connected tools, with long-term memory. "
+            "Pick a corpus and it answers from it with checked citations; anything "
+            "that changes something will wait for your approval."
+        ),
+        builder=workspace.build,
+        input_key="messages",
+        model_roles=workspace.ROLES,
+        # True from phase 4 (tool approval); nothing in it interrupts yet.
+        uses_corpora=True,
+        example={
+            "messages": [
+                {"role": "user", "content": "How does Waypoint recover a dropped event stream?"}
+            ],
+            "corpus_id": "<a corpus id from GET /corpora>",
+        },
     ),
     "ingest": AgentSpec(
         name="ingest",

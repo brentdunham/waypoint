@@ -95,6 +95,9 @@ critic and writer stay on `MODEL`; they judge and write, which is where the
 larger model earns its price. It also sets `MODELS__RESEARCH__VERIFIER=claude-haiku-5-5`:
 the verifier sorts each briefing sentence into supported, wrong source, needs
 a citation or unsupported, against short source quotes, and Haiku does that.
+For the same reason it sets `MODELS__WORKSPACE__VERIFIER=claude-haiku-5-5`,
+the workspace agent's verifier. Workspace's other role, `assistant`, answers
+and rewrites unsupported sentences, and falls back to `MODEL`.
 
 The resolved map is fixed when a run starts and recorded on the run
 (`GET /runs/<id>` → `models`) and in the research briefing's metadata.
@@ -203,6 +206,16 @@ MAX_SEARCHES` searches, 10 with the defaults (16 with two rounds). Web search is
 ($10 per 1,000 at the time of writing) on top of tokens, and search results
 count as input tokens, which is usually the larger cost. A two-question run
 with one search each and one follow-up took about 70 seconds.
+
+## Workspace agent
+
+Chat over a thread's documents ([design](design/tools.md)). The corpus is
+chosen per thread, by run input, not by a setting; retrieval uses the
+`RAG__*` settings above, and the agent's models are `MODELS__WORKSPACE__*`.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `WORKSPACE__VERIFY_CITATIONS` | `true` | Check every reply that cites documents with the research verifier: wrong or missing `[n]` fixed in code, unsupported sentences rewritten once by the assistant's model. One verifier call per citing reply (about $0.003 on Haiku 5.5, 5 to 15 s); replies that cite nothing are not checked. `metadata.verification` counts what changed. |
 
 ## Caching
 

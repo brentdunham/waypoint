@@ -215,6 +215,30 @@ research the web only. In the briefing's `sources`, a passage has
 heading as `title`; web sources have no `kind`. The briefing's
 `metadata.corpus` names the corpus searched.
 
+### Workspace over your documents
+
+A workspace thread searches a corpus once a run sends one; the thread keeps
+it for later turns:
+
+```bash
+TID=$(curl -s -X POST "$BASE/threads" -H "$AUTH" -d '{"agent":"workspace"}' | jq -r .thread_id)
+curl -s -X POST "$BASE/threads/$TID/runs?wait=true" -H "$AUTH" \
+  -d '{"message":"How does Waypoint recover a dropped event stream?","input":{"corpus_id":"'$CORPUS'"}}' \
+  | jq -r .result.report
+# Clients reconnect with Last-Event-ID and the server replays from there [1]. ...
+#
+# Sources
+# [1] docs/ARCHITECTURE.md › 2. A run is not an HTTP request (document)
+```
+
+Send `"input":{"corpus_id":null}` to stop searching documents. The same
+corpus rules as research apply: the tenant's own or a public one, and
+`RAG__EMBEDDINGS_MODEL` set, or the run fails before the model is called.
+The thread's state has `corpus` (`{corpus_id, name}`), `report` (the last
+reply as shown, with its `Sources` list), `findings` (one per search the reply
+drew on) and `metadata` (`searches`, `document_sources_cited`,
+`verification`).
+
 ## Time travel
 
 ```bash

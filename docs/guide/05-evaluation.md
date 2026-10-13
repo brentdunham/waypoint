@@ -90,7 +90,8 @@ A research case:
 | `criteria` | Which rubric criteria to grade; empty means all |
 | `expect` | What a good answer covers. The judge sees it for `covers`; it is not a reference answer to match |
 | `resume` | Answers to interrupts, in order; the default approves the plan |
-| `seed` | Memories stored for the case's user before the first turn (chat) |
+| `seed` | Memories stored for the case's user before the first turn (chat, workspace) |
+| `corpus` | A pinned corpus under `evals/corpora/` the run searches (research) or the thread selects (workspace) |
 | `judge` | `false` skips the judge for this case (checks only) |
 | `tags` | For selecting subsets (`--tag web`) |
 | `reviewed` | When a person last checked the case still makes sense. Topics are chosen so their core facts hold for months |
@@ -100,7 +101,10 @@ comparison, contested evidence, a technical mechanism, topics with a stated
 scope constraint, thin evidence, recent deployments) and one that declines the
 plan. Chat has 12 cases: tool use, no tool when none is needed, remembering,
 using and ignoring memories, multi-turn context, and not inventing an unknown
-fact.
+fact. Workspace has 10: seven over the pinned `waypoint-docs` corpus (three
+questions the docs answer, a follow-up turn, one they do not cover, one that
+needs no documents, one that must also use a memory) and three memory and
+tool cases.
 
 **Why so few?** Each research case costs searches and several model calls,
 and three trials each are needed for a spread. Eight cases, chosen to cover
@@ -116,19 +120,20 @@ Deterministic, cheap, and run before the judge. A check that does not apply
 
 | Check | Agent | Passes when | Catches |
 |---|---|---|---|
-| `completed` | both | The run finished with a reply | Crashes, timeouts |
-| `citations_resolve` | research | Every `[n]` matches a listed source; no ranges like `[1-3]` | Invented or malformed citations |
+| `completed` | all | The run finished with a reply | Crashes, timeouts |
+| `citations_resolve` | research, workspace | Every `[n]` matches a listed source; no ranges like `[1-3]` | Invented or malformed citations |
 | `sources_cited` | research | At least 30% of listed sources are cited in the body | A source list the briefing ignores |
-| `claims_cited` | research | At least 80% of claim sentences (8+ words) carry an `[n]`; uncited statements about the research itself ("no field data was found", "confidence is low") are not counted | Uncited factual statements |
+| `claims_cited` | research, workspace | At least 80% of claim sentences (8+ words) carry an `[n]`; uncited statements about the research itself ("no field data was found", "confidence is low") are not counted | Uncited factual statements |
+| `cites_documents`, `cites_web` | research, workspace | The answer cites at least one document passage (or web page) | Retrieval that ran but was not used |
 | `findings_sourced` | research | Every finding has sources | Workers that answered without searching |
 | `findings_cited` | research | Every finding's sources came from citations, not the fallback | Searchers that searched but cited nothing |
 | `plan_bounds` | research | 1 to 5 questions | Planner ignoring limits |
 | `rounds_bounded` | research | Rounds within `MAX_ROUNDS` | A loop that does not stop |
 | `distinct_questions` | research | No repeated questions | Wasted searches |
 | `declined_without_search` | research | A declined plan produced no findings | Work done without approval |
-| `tool_called`, `tool_not_called`, `no_tools` | chat | The named tool was (or was not) called | Guessing instead of using a tool, or using one needlessly |
-| `remembered`, `recalled` | chat | A fact was stored; a seeded fact was used | Broken memory |
-| `reply_mentions`, `reply_excludes` | chat | The reply contains (or omits) a string | Wrong answers with a known right one |
+| `tool_called`, `tool_not_called`, `no_tools` | chat, workspace | The named tool was (or was not) called | Guessing instead of using a tool, or using one needlessly |
+| `remembered`, `recalled` | chat, workspace | A fact was stored; a seeded fact was used | Broken memory |
+| `reply_mentions`, `reply_excludes` | chat, workspace | The reply contains (or omits) a string | Wrong answers with a known right one |
 
 A property that code can decide belongs in a check, not a rubric. Checks
 cannot drift, cost nothing, and give the judge's scores something solid to
@@ -161,6 +166,11 @@ question = "Where findings have low confidence or a reviewer note, does the brie
 |---|---|
 | research | `plan_quality` (plan), `grounded`, `covers`, `calibrated`, `useful` (briefing) |
 | chat | `correct`, `uses_memory`, `honest_tools` |
+| workspace | `correct`, `uses_memory`, `honest_tools` (reply), `grounded` (the last reply as a briefing: each search is a finding, its passages the evidence) |
+
+Workspace's criteria are uncalibrated until it has labelled examples
+(`calibration/workspace.jsonl`); until then the default judge grades them and
+the scorecard marks them `uncalibrated`.
 
 ### Anatomy of one judge call
 

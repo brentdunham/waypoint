@@ -388,6 +388,15 @@ this as a new agent, `workspace`, leaving `chat` as it is, and adds a first
 step: documents, as a `search_documents` tool with verified citations and
 attachments under per-tenant limits, before any MCP server.
 
+**Progress.** Phase 0 done 2026-10-13: a tool returning `search_result`
+blocks comes back cited through `langchain-anthropic`, and `langchain[mcp]`
+1.4 installs with a minor LangChain upgrade. Phase 1 built 2026-10-13: the
+`workspace` agent with chat's memory (shared through `agents/memory.py`), a
+`search_documents` tool over the thread's corpus, `[n]` citations checked by
+the research verifier (moved to `agents/verify.py` unchanged), a 10-case eval
+dataset and rubric, and the web picker. Chat's and research's fingerprints
+did not change. Its first baseline and the Bob deploy are next.
+
 ### 6. Durable run queue
 
 **What.** Move run execution from "the worker that accepted the POST" to a

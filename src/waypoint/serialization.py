@@ -15,6 +15,8 @@ MAX_DEPTH = 8
 def message_to_dict(message: BaseMessage) -> dict[str, Any]:
     raw = getattr(message, "text", None)
     text = raw if isinstance(raw, str) else (raw() if callable(raw) else str(message.content))
+    if not text and isinstance(message.content, list):
+        text = _passages(message.content)
     out: dict[str, Any] = {
         "id": message.id,
         "type": message.type,
@@ -32,6 +34,23 @@ def message_to_dict(message: BaseMessage) -> dict[str, Any]:
     if model := (message.response_metadata or {}).get("model_name"):
         out["model"] = model
     return out
+
+
+PASSAGE_CHARS = 300
+
+
+def _passages(content: list[Any]) -> str:
+    """A ``search_documents`` result (``search_result`` blocks) as readable text:
+    each passage's heading and the start of its text. The full blocks stay in
+    the checkpoint; this is what the transcript and the eval judge show."""
+    lines = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "search_result":
+            body = " ".join(str(c.get("text", "")) for c in block.get("content") or [])
+            if len(body) > PASSAGE_CHARS:
+                body = body[: PASSAGE_CHARS - 1].rstrip() + "\u2026"
+            lines.append(f"{block.get('title', '')}: {body}")
+    return "\n".join(lines)
 
 
 def jsonable(value: Any, *, depth: int = 0) -> Any:  # noqa: PLR0911 - a type switch
