@@ -8,7 +8,7 @@
 
 [criteria.correct]
 target = "reply"
-question = "Is the final reply correct and does it answer what the user asked?"
+question = "Is the final reply correct and does it answer what the user asked? The reply may end with a Sources list that the system appends; it is not part of the reply's length or format."
 1 = "Wrong, or answers a different question."
 2 = "Partly right; a material error or omission."
 3 = "Right; minor imprecision."
@@ -26,7 +26,7 @@ A reply that draws on the documents but carries no [n] citations scores at most 
 
 [criteria.uses_memory]
 target = "reply"
-question = "Does the reply use the recalled memories when they are relevant to the question, and ignore them when they are not?"
+question = "Does the reply use the recalled memories when they are relevant to the question, and ignore them when they are not? The reply may end with a Sources list that the system appends; it is not part of the reply's length or format."
 1 = "Contradicts a relevant memory, or drags in irrelevant ones."
 2 = "Ignores a clearly relevant memory."
 3 = "Uses relevant memories; slightly awkward."

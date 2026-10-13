@@ -395,7 +395,8 @@ blocks comes back cited through `langchain-anthropic`, and `langchain[mcp]`
 `search_documents` tool over the thread's corpus, `[n]` citations checked by
 the research verifier (moved to `agents/verify.py` unchanged), a 10-case eval
 dataset and rubric, and the web picker. Chat's and research's fingerprints
-did not change. Its first baseline and the Bob deploy are next.
+did not change. Baseline accepted the same day (`correct` 3.80, `grounded`
+3.93, `uses_memory` 3.50, $0.030 per run live); the Bob deploy is next.
 
 ### 6. Durable run queue
 

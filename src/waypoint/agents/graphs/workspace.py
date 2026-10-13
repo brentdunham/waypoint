@@ -363,15 +363,43 @@ def _turn_start(messages: list[Any]) -> int:
 
 
 def _source_list(body: str, numbers: dict[str, int], sources: dict[str, Source]) -> str:
-    """The sources the body cites, as research lists them: ``[n] title (document)``."""
-    cited = {int(n) for n in CITATION.findall(body)}
+    """The sources the body cites, as research lists them: ``[n] title (document)``.
+
+    Two passages from one section share a heading, and listed side by side
+    they looked like one source cited twice: the first baseline's judge marked
+    a reply down on ``grounded`` for it (2026-10-13). Such titles get
+    ``(part k)``, numbered in document order.
+    """
+    cited = sorted(int(n) for n in set(CITATION.findall(body)))
     by_number = {n: sources[url] for url, n in numbers.items() if url in sources}
+    shown = [n for n in cited if n in by_number]
+    titles = _distinct_titles([by_number[n] for n in shown])
     lines = [
-        f"[{n}] {by_number[n]['title']}{' (document)' if is_document(by_number[n]) else ''}"
-        for n in sorted(cited)
-        if n in by_number
+        f"[{n}] {title}{' (document)' if is_document(by_number[n]) else ''}"
+        for n, title in zip(shown, titles, strict=True)
     ]
     return "\n\nSources\n" + "\n".join(lines) if lines else ""
+
+
+def _distinct_titles(listed: list[Source]) -> list[str]:
+    """Each source's title, with ``(part k)`` where two listed sources share one."""
+    groups: dict[str, list[Source]] = {}
+    for source in listed:
+        groups.setdefault(source["title"], []).append(source)
+    part: dict[str, int] = {}
+    for group in groups.values():
+        if len(group) > 1:
+            for k, source in enumerate(sorted(group, key=_passage_order), start=1):
+                part[source["url"]] = k
+    return [
+        f"{s['title']} (part {part[s['url']]})" if s["url"] in part else s["title"] for s in listed
+    ]
+
+
+def _passage_order(source: Source) -> tuple[str, int]:
+    """``doc://<document>#<ordinal>`` sorts by document, then position in it."""
+    document, _, ordinal = source["url"].rpartition("#")
+    return document, int(ordinal) if ordinal.isdigit() else 0
 
 
 def _render_finding(finding: Finding, numbers: dict[str, int]) -> str:

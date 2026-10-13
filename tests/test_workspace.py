@@ -289,3 +289,28 @@ def test_the_tool_node_can_run_search_documents() -> None:
     graph = workspace.build(build_settings(), checkpointer=InMemorySaver())
     tool_node = graph.get_graph().nodes["tools"].data
     assert "search_documents" in tool_node.tools_by_name  # type: ignore[union-attr]
+
+
+def test_passages_that_share_a_heading_are_told_apart() -> None:
+    from waypoint.agents.graphs.workspace import _source_list
+
+    sources = {
+        "doc://d#7": {
+            "url": "doc://d#7",
+            "title": "02-runs.md > 2.4 Reconnection",
+            "kind": "document",
+        },
+        "doc://d#6": {
+            "url": "doc://d#6",
+            "title": "02-runs.md > 2.4 Reconnection",
+            "kind": "document",
+        },
+        "doc://e#0": {"url": "doc://e#0", "title": "ARCHITECTURE.md > 2. Runs", "kind": "document"},
+    }
+    numbers = {"doc://e#0": 1, "doc://d#7": 2, "doc://d#6": 3}
+    listing = _source_list("A [1]. B [2]. C [3].", numbers, sources)  # type: ignore[arg-type]
+    assert listing.split("\n")[3:] == [
+        "[1] ARCHITECTURE.md > 2. Runs (document)",
+        "[2] 02-runs.md > 2.4 Reconnection (part 2) (document)",
+        "[3] 02-runs.md > 2.4 Reconnection (part 1) (document)",
+    ]

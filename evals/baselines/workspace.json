@@ -1,0 +1,177 @@
+{
+  "agent": "workspace",
+  "cases": 10,
+  "checks": {
+    "citations_resolve": {
+      "applicable": 12,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 12
+    },
+    "cites_documents": {
+      "applicable": 15,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 15
+    },
+    "claims_cited": {
+      "applicable": 9,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 0.8889,
+        "stdev": 0.1925
+      },
+      "passed": 8
+    },
+    "completed": {
+      "applicable": 30,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 30
+    },
+    "recalled": {
+      "applicable": 6,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 6
+    },
+    "remembered": {
+      "applicable": 3,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 3
+    },
+    "reply_mentions": {
+      "applicable": 9,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 9
+    },
+    "tool_called": {
+      "applicable": 21,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 21
+    }
+  },
+  "criteria": {
+    "correct": {
+      "graded": 30,
+      "judge": "uncalibrated",
+      "mean": {
+        "mean": 3.8,
+        "stdev": 0.0
+      },
+      "pass_rate": 0.9333
+    },
+    "grounded": {
+      "graded": 15,
+      "judge": "uncalibrated",
+      "mean": {
+        "mean": 3.9333,
+        "stdev": 0.1155
+      },
+      "pass_rate": 1.0
+    },
+    "honest_tools": {
+      "graded": 6,
+      "judge": "uncalibrated",
+      "mean": {
+        "mean": 4.0,
+        "stdev": 0.0
+      },
+      "pass_rate": 1.0
+    },
+    "uses_memory": {
+      "graded": 6,
+      "judge": "uncalibrated",
+      "mean": {
+        "mean": 3.5,
+        "stdev": 0.5
+      },
+      "pass_rate": 0.8333
+    }
+  },
+  "date": "2026-10-13T21:46:00+00:00",
+  "elapsed_s_per_run": {
+    "mean": 3.4232,
+    "stdev": 6.525
+  },
+  "errors": 0,
+  "fingerprint": "7349c5597941",
+  "git_sha": "292fbec",
+  "judge_model": "claude-haiku-4-5",
+  "models": {
+    "assistant": "claude-sonnet-5",
+    "verifier": "claude-haiku-5-5"
+  },
+  "rag": {
+    "candidates": 50,
+    "chunk_tokens": 400,
+    "embeddings_dims": 1024,
+    "embeddings_model": "voyageai:voyage-4",
+    "mode": "vector",
+    "rerank": true,
+    "rrf_k": 60,
+    "top_k": 8
+  },
+  "settings": {},
+  "trials": 3,
+  "usage": {
+    "cost_usd": 0.2088,
+    "cost_usd_if_live_per_run": 0.0302,
+    "cost_usd_per_run": 0.007,
+    "replayed": {
+      "assistant": 64,
+      "verifier": 17
+    },
+    "replayed_without_usage": {},
+    "roles": {
+      "assistant": {
+        "calls": 8,
+        "input_tokens": 87584,
+        "input_tokens_per_run": 2919,
+        "latency_s_per_call": 3.74,
+        "models": [
+          "claude-sonnet-5"
+        ],
+        "output_tokens": 2703,
+        "output_tokens_per_run": 90,
+        "searches": 0
+      },
+      "verifier": {
+        "calls": 4,
+        "input_tokens": 30848,
+        "input_tokens_per_run": 1028,
+        "latency_s_per_call": 7.81,
+        "models": [
+          "claude-haiku-5-5"
+        ],
+        "output_tokens": 7054,
+        "output_tokens_per_run": 235,
+        "searches": 0
+      }
+    }
+  }
+}

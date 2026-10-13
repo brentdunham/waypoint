@@ -1,6 +1,6 @@
 # Design: the workspace agent (documents, MCP tools, approval)
 
-Status: **phase 1 built** (2026-10-13), not yet baselined or deployed;
+Status: **phase 1 built and baselined** (2026-10-13), not yet deployed;
 phases 2 to 5 next. Written 2026-10-13. This note is the
 hand-off for the coding sessions: what to build, what is decided, what is
 still open, in what order, and which documents each phase must update. Read
@@ -324,6 +324,35 @@ Deviations from the design, and why:
   passages' text (capped at 6,000 characters) and whose sources carry what the
   reply quoted. Its prompt still says "research briefing"; the prompt was kept
   byte-identical so research did not change.
+
+The first baseline, and a fix that was not needed:
+
+* **Baseline** (`20261013-134341-ab017f8a4806`, 10 cases x 3 trials,
+  $0.030 per run): every check passed except one `claims_cited` (8/9);
+  `grounded` 4.00, `honest_tools` 4.00, `correct` 3.70, `uses_memory` 3.17
+  with a pass rate of 0.67. The judge is the default Haiku 4.5, uncalibrated
+  for this agent.
+* **The low `uses_memory` was the judge, not the agent.** In `docs-with-memory`
+  the user's memory asks for one short paragraph, and the judge scored all
+  three trials 2 for "three paragraphs". From its reasoning alone this looked
+  like the agent ignoring memory when it had documents, so a line was added to
+  the system prompt. The re-run (`20261013-142537-7d37a5625027`) scored
+  `uses_memory` lower, 2.50. Reading the replies, not the judge's reasons,
+  settled it: in all six runs the reply was a single paragraph of 720 to 970
+  characters. The judge counted the appended `Sources` list as paragraphs.
+  The prompt line was reverted; the lesson is to read the output before
+  acting on a judge's account of it.
+* **Measurement fixes.** The rubric's `correct` and `uses_memory` questions
+  now say the `Sources` list is appended by the system and is not part of the
+  reply's length or format. Two passages under one heading were listed with
+  the same title, which read as one source cited twice and cost
+  `docs-stream-recovery` a `grounded` 2; such titles now get `(part k)`.
+* **Accepted baseline** (`20261013-164600-7349c5597941`, re-scored with agent
+  calls replayed, $0.007 per run billed): `correct` 3.80, `grounded` 3.93,
+  `honest_tools` 4.00, `uses_memory` 3.50 (pass rate 0.83). The judge still
+  calls a one-paragraph reply long in 3 of 6 `docs-with-memory` grades; a
+  calibration set for this agent (labelled examples, as research and chat
+  have) is the fix, and is noted as a follow-up.
 
 ## References
 
