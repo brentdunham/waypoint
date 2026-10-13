@@ -357,8 +357,13 @@ its $0.002874 and its next request refused. Phase 3 built 2026-10-12:
 OpenTelemetry traces per run (node, model, tool and retrieval spans with cost),
 linked to their requests, off unless an OTLP endpoint is set; Jaeger in
 `compose.dev.yaml`, where a live research run reads end to end: its model
-spans' costs sum to the run's $0.31 exactly. Phase 4 (production trace
-backend, case study) next.
+spans' costs sum to the run's $0.31 exactly. Phase 4 built 2026-10-12: Jaeger on
+Bob with 7-day retention and an in-app run timeline for reviewers, behind
+`TRACING__PANEL`, checked on Bob the same day; and the
+[cost case study](case-studies/cost.md): `RESEARCH__MAX_ROUNDS` now defaults
+to 1, which cut cost per research run from $0.2413 to $0.1496 (38%) with
+`covers` 0.11 lower, and `claims_cited` no longer counts uncited statements
+about the research. Deploying the new default to Bob is the last step.
 
 ### 5. MCP tools and tool-level approval
 

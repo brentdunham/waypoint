@@ -138,10 +138,11 @@ def test_findings_are_cited_scored_and_listed_in_the_report(client: TestClient) 
 
 
 def test_critic_follow_ups_run_one_more_wave_then_stop(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    make_app: Callable[..., TestApp], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Asks every round, including a duplicate of a planned question. Only the
     # new question may run, and only once: round 2 is the last (max_rounds=2).
+    client = make_app(research={"max_rounds": 2}).test_client()
     monkeypatch.setitem(
         ScriptedChatModel.structured_scripts,
         "Critique",
@@ -157,13 +158,12 @@ def test_critic_follow_ups_run_one_more_wave_then_stop(
     assert result["metadata"]["rounds"] == 2
 
 
-def test_one_round_means_no_follow_ups(
-    make_app: Callable[..., TestApp], monkeypatch: pytest.MonkeyPatch
+def test_one_round_by_default_means_no_follow_ups(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setitem(
         ScriptedChatModel.structured_scripts, "Critique", _critic(follow_ups=["Anything else?"])
     )
-    client = make_app(research={"max_rounds": 1}).test_client()
     findings = _research(client)["result"]["findings"]
     assert len(findings) == 3
 

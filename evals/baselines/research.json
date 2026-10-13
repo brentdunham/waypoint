@@ -6,10 +6,10 @@
       "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
-        "mean": 0.9722,
-        "stdev": 0.0481
+        "mean": 1.0,
+        "stdev": 0.0
       },
-      "passed": 35
+      "passed": 36
     },
     "cites_documents": {
       "applicable": 15,
@@ -33,10 +33,10 @@
       "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
-        "mean": 0.9444,
-        "stdev": 0.0481
+        "mean": 0.9167,
+        "stdev": 0.0833
       },
-      "passed": 34
+      "passed": 33
     },
     "completed": {
       "applicable": 39,
@@ -69,10 +69,10 @@
       "applicable": 36,
       "not_applicable": 0,
       "pass_rate": {
-        "mean": 0.9722,
-        "stdev": 0.0481
+        "mean": 1.0,
+        "stdev": 0.0
       },
-      "passed": 35
+      "passed": 36
     },
     "findings_sourced": {
       "applicable": 36,
@@ -116,26 +116,26 @@
       "graded": 36,
       "judge": "calibrated",
       "mean": {
-        "mean": 2.8889,
-        "stdev": 0.459
+        "mean": 3.6111,
+        "stdev": 0.1273
       },
-      "pass_rate": 0.6667
+      "pass_rate": 0.9444
     },
     "covers": {
       "graded": 36,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.5556,
-        "stdev": 0.0962
+        "mean": 3.4444,
+        "stdev": 0.0481
       },
-      "pass_rate": 1.0
+      "pass_rate": 0.9722
     },
     "grounded": {
       "graded": 36,
       "judge": "escalated",
       "mean": {
-        "mean": 3.8333,
-        "stdev": 0.1667
+        "mean": 3.9167,
+        "stdev": 0.0833
       },
       "pass_rate": 1.0
     },
@@ -143,8 +143,8 @@
       "graded": 36,
       "judge": "calibrated",
       "mean": {
-        "mean": 4.0,
-        "stdev": 0.0
+        "mean": 3.9722,
+        "stdev": 0.0481
       },
       "pass_rate": 1.0
     },
@@ -152,20 +152,20 @@
       "graded": 36,
       "judge": "calibrated",
       "mean": {
-        "mean": 3.6944,
-        "stdev": 0.1735
+        "mean": 3.6111,
+        "stdev": 0.0481
       },
       "pass_rate": 1.0
     }
   },
-  "date": "2026-10-10T23:51:06+00:00",
+  "date": "2026-10-12T21:06:44+00:00",
   "elapsed_s_per_run": {
-    "mean": 49.3516,
-    "stdev": 50.0028
+    "mean": 36.0787,
+    "stdev": 29.8119
   },
   "errors": 0,
-  "fingerprint": "3bd69055c49a",
-  "git_sha": "7eda6ea",
+  "fingerprint": "ed8a1508cbd4",
+  "git_sha": "a990adc",
   "judge_model": "claude-haiku-4-5",
   "models": {
     "critic": "claude-sonnet-5",
@@ -184,71 +184,79 @@
     "rrf_k": 60,
     "top_k": 8
   },
+  "rechecked": {
+    "date": "2026-10-13T16:05:13+00:00",
+    "git_sha": "c472f6d"
+  },
   "settings": {
     "max_follow_ups": 3,
-    "max_rounds": 2,
+    "max_rounds": 1,
     "max_searches": 2,
     "verify_citations": true,
     "web_search": true
   },
   "trials": 3,
   "usage": {
-    "cost_usd": 3.9665,
-    "cost_usd_per_run": 0.1017,
+    "cost_usd": 2.2415,
+    "cost_usd_if_live_per_run": 0.1496,
+    "cost_usd_per_run": 0.0575,
     "replayed": {
-      "critic": 34,
+      "critic": 12,
       "planner": 39,
-      "searcher": 159,
-      "verifier": 16,
-      "writer": 28
+      "searcher": 133,
+      "verifier": 12,
+      "writer": 16
+    },
+    "replayed_without_usage": {
+      "planner": 26
     },
     "roles": {
       "critic": {
-        "calls": 38,
-        "input_tokens": 224628,
-        "input_tokens_per_run": 5760,
-        "latency_s_per_call": 20.89,
+        "calls": 24,
+        "input_tokens": 123043,
+        "input_tokens_per_run": 3155,
+        "latency_s_per_call": 15.47,
         "models": [
           "claude-sonnet-5"
         ],
-        "output_tokens": 80722,
-        "output_tokens_per_run": 2070,
+        "output_tokens": 37174,
+        "output_tokens_per_run": 953,
         "searches": 0
       },
       "searcher": {
-        "calls": 137,
-        "input_tokens": 2952099,
-        "input_tokens_per_run": 75695,
-        "latency_s_per_call": 9.93,
+        "calls": 51,
+        "input_tokens": 1077049,
+        "input_tokens_per_run": 27617,
+        "latency_s_per_call": 11.48,
         "models": [
           "claude-haiku-5-5"
         ],
-        "output_tokens": 261267,
-        "output_tokens_per_run": 6699,
-        "searches": 153
+        "output_tokens": 113768,
+        "output_tokens_per_run": 2917,
+        "searches": 48
       },
       "verifier": {
-        "calls": 20,
-        "input_tokens": 232342,
-        "input_tokens_per_run": 5957,
-        "latency_s_per_call": 15.52,
+        "calls": 24,
+        "input_tokens": 225967,
+        "input_tokens_per_run": 5794,
+        "latency_s_per_call": 17.5,
         "models": [
           "claude-haiku-5-5"
         ],
-        "output_tokens": 71236,
-        "output_tokens_per_run": 1827,
+        "output_tokens": 96339,
+        "output_tokens_per_run": 2470,
         "searches": 0
       },
       "writer": {
-        "calls": 31,
-        "input_tokens": 215054,
-        "input_tokens_per_run": 5514,
-        "latency_s_per_call": 9.18,
+        "calls": 43,
+        "input_tokens": 241182,
+        "input_tokens_per_run": 6184,
+        "latency_s_per_call": 10.43,
         "models": [
           "claude-sonnet-5"
         ],
-        "output_tokens": 26527,
-        "output_tokens_per_run": 680,
+        "output_tokens": 42599,
+        "output_tokens_per_run": 1092,
         "searches": 0
       }
     }

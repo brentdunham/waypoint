@@ -582,6 +582,26 @@ Jaeger over the SSH tunnel.
   answers are structured output, so for them the figure is a floor until they
   are recorded again.
 
+### Phase 4, part 3: the cost case study (2026-10-12)
+
+Written up in [case-studies/cost.md](../case-studies/cost.md). Three
+one-trial experiments against a fresh baseline ($0.2413 per run, every call
+priced live): one search per question ($0.1913, `useful` down to 3.33), no
+follow-up round ($0.1503, judge scores held), and no follow-up round with the
+critic on Haiku ($0.1348, `calibrated` down to 2.83). No follow-up round was
+confirmed at three trials ($0.1496; `calibrated` 3.61, `covers` 3.44,
+`grounded` 3.92, `useful` 3.61 against the baseline's 2.89, 3.56, 3.83,
+3.69) and is now the default.
+
+Deviation from the plan: the confirmation showed `claims_cited` at 29/36
+against 34/36. The uncited sentences were mostly statements of what the
+research could not find, which one round makes more of. Instead of a writer
+prompt that would have removed them, the check now leaves out uncited
+statements about the research (35/36 and 33/36 rechecked), and
+`evals recheck` applies a corrected check to saved transcripts. The research
+baseline was rechecked and re-accepted at `ed8a1508cbd4`. Spend: $8.94 in
+agent calls over five runs, plus judge calls, within the $15 to $20 planned.
+
 ## References
 
 * [OpenTelemetry semantic conventions for generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/)

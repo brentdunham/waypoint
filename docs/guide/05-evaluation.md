@@ -119,7 +119,7 @@ Deterministic, cheap, and run before the judge. A check that does not apply
 | `completed` | both | The run finished with a reply | Crashes, timeouts |
 | `citations_resolve` | research | Every `[n]` matches a listed source; no ranges like `[1-3]` | Invented or malformed citations |
 | `sources_cited` | research | At least 30% of listed sources are cited in the body | A source list the briefing ignores |
-| `claims_cited` | research | At least 80% of claim sentences (8+ words) carry an `[n]` | Uncited factual statements |
+| `claims_cited` | research | At least 80% of claim sentences (8+ words) carry an `[n]`; uncited statements about the research itself ("no field data was found", "confidence is low") are not counted | Uncited factual statements |
 | `findings_sourced` | research | Every finding has sources | Workers that answered without searching |
 | `findings_cited` | research | Every finding's sources came from citations, not the fallback | Searchers that searched but cited nothing |
 | `plan_bounds` | research | 1 to 5 questions | Planner ignoring limits |
@@ -133,7 +133,11 @@ Deterministic, cheap, and run before the judge. A check that does not apply
 A property that code can decide belongs in a check, not a rubric. Checks
 cannot drift, cost nothing, and give the judge's scores something solid to
 be read against: `claims_cited` is a check, and was the clearest signal in the
-[grounded case study](../case-studies/grounded.md).
+[grounded case study](../case-studies/grounded.md). Because a check reads only
+the transcript, a corrected one can be applied to past runs for free:
+`python -m evals recheck <results dir>` rewrites a scorecard's checks from its
+saved transcripts. The [cost case study](../case-studies/cost.md) did that when
+`claims_cited` turned out to count honest gap statements as failures.
 
 ## 5.6 Rubrics and the judge
 

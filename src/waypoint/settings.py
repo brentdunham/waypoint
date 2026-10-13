@@ -174,10 +174,14 @@ class ResearchSettings(BaseModel):
         ),
     )
     max_rounds: int = Field(
-        default=2,
+        default=1,
         ge=1,
         le=4,
-        description="Investigation waves, counting the first. 1 disables critic follow-ups.",
+        description=(
+            "Investigation waves, counting the first. 1 disables critic follow-ups: in the "
+            "2026-10-12 evals it cut cost per run by 38%, with covers 0.11 lower "
+            "(docs/case-studies/cost.md)."
+        ),
     )
     max_follow_ups: int = Field(default=3, ge=0, le=5, description="New questions per round.")
     verify_citations: bool = Field(

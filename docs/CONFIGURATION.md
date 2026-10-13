@@ -194,12 +194,12 @@ than mixing vectors from two models.
 |---|---|---|
 | `RESEARCH__WEB_SEARCH` | `true` | Workers use Anthropic's server-side web search (`web_search_20250305`) and cite results. Must be enabled for the organization in the Claude Console, and the model must support it (Claude 4.6 and later). A rejected request fails the run with a message pointing here. `false` -> answers from the model alone, no sources, confidence capped at 0.3. |
 | `RESEARCH__MAX_SEARCHES` | `2` | Web searches per worker call (the tool's `max_uses`). Each search's results are input again for every later search in the same call: in the 2026-10-08 evals, calls that made a third search averaged 48k input tokens against 21k for two. |
-| `RESEARCH__MAX_ROUNDS` | `2` | Investigation waves, counting the first. `1` disables critic follow-ups. |
+| `RESEARCH__MAX_ROUNDS` | `1` | Investigation waves, counting the first. `1` disables critic follow-ups. The default was `2` until 2026-10-12; one round cost 38% less per run, with `covers` 0.11 lower ([case study](case-studies/cost.md)). Set `2` when coverage matters more than cost. |
 | `RESEARCH__MAX_FOLLOW_UPS` | `3` | New questions the critic may add per round. |
 | `RESEARCH__VERIFY_CITATIONS` | `true` | After the writer, check every sentence of the briefing against the sources' quoted text. A wrong or missing `[n]` is replaced in code; sentences no source supports go back to the writer's model once, and the revision is kept only if every number it cites is a source. One verifier call per run, plus one writer call when something is unsupported. The briefing's `metadata.verification` counts what changed. |
 
 Cost bound per run: at most `(5 + MAX_FOLLOW_UPS x (MAX_ROUNDS - 1)) x
-MAX_SEARCHES` searches, 16 with the defaults. Web search is billed per search
+MAX_SEARCHES` searches, 10 with the defaults (16 with two rounds). Web search is billed per search
 ($10 per 1,000 at the time of writing) on top of tokens, and search results
 count as input tokens, which is usually the larger cost. A two-question run
 with one search each and one follow-up took about 70 seconds.

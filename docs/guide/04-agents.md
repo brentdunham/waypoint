@@ -133,12 +133,13 @@ key), and `corpus_id` when the run searches documents.
 first worker finished. Deferred, it runs once per wave, after every worker
 has landed.
 
-**A loop bounded twice.** At most `RESEARCH__MAX_ROUNDS` waves (default 2).
+**A loop bounded twice.** At most `RESEARCH__MAX_ROUNDS` waves (default 1, so no follow-ups;
+see the [cost case study](../case-studies/cost.md)).
 On the last round the critic is told to stop, and its follow-ups are dropped
 in code anyway. Follow-ups that repeat an asked question are filtered before
 they cost a search. Worst case per run:
-`(5 + MAX_FOLLOW_UPS x (MAX_ROUNDS - 1)) x MAX_SEARCHES` = 16 searches with
-the defaults.
+`(5 + MAX_FOLLOW_UPS x (MAX_ROUNDS - 1)) x MAX_SEARCHES` = 10 searches with
+the defaults, 16 with two rounds.
 
 **Rules in code, not in prompts.**
 
