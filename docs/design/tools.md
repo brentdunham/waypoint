@@ -96,7 +96,8 @@ changed in phase 0.
 
 ## Open decisions (settle in phase 0)
 
-1. **Search results through LangChain.** Confirm that `langchain-anthropic`
+1. **Search results through LangChain.** *Decided 2026-10-13: works as is;
+   see the implementation log.* Confirm that `langchain-anthropic`
    1.6 passes a `ToolMessage` whose content is a list of `search_result`
    blocks through unchanged, and returns the citations on the reply. One live
    call, under $0.01. If it does not, the tool node builds the `tool_result`
@@ -171,7 +172,34 @@ Each phase ends green: pytest, ruff, mypy, `npm test`, `npm run build`.
 
 ## Implementation log
 
-Nothing yet.
+### Phase 0: spikes (2026-10-13)
+
+* **Search results returned by a tool.** One live call (`claude-haiku-5-5`,
+  1,598 input and 807 output tokens, under $0.001): an `AIMessage` with a
+  `search_documents` tool call, then a `ToolMessage` whose content is a list of
+  two `search_result` blocks with citations enabled. `langchain-anthropic`
+  1.6.1 passed the blocks through unchanged, and the reply came back as text
+  blocks carrying `search_result_location` citations with `source`,
+  `search_result_index`, `start_block_index`, `end_block_index` and
+  `cited_text`, the shape `agents/citations.py` already parses. So
+  `search_documents` can return the blocks itself, and the tool node needs no
+  special case. The reply also carried a `thinking` block first; Workspace's
+  reply handling must skip it, as research's does.
+* **`langchain[mcp]` alongside the current stack.** In a scratch environment
+  (not the repo), the project's dependencies with `langchain[mcp]>=1.4`
+  resolved and installed: `langchain` 1.4.5, `langchain-core` 1.6.10,
+  `langchain-anthropic` 1.7.6, `langgraph` 1.2.15, `fastmcp` 4.1.0, `mcp`
+  2.3.0. Adopting it means a minor upgrade of all four LangChain packages
+  (today 1.3.17, 1.6.6, 1.6.1, 1.2.11), to be done in phase 3 with the full
+  test suite and the eval fingerprints checked. An in-memory FastMCP server
+  with two tools listed and called through `MCPAdapter`. Each tool's
+  annotations arrive under `metadata["mcp"]["tool"]["annotations"]` in
+  snake case (`read_only_hint`, `destructive_hint`), with the server's name
+  under `metadata["mcp"]["server"]`, which is what the approval policy (T4)
+  reads. A single server's tools are not prefixed (`list_notes`); prefixing
+  applies to multi-server configs, so `agents/mcp.py` should prefix names
+  itself to keep them stable when a second server is added. Importing
+  `langchain.mcp` emits a `LangChainBetaWarning`, as documented.
 
 ## References
 
