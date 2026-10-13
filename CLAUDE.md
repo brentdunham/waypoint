@@ -11,8 +11,8 @@ rediscovering it.
   glossary). Keep it in step with any architecture change.
 * `docs/ROADMAP.md`: what is done and what is next.
 * `docs/design/`: design docs. **Current: the workspace agent,
-  `docs/design/tools.md` (ROADMAP item 5); phase 1 built and baselined
-  2026-10-13, Bob deploy next, then phases 2 to 5.** Each phase updates every
+  `docs/design/tools.md` (ROADMAP item 5); phase 1 done (deployed to Bob
+  2026-10-13); phase 2, attachments, next.** Each phase updates every
   document in that design's Documentation table in the same commit as its
   code. `observability.md` is complete (deployed 2026-10-13; case study
   `docs/case-studies/cost.md`). `rag.md` is complete (all five phases,

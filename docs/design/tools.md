@@ -1,6 +1,6 @@
 # Design: the workspace agent (documents, MCP tools, approval)
 
-Status: **phase 1 built and baselined** (2026-10-13), not yet deployed;
+Status: **phase 1 done** (built, baselined and deployed to Bob 2026-10-13);
 phases 2 to 5 next. Written 2026-10-13. This note is the
 hand-off for the coding sessions: what to build, what is decided, what is
 still open, in what order, and which documents each phase must update. Read
@@ -353,6 +353,14 @@ The first baseline, and a fix that was not needed:
   calls a one-paragraph reply long in 3 of 6 `docs-with-memory` grades; a
   calibration set for this agent (labelled examples, as research and chat
   have) is the fix, and is noted as a follow-up.
+
+Deployed to Bob 2026-10-13 (`b18ae85`). Brent's check, a question over
+`waypoint-docs`: 23 s and $0.037 for select corpus, recall, a first reply
+that searched once, the cited reply ($0.023), and `cite` ($0.011). The
+verifier ran on `claude-haiku-5-5` (6,344 in, 2,191 out, $0.0017); one
+sentence went to the reviser on `claude-sonnet-5`, which read 4,510 tokens
+to write 23 ($0.0092). The reviser is the dearer half of checking a reply;
+running it on Haiku is a candidate for a later measured change.
 
 ## References
 
