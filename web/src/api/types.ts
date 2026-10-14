@@ -190,6 +190,34 @@ export interface Corpus {
   chunks: number;
 }
 
+/** Mirrors `DocumentOut` in src/waypoint/schemas.py. */
+export interface CorpusDocument {
+  document_id: string;
+  corpus_id: string;
+  title: string;
+  media_type: string;
+  bytes: number;
+  status: "pending" | "ready" | "failed";
+  error: string | null;
+  created_at: string;
+  chunks: number;
+}
+
+/** Mirrors `UploadUsage`: today's uploads against UPLOADS__* (docs/design/tools.md, T13). */
+export interface UploadUsage {
+  /** False for admin keys, which the limits do not apply to. */
+  limited: boolean;
+  corpora: number;
+  max_corpora: number;
+  files: number;
+  files_per_day: number;
+  bytes: number;
+  bytes_per_day: number;
+  chunks: number;
+  chunks_per_day: number;
+  resets_at: string;
+}
+
 export interface Finding {
   question: string;
   answer: string;

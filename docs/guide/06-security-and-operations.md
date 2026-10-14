@@ -22,7 +22,8 @@ flowchart LR
   the `POST /keys` response. The key id in the prefix names the key for
   revocation and in logs without revealing the secret.
 * **Scopes** are `threads:read`, `threads:write`, `agents:run`,
-  `corpora:write` (create, delete and upload to corpora) and `keys:admin`;
+  `corpora:write` (create, delete and upload to corpora, within the daily
+  upload limits for every key but an admin's) and `keys:admin`;
   `*` grants all. `tenant:admin` additionally lets a caller
   open threads of other users in its own tenant. Endpoints declare theirs through typed
   dependencies (`Reader`, `Writer`, `Runner`, `Admin`), so a handler cannot

@@ -215,6 +215,43 @@ class WorkspaceSettings(BaseModel):
     )
 
 
+class UploadSettings(BaseModel):
+    """What a tenant may add to the server (docs/design/tools.md, T13).
+
+    Reviewer keys carry ``corpora:write`` so a reviewer can bring documents of
+    their own; these bound what that costs. Counted per tenant per UTC day in
+    Redis (in memory without it) and reset at midnight UTC. Keys with
+    ``keys:admin`` are not limited: the operator seeds global corpora with them.
+    The dollar budget (``BUDGET__*``) applies on top, to the ingest run's cost.
+    """
+
+    max_corpora: int = Field(
+        default=3,
+        ge=1,
+        le=100,
+        description="Corpora a tenant may own. Public corpora do not count.",
+    )
+    files_per_day: int = Field(
+        default=10,
+        ge=1,
+        description="Files a tenant may upload per UTC day. A duplicate is given back.",
+    )
+    mb_per_day: float = Field(
+        default=5.0,
+        gt=0,
+        description="Megabytes a tenant may upload per UTC day, all files together.",
+    )
+    chunks_per_day: int = Field(
+        default=2000,
+        ge=1,
+        description=(
+            "Chunks a tenant may index per UTC day. Counted after chunking, before "
+            "embedding: a document that would pass the limit is marked failed with "
+            "the reason, and the others in the upload still index."
+        ),
+    )
+
+
 class RagSettings(BaseModel):
     """Retrieval over tenant documents (docs/design/rag.md).
 
@@ -501,6 +538,7 @@ class Settings(BaseSettings):
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     evals: EvalSettings = Field(default_factory=EvalSettings)
     rag: RagSettings = Field(default_factory=RagSettings)
+    uploads: UploadSettings = Field(default_factory=UploadSettings)
 
     # --- tracing -------------------------------------------------------------
     otel_exporter_otlp_endpoint: str | None = Field(

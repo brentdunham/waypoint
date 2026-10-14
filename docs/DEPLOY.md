@@ -135,8 +135,8 @@ sed -i 's/^BOOTSTRAP_API_KEY=.*/BOOTSTRAP_API_KEY=/' .env
 docker compose up -d api
 ```
 
-Neither key above can create corpora or upload documents except the admin
-key (`*`): that needs the `corpora:write` scope. Every key can search the
+Of the keys above only the admin key (`*`) can create corpora or upload
+documents: that needs the `corpora:write` scope. Every key can search the
 public `waypoint-docs` corpus.
 
 Visitors paste the demo key into the connection bar. All of them share the
@@ -162,8 +162,24 @@ the server, so it is not in access logs. Each reviewer is their own tenant:
 their threads are private, they get their own rate limits, and revoking one
 key (the script prints the command) affects no one else. They can run research
 over the public `waypoint-docs` corpus (the welcome panel has a one-click
-example) but cannot upload: their keys lack `corpora:write`. The Anthropic
+example), and in Workspace create corpora of their own and upload into them
+(`corpora:write`), within the daily upload limits below. The Anthropic
 workspace's spend limit still caps all of them together.
+
+**Upload limits** (`UPLOADS__*`, CONFIGURATION.md): each reviewer tenant may
+own 3 corpora and upload 10 files, 5 MB and 2,000 chunks per UTC day; the
+dollar budget applies on top. At about $0.016 of embedding per MB (estimate
+in docs/design/tools.md, phase 2b), a reviewer's full day of uploads is under
+$0.10. Admin keys are not limited.
+
+Keys minted before 2026-10-14 lack `corpora:write`. To let them upload too:
+
+```bash
+docker compose exec postgres psql -U waypoint -c \
+  "update api_keys set scopes = array_append(scopes, 'corpora:write') where tenant_id like 'rev-%' and not ('corpora:write' = any(scopes))"
+```
+
+The API caches a key for 30 seconds, so the change applies within that.
 
 Who has tried it, and when:
 

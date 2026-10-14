@@ -9,7 +9,9 @@ state or its checkpoints.
     START -> ingest_document (one per document, in parallel) -> summarize -> END
 
 Each document goes parse -> chunk -> embed -> store (``rag/index.py``) and
-reports every stage as a ``custom`` event. A document that fails is marked
+reports every stage as a ``custom`` event. For a reviewer's upload
+(``limited``) the chunks are counted against the tenant's daily limit before
+anything is embedded. A document that fails is marked
 ``failed`` with the reason and the others carry on; the run fails only on a
 bug or a cancellation. A document's chunks are written in one transaction, so
 a cancelled run leaves each document either fully indexed or still ``pending``.
@@ -27,6 +29,7 @@ from langgraph.types import Send
 from waypoint.agents.context import AgentContext
 from waypoint.agents.models import build_contextualizer, build_rag_embeddings
 from waypoint.agents.types import Graph
+from waypoint.infra.quota import UploadQuota
 from waypoint.rag.index import IndexResult, index_document
 from waypoint.rag.store import CorpusStore
 from waypoint.settings import Settings
@@ -40,6 +43,10 @@ document in a corpus must get its preamble from the same model."""
 class IngestState(TypedDict, total=False):
     corpus_id: str
     document_ids: list[str]
+    limited: bool
+    """Count the chunks against the tenant's daily limit (``UPLOADS__CHUNKS_PER_DAY``).
+    Set by the upload endpoint, false for admin keys. Clients cannot start this
+    agent themselves (it is not listed), so they cannot clear it."""
     results: Annotated[list[IndexResult], operator.add]
     metadata: dict[str, Any]
     """The summary. Named ``metadata`` so ``run.completed`` carries it."""
@@ -47,17 +54,24 @@ class IngestState(TypedDict, total=False):
 
 class DocumentTask(TypedDict):
     document_id: str
+    limited: bool
 
 
 def build(
-    settings: Settings, *, corpora: CorpusStore | None = None, **compile_kwargs: Any
+    settings: Settings,
+    *,
+    corpora: CorpusStore | None = None,
+    quota: UploadQuota | None = None,
+    **compile_kwargs: Any,
 ) -> Graph:
     embeddings = build_rag_embeddings(settings)
     contextualizer = build_contextualizer(settings)
 
     def fan_out(state: IngestState) -> list[Send] | str:
         ids = list(dict.fromkeys(state.get("document_ids") or []))
-        return [Send("ingest_document", DocumentTask(document_id=i)) for i in ids] or "summarize"
+        limited = bool(state.get("limited"))
+        tasks = [DocumentTask(document_id=i, limited=limited) for i in ids]
+        return [Send("ingest_document", task) for task in tasks] or "summarize"
 
     async def ingest_document(state: DocumentTask) -> dict[str, Any]:
         runtime = get_runtime(AgentContext)
@@ -69,6 +83,7 @@ def build(
             embed_model=settings.rag.embeddings_model,
             chunk_tokens=settings.rag.chunk_tokens,
             contextualizer=contextualizer,
+            quota=quota if state.get("limited") else None,
             emit=runtime.stream_writer,
         )
         return {"results": [result]}

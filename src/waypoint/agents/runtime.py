@@ -30,6 +30,7 @@ from waypoint.infra import redis as redis_infra
 from waypoint.infra.bus import EventBus, MemoryBus, RedisBus
 from waypoint.infra.cache import RedisCache
 from waypoint.infra.db import Database
+from waypoint.infra.quota import MemoryUploadQuota, RedisUploadQuota, UploadQuota
 from waypoint.infra.ratelimit import Limiter
 from waypoint.infra.runs import RunManager
 from waypoint.infra.security import KeyStore, parse_key_id
@@ -56,6 +57,8 @@ class AgentRuntime:
     limiter: Limiter | None
     bus: EventBus
     corpora: CorpusStore = field(default_factory=MemoryCorpusStore)
+    quota: UploadQuota | None = None
+    """Daily upload limits (``UPLOADS__*``); ``None`` only in hand-built runtimes."""
     redis: Any = None
     store: Any = None
     checkpointer: Any = None
@@ -155,11 +158,16 @@ async def create_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> Agen
         log.warning("REDIS_URL unset: single-process event bus, no rate limits")
 
     # -- graphs -------------------------------------------------------------
-    compile_kwargs: dict[str, Any] = {"checkpointer": checkpointer, "store": store}
-    if cache is not None:
-        compile_kwargs["cache"] = cache
+    compile_kwargs: dict[str, Any] = {"checkpointer": checkpointer, "store": store} | (
+        {"cache": cache} if cache is not None else {}
+    )
     corpora = await _corpus_store(settings, db)
-    graphs = build_all(settings, corpora=corpora, **compile_kwargs)
+    quota: UploadQuota = (
+        RedisUploadQuota(redis_client, settings.uploads)
+        if redis_client is not None
+        else MemoryUploadQuota(settings.uploads)
+    )
+    graphs = build_all(settings, corpora=corpora, quota=quota, **compile_kwargs)
 
     runs = RunManager(
         bus=bus, db=db, limiter=limiter, settings=settings, graphs=graphs, tracing=tracing
@@ -182,6 +190,7 @@ async def create_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> Agen
         limiter=limiter,
         bus=bus,
         corpora=corpora,
+        quota=quota,
         redis=redis_client,
         store=store,
         checkpointer=checkpointer,

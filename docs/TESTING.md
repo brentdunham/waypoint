@@ -56,6 +56,10 @@ These exist for the things that are *only* true with real infrastructure:
 * an SSE stream replays identically from `Last-Event-ID`, and starting after
   event *n* drops exactly *n* events;
 * the Lua token bucket and the concurrency semaphore actually refuse work;
+* a reviewer key's corpus cap and daily upload limits hold in Redis: the
+  extra file gets `429 over-quota` with `Retry-After`, and a document over
+  the chunk limit fails alone (`test_rag_pg.py`; the unit tier covers the
+  same rules on the in-process counters in `test_uploads.py`);
 * API keys resolve, scope, revoke, and isolate tenants;
 * `readyz` reports both backends as `ok`.
 

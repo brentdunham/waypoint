@@ -1,4 +1,5 @@
 import type { AgentSpec, Corpus, Thread } from "../api/types";
+import { CorpusManager } from "./CorpusManager";
 
 /** Agents that can search a corpus. Research takes one per run (its first
  *  message); a workspace thread keeps the one it was last sent. */
@@ -21,6 +22,8 @@ interface Props {
   /** Workspace: the selected corpora, several at once. */
   corpusIds: string[];
   onCorpusIds: (corpusIds: string[]) => void;
+  /** Reload the corpora after one is created or its documents finish indexing. */
+  onCorporaChanged: () => Promise<void>;
   onSelect: (threadId: string) => void;
   onNew: () => void;
   onDelete: (threadId: string) => void;
@@ -37,11 +40,16 @@ export function Sidebar({
   onCorpus,
   corpusIds,
   onCorpusIds,
+  onCorporaChanged,
   onSelect,
   onNew,
   onDelete,
 }: Props) {
   const spec = agents.find((a) => a.name === agent);
+  // A server with retrieval on has at least the public docs corpus.
+  const ragOn = corpora.length > 0;
+  // Uploads start ingest runs on threads of their own; they are not conversations.
+  const visible = threads.filter((t) => agents.length === 0 || agents.some((a) => a.name === t.agent));
   return (
     <aside className="sidebar">
       <label className="field">
@@ -57,6 +65,17 @@ export function Sidebar({
       {spec && <p className="muted small">{spec.description}</p>}
       {agent === "workspace" && corpora.length > 0 && (
         <CorpusChecklist corpora={corpora} selected={corpusIds} onChange={onCorpusIds} />
+      )}
+      {agent === "workspace" && ragOn && (
+        <CorpusManager
+          corpora={corpora.filter((c) => c.visibility !== "public")}
+          onChanged={onCorporaChanged}
+          onCreated={(id) => {
+            if (!corpusIds.includes(id) && corpusIds.length < MAX_CORPORA) {
+              onCorpusIds([...corpusIds, id]);
+            }
+          }}
+        />
       )}
       {agent === "research" && corpora.length > 0 && (
         <label className="field">
@@ -77,7 +96,7 @@ export function Sidebar({
       </button>
 
       <ul className="threads">
-        {threads.map((thread) => (
+        {visible.map((thread) => (
           <li key={thread.thread_id} className={thread.thread_id === selected ? "on" : ""}>
             <button type="button" className="link grow" onClick={() => onSelect(thread.thread_id)}>
               <strong>{thread.title || "untitled"}</strong>
@@ -93,7 +112,7 @@ export function Sidebar({
             </button>
           </li>
         ))}
-        {threads.length === 0 && <li className="muted small">No threads yet.</li>}
+        {visible.length === 0 && <li className="muted small">No threads yet.</li>}
       </ul>
     </aside>
   );

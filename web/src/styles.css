@@ -204,3 +204,14 @@ button.example:hover { border-color: var(--accent); }
 .corpora legend { padding: 0; margin-bottom: 0.25rem; }
 .corpora__group { display: grid; gap: 0.2rem; }
 .corpora__item { display: flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+.uploads { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.35rem; margin: 0 0 0.75rem; }
+.uploads select { width: 100%; }
+.uploads__new { display: flex; gap: 0.35rem; }
+.uploads__new input { flex: 1; min-width: 0; }
+.uploads__add input { width: 100%; font-size: 0.8rem; }
+.uploads__docs { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.15rem; font-size: 0.85rem; }
+.uploads__docs li { display: flex; gap: 0.35rem; min-width: 0; }
+.uploads__docs li .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.uploads__docs .status-failed { color: #b42318; cursor: help; }
+.uploads__docs .status-pending { font-style: italic; }
+.uploads__error { color: #b42318; }

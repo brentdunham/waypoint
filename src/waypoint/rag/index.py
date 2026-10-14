@@ -12,7 +12,8 @@ from typing import Any, TypedDict
 
 from langchain_core.embeddings import Embeddings
 
-from waypoint.errors import NotFound, http_status
+from waypoint.errors import NotFound, OverQuota, http_status
+from waypoint.infra.quota import UploadQuota
 from waypoint.rag.chunk import chunk_sections, estimate_tokens
 from waypoint.rag.contextualize import Contextualizer, document_text
 from waypoint.rag.parse import ParseError, parse
@@ -57,6 +58,7 @@ async def index_document(
     embed_model: str | None,
     chunk_tokens: int,
     contextualizer: Contextualizer | None = None,
+    quota: UploadQuota | None = None,
     emit: Emit = _ignore,
 ) -> IndexResult:
     """Index one stored document. Failures come back as a ``failed`` result.
@@ -64,10 +66,15 @@ async def index_document(
     ``embed_model`` is the service's configured model; a corpus created with
     another one is refused, because vectors from two models cannot be searched
     together. With a ``contextualizer`` (``RAG__CONTEXTUAL``) each chunk gets a
-    preamble before it is embedded. Progress goes to ``emit`` as
+    preamble before it is embedded. With a ``quota`` the chunks are counted
+    against the tenant's daily limit once the document is chunked, before any
+    model or embedding call: a document that would pass it fails with the
+    reason and costs nothing (docs/design/tools.md, T13). Chunks counted for a
+    document that then fails are given back. Progress goes to ``emit`` as
     ``{"stage": ...}`` events.
     """
     title = document_id
+    counted = 0
     try:
         if corpora is None or embeddings is None:
             raise DocumentError("Document retrieval is off: RAG__EMBEDDINGS_MODEL is unset.")
@@ -98,6 +105,7 @@ async def index_document(
         if not chunks:
             raise DocumentError("The document has no text to index.")
         emit(progress | {"stage": "chunked", "chunks": len(chunks)})
+        counted = await _count_chunks(quota, tenant_id, len(chunks))
         if contextualizer is not None:
             try:
                 chunks = await contextualizer(document_text(chunks), chunks)
@@ -116,6 +124,8 @@ async def index_document(
             raise DocumentError("The document was deleted during ingestion.") from exc
     except (DocumentError, EmbeddingError) as exc:
         error = f"Embedding failed: {exc}" if isinstance(exc, EmbeddingError) else str(exc)
+        if quota is not None:
+            await quota.give_back_chunks(tenant_id, counted)
         if corpora is not None:
             await corpora.mark_failed(tenant_id, document_id, error)
         emit({"document_id": document_id, "title": title, "stage": "failed", "error": error})
@@ -126,6 +136,17 @@ async def index_document(
     return IndexResult(
         document_id=document_id, title=title, status="ready", chunks=stored, error=None
     )
+
+
+async def _count_chunks(quota: UploadQuota | None, tenant_id: str, chunks: int) -> int:
+    """Take ``chunks`` from the tenant's daily limit; how many were taken."""
+    if quota is None:
+        return 0
+    try:
+        await quota.take_chunks(tenant_id, chunks)
+    except OverQuota as exc:
+        raise DocumentError(exc.detail) from exc
+    return chunks
 
 
 async def embed_with_retry(

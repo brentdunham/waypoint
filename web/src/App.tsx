@@ -26,10 +26,14 @@ export default function App() {
   // Workspace selects several corpora at once (docs/design/tools.md, T10).
   const [corpusIds, setCorpusIds] = useState<string[]>([]);
 
+  // Corpora are optional: a server without RAG answers 503 and the picker hides.
+  const refreshCorpora = useCallback(
+    () => api.corpora().then(setCorpora, () => setCorpora([])),
+    [],
+  );
   useEffect(() => {
-    // Corpora are optional: a server without RAG answers 503 and the picker hides.
-    api.corpora().then(setCorpora, () => setCorpora([]));
-  }, []);
+    void refreshCorpora();
+  }, [refreshCorpora]);
 
   const { snapshot, history, refresh: refreshState } = useSnapshot(threadId);
   const run = useRun(async () => {
@@ -155,6 +159,7 @@ export default function App() {
           onCorpus={setCorpusId}
           corpusIds={corpusIds}
           onCorpusIds={setCorpusIds}
+          onCorporaChanged={refreshCorpora}
           onAgent={(name) => {
             setAgent(name);
             // A thread belongs to one agent; picking another starts fresh.

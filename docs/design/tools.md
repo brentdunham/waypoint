@@ -1,7 +1,8 @@
 # Design: the workspace agent (documents, MCP tools, approval)
 
-Status: **phase 2a built** (2026-10-14): several corpora per thread and global
-corpora; phase 1 done (deployed 2026-10-13). Phase 2b next. Written 2026-10-13. This note is the
+Status: **phase 2b built** (2026-10-14): reviewers' own corpora within daily
+limits; 2a (several corpora per thread, global corpora) built the same day;
+phase 1 done (deployed 2026-10-13). Phase 3 next, after 2a and 2b are deployed. Written 2026-10-13. This note is the
 hand-off for the coding sessions: what to build, what is decided, what is
 still open, in what order, and which documents each phase must update. Read
 it with [ARCHITECTURE.md](../ARCHITECTURE.md),
@@ -106,7 +107,7 @@ settled with Brent on 2026-10-13.
 | W1 | **A new agent, `workspace`** ("Workspace": "Chat over your documents and connected tools; anything that changes something waits for your approval."). Roles `assistant` and `verifier` (`MODELS__WORKSPACE__ASSISTANT`, `MODELS__WORKSPACE__VERIFIER`, verifier on Haiku like research's). `supports_interrupts` and `uses_corpora` true. `chat` is left as it is. | Isolates retrieval, attachments, external tools and approval from the simple agent, its tests and its evals. The registry makes a new agent one entry and one module. | Adding all of it to `chat`, which would turn the simplest agent into the most complex one. |
 | W2 | **Workspace keeps memory, in the same namespace as chat** (`("memories", tenant, user)`, unchanged). Its graph starts with `recall_memories`, and it has `remember` and `recall`. | A user is one person across agents: a preference told to chat should hold in Workspace, and the `/memories` API stays one list. No schema or API change. | A per-agent namespace (memories split by agent, the API would need an agent filter); no memory. |
 | T1 | **Documents are Workspace's first tool.** `search_documents` searches the thread's corpus, picked per thread (the research form's picker, in the thread header). | Proves the tool path end to end on retrieval that is already measured, before any external server is involved. A per-thread corpus is clear to a reviewer and simple to enforce. | Searching every corpus the tenant owns (mixed sources, more cost per search); a corpus per message (more UI for little gain). |
-| T2 | **Attach from a thread, with per-tenant limits.** A file attached in a Workspace thread is ingested into the tenant's own corpus, and the tool can search it once ingest finishes. Limits per tenant per day: files, MB and chunks, in Redis next to the budgets. A new `corpora:attach` scope allows this without `corpora:write`; reviewer keys get it. | Lets a reviewer try their own document without opening general corpus management to the public. The ingest run already meters and charges its cost. | Giving reviewers `corpora:write` (they could create and delete corpora); no uploads. |
+| T2 | *Superseded by T13 (2026-10-14): limits as here, but named corpora and `corpora:write`.* **Attach from a thread, with per-tenant limits.** A file attached in a Workspace thread is ingested into the tenant's own corpus, and the tool can search it once ingest finishes. Limits per tenant per day: files, MB and chunks, in Redis next to the budgets. A new `corpora:attach` scope allows this without `corpora:write`; reviewer keys get it. | Lets a reviewer try their own document without opening general corpus management to the public. The ingest run already meters and charges its cost. | Giving reviewers `corpora:write` (they could create and delete corpora); no uploads. |
 | T3 | **Cited answers are verified.** When a Workspace reply cites documents, the verifier checks it before it is shown: one Haiku call, about $0.003 and 5 to 15 s, only on replies that cite. The verifier moves out of `research.py` into `agents/verify.py`, shared by both agents. | Keeps the promise the rest of the product makes: every cited sentence is checked. | Showing citations unchecked. |
 | T4 | **Approval: anything not read-only pauses.** A per-tool `requires_approval` in config wins. Unset, a tool from a server marked `trusted` that declares `readOnlyHint: true` runs; every other MCP tool pauses. Tools from untrusted servers always pause, whatever they declare. Built-in tools (`now`, `calculate`, `remember`, `recall`, `search_documents`) never pause. | Safe by default, honest that annotations are hints, and read-only lookups stay fast. | Only flagged tools pause (one missed flag runs a write unasked); every call pauses (the agent becomes unusable). |
 | T5 | **MCP tools go to Workspace only** in v1. | It is a tools loop where the model chooses. The research agent is a fixed workflow whose steps code decides, and its evals and cost case study depend on that. | MCP tools in research workers (unbounded calls inside a parallel fan-out). |
@@ -195,7 +196,7 @@ in the same commit as the code.
 | 2b | Reviewers' own corpora (T13): `corpora:write` on reviewer keys, the corpus cap and daily limits (429 with `Retry-After`), the chunk check in ingest, upload with indexing status in the UI, "still indexing" from the tool. | A reviewer creates a corpus, uploads a file, and the next answer cites it; the 11th file in a day gets a clean 429. |
 | 3 | MCP client: `MCP__SERVERS`, discovery and cache, scopes, call cap and timeout, tracing attribute. Offline tests against an in-memory FastMCP server. | A configured server's read-only tools appear in Workspace for a key with its scope and not for one without. |
 | 4 | Approval: `approve_tools`, policy T4, resume payload, generalised `ApprovalCard`, decline path, eval cases. | A write tool pauses, survives a reload, and runs or is declined on the answer. |
-| 5 | Demo: the notes server in compose, reviewer keys get `tools:notes` and `corpora:attach`, deployed to Bob. | A reviewer adds a note from Workspace after approving it, on Bob. |
+| 5 | Demo: the notes server in compose, reviewer keys get `tools:notes` (`corpora:write` came in 2b, T13), deployed to Bob. | A reviewer adds a note from Workspace after approving it, on Bob. |
 
 ## Documentation
 
@@ -208,16 +209,16 @@ from this design and why, as rag.md and observability.md do.
 | `docs/design/tools.md` (this file) | Decisions settled, spike results, an implementation log entry per phase. | every |
 | `README.md` | Workspace in the agents table and the feature list. | 1 |
 | `docs/ARCHITECTURE.md` | The workspace graph, the shared verifier, then the MCP layer and the approval node. | 1, 3, 4 |
-| `docs/API.md` | Workspace input, `corpus_id` on threads, the attachments endpoint, the tool-approval resume payload, the new scopes and their errors. | 1, 2, 4 |
+| `docs/API.md` | Workspace input, `corpus_id` on threads, the upload limits and `/corpora/usage`, the tool-approval resume payload, the new scopes and their errors. | 1, 2, 4 |
 | `docs/CONFIGURATION.md` | `MODELS__WORKSPACE__*`, attachment limits, `MCP__SERVERS` and `MCP__MAX_CALLS_PER_RUN`, with defaults and why. | 1, 2, 3 |
 | `docs/TESTING.md` | The workspace dataset and checks, how approval cases are answered, the in-memory MCP server in tests. | 1, 3, 4 |
-| `docs/DEPLOY.md` and `deploy/.env.production.example` | The notes server service, its secret, reviewer key scopes. | 5 |
-| `deploy/reviewer-link.sh` | `tools:notes` and `corpora:attach` on new reviewer keys. | 5 |
+| `docs/DEPLOY.md` and `deploy/.env.production.example` | Global corpora (2a); reviewer key scopes and upload limits (2b); the notes server service and its secret (5). | 2, 5 |
+| `deploy/reviewer-link.sh` | `corpora:write` (2b) and `tools:notes` (5) on new reviewer keys. | 2, 5 |
 | `docs/guide/01-overview.md` | Workspace in the system map and the file table. | 1 |
 | `docs/guide/04-agents.md` | A Workspace section with its graph diagram (Mermaid), tools, memory, verifier and approval flow; why it is separate from chat. | 1, 4 |
 | `docs/guide/05-evaluation.md` | The workspace dataset, `approval_requested`, chat-with-documents checks. | 1, 4 |
 | `docs/guide/07-decisions.md` | W1, W2, T4 and T6 as decision records. | 1, 4 |
-| `docs/guide/glossary.md` | Workspace, MCP, tool approval, attachment, trusted server. | 1, 3 |
+| `docs/guide/glossary.md` | Workspace, global corpus, upload limits, MCP, tool approval, trusted server. | 1, 2, 3 |
 | `docs/ROADMAP.md` | Item 5 progress after each phase. | every |
 | `CLAUDE.md` | The current design doc and phase. | every |
 
@@ -401,6 +402,74 @@ Built:
 
 Unchanged by design: chat, research (prompts, cache keys, fingerprint) and the
 workspace baseline.
+
+### Phase 2b: reviewers' own corpora, within daily limits (2026-10-14)
+
+Built to T13:
+
+* `UPLOADS__*` settings (`UploadSettings`): `MAX_CORPORA` 3,
+  `FILES_PER_DAY` 10, `MB_PER_DAY` 5, `CHUNKS_PER_DAY` 2000, the numbers of
+  open decision 3.
+* `infra/quota.py`: three counters per tenant per UTC day (files, bytes,
+  chunks). Taking is all or nothing in one Lua script, so a refused request
+  counts nothing and two workers cannot both take the last file. Without
+  Redis the same counters live in the process. A refusal is
+  `OverQuota` (429, slug `over-quota`) with `limit`, `used`, `requested` and
+  `Retry-After` set to the next midnight UTC.
+* `POST /corpora`: past `MAX_CORPORA` own corpora, `409` ("delete one
+  first"). Public corpora do not count.
+* `POST /corpora/{id}/documents`: files and bytes are taken after the files
+  are read and before anything is stored. A file that turns out to be a
+  duplicate is given back, and so is everything if storing fails.
+* Ingest: the upload passes `limited` in the run's input; the chunks are
+  taken once a document is chunked, before contextualizing or embedding, so
+  a refused document costs nothing. It fails with the reason and the other
+  documents still index; chunks taken for a document that then fails
+  embedding are given back. Clients cannot start `ingest` themselves (it is
+  not listed), so they cannot clear the flag.
+* Keys with `keys:admin` (or `*`) are not limited: no cap, no counters.
+* `GET /corpora/usage`: today's counts, the limits, the cap and when they
+  reset. The UI shows it as one line.
+* `search_documents`: when nothing matched and a selected corpus has
+  documents still `pending`, the tool says so ("1 document is still being
+  indexed in ...") and tells the model to suggest asking again shortly. Only
+  on an empty result, so a search that found passages costs no extra query.
+  The text lives in `agents/tools.py`, which the workspace fingerprint does not
+  read; the fingerprint is unchanged.
+* `deploy/reviewer-link.sh`: new reviewer keys get `corpora:write`.
+* Web: under the Workspace checklist, "Your documents": pick one of your
+  corpora, add files, and watch each one go from "indexing..." to its chunk
+  count (polled every 2 s while any is pending); a "New corpus" field until
+  the cap; the usage line; the server's message on a 429. A new corpus is
+  checked for the thread at once. Ingest threads no longer show in the
+  thread list: an upload is not a conversation.
+* Tests: `tests/test_uploads.py` (counters, cap, the 429, the megabyte
+  limit, a document over the chunk limit failing alone, admin exemption,
+  usage, "still indexing"), and an integration test of the same on Postgres
+  and Redis. The integration tier ran in the Linux sandbox: 32 passed.
+
+Cost of ingest per MB, estimated, not yet measured on Bob: docs/ is 388 KB
+of Markdown and about 97,000 tokens by the service's own estimate
+(characters / 4), so 1 MB is about 260,000 tokens. At voyage-4's $0.06 per
+million (`prices.toml`) that is about $0.016 per MB, and a reviewer's full
+day (5 MB, or 2,000 chunks of about 400 tokens) about $0.05 to $0.08, inside
+Voyage's free tier in practice. With `RAG__CONTEXTUAL` on, add one Haiku
+call per chunk; it is off on Bob. To measure: upload a file on Bob and read
+the ingest run's cost on its timeline.
+
+Deviations and choices:
+
+* The corpus cap answers 409, not 429: waiting does not lift it, deleting a
+  corpus does. Two creates at the same instant can both pass; one corpus
+  over the cap costs nothing until it is filled, which the daily limits
+  bound.
+* A fixed UTC day, not a refilling bucket like the dollar budgets: a
+  reviewer can read "10 files a day, reset at midnight UTC", and uploads are
+  a few large events rather than a steady flow.
+* `/corpora/usage` was not in the design; the UI needs it to show where a
+  reviewer stands before they hit a 429.
+* Existing reviewer keys keep their scopes; new links get `corpora:write`.
+  DEPLOY.md gives the one SQL statement that adds it to old ones.
 
 ## References
 

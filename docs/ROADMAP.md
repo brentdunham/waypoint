@@ -399,7 +399,11 @@ did not change. Baseline accepted the same day (`correct` 3.80, `grounded`
 3.93, `uses_memory` 3.50, $0.030 per run live). Deployed and checked on Bob the same day. Phase 2a
 built 2026-10-14: a thread selects up to five corpora (global and its own) and
 one search covers them all; an admin publishes global corpora. Phase 2b
-(reviewers' own corpora, with limits) is next.
+built 2026-10-14: reviewer keys get `corpora:write`, bounded per tenant per
+UTC day (`UPLOADS__*`: 3 corpora; 10 files, 5 MB, 2,000 chunks; `429
+over-quota` at midnight UTC), the chunk check in ingest, upload with indexing
+status in the UI, and "still indexing" from the tool. Ingest estimated at
+about $0.016 per MB; to be measured on Bob. Phase 3 (MCP client) is next.
 
 ### 6. Durable run queue
 

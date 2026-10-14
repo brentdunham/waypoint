@@ -332,7 +332,12 @@ Public corpora are therefore written only as the owner, and only by
 `rag/seed.py`, which keeps `RAG__SEED_DIR` (the demo's `docs/`) indexed as
 `waypoint-docs` under the system tenant `waypoint`. It never handles tenant
 input. Through the API, changing any corpus also needs the `corpora:write`
-scope, which the demo's reviewer keys do not have.
+scope. The demo's reviewer keys have it, bounded by the upload limits
+(`infra/quota.py`, `UPLOADS__*`): at most 3 corpora per tenant and 10 files,
+5 MB and 2,000 chunks per UTC day, counted in Redis with one Lua script so a
+refused request counts nothing. Files and bytes are taken at upload; chunks
+by the ingest run, before embedding, so a document over the limit fails
+alone and costs nothing. Admin keys are not limited.
 
 ## 9. The cache is Redis, not a dict
 

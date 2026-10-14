@@ -234,6 +234,25 @@ chosen per thread, by run input (`corpus_ids`), not by a setting; retrieval uses
 | `LIMITS__RECURSION_LIMIT` | `40` | LangGraph super-steps per run. The backstop against a looping agent. |
 | `LIMITS__RUN_TIMEOUT_S` | `300` | Wall clock per run. |
 
+## Upload limits (per tenant per UTC day, enforced in Redis)
+
+What a key with `corpora:write` may add to the server (docs/design/tools.md,
+T13). Keys with `keys:admin` are not limited. Counted in Redis (in the
+process without it) and reset at midnight UTC; a refusal is `429 over-quota`
+with `Retry-After` set to midnight.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `UPLOADS__MAX_CORPORA` | `3` | Corpora a tenant may own; public ones do not count. Past it, creating one is `409`. |
+| `UPLOADS__FILES_PER_DAY` | `10` | Files uploaded per day. A duplicate of a stored file is given back. |
+| `UPLOADS__MB_PER_DAY` | `5` | Megabytes uploaded per day, all files together. |
+| `UPLOADS__CHUNKS_PER_DAY` | `2000` | Chunks indexed per day, counted after chunking and before embedding. A document that would pass it fails with the reason; the others still index. |
+
+Why these numbers: they bound a reviewer's day of uploads to well under
+$0.10 of embedding (about $0.016 per MB with voyage-4; estimate in the design's
+phase 2b log), and a fixed UTC day is easy to explain in a 429. The dollar
+budget below still applies to the ingest run's cost.
+
 ## Budgets (US dollars per day, enforced in Redis)
 
 | Variable | Default | Notes |

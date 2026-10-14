@@ -13,6 +13,7 @@ from waypoint.agents.graphs import chat, ingest, research, workspace
 from waypoint.agents.models import check_overrides, resolve_models
 from waypoint.agents.types import Graph
 from waypoint.errors import NotFound
+from waypoint.infra.quota import UploadQuota
 from waypoint.rag.store import CorpusStore
 from waypoint.settings import Settings
 
@@ -37,6 +38,8 @@ class AgentSpec:
     another endpoint starts (``ingest``, started by the corpora API)."""
     uses_corpora: bool = False
     """The builder takes ``corpora=``, the runtime's corpus store."""
+    uses_quota: bool = False
+    """The builder takes ``quota=``, the daily upload limits (``UPLOADS__*``)."""
 
     def public(self) -> dict[str, Any]:
         return {
@@ -104,6 +107,7 @@ AGENTS: dict[str, AgentSpec] = {
         model_roles=ingest.ROLES,
         listed=False,
         uses_corpora=True,
+        uses_quota=True,
     ),
 }
 
@@ -141,10 +145,16 @@ def models_for(
 
 
 def build_all(
-    settings: Settings, *, corpora: CorpusStore | None = None, **compile_kwargs: Any
+    settings: Settings,
+    *,
+    corpora: CorpusStore | None = None,
+    quota: UploadQuota | None = None,
+    **compile_kwargs: Any,
 ) -> dict[str, Graph]:
     graphs: dict[str, Graph] = {}
     for name, spec in AGENTS.items():
         extra: dict[str, Any] = {"corpora": corpora} if spec.uses_corpora else {}
+        if spec.uses_quota:
+            extra["quota"] = quota
         graphs[name] = spec.builder(settings, **extra, **compile_kwargs)
     return graphs

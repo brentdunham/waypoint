@@ -353,3 +353,20 @@ class UploadAccepted(Out):
     """The ingest run; null when every file was a duplicate."""
     thread_id: str | None = None
     events_url: str | None = None
+
+
+class UploadUsage(Out):
+    """Today's uploads against the daily limits (``UPLOADS__*``), and the corpus cap."""
+
+    limited: bool
+    """False for admin keys, which the limits do not apply to."""
+    corpora: int
+    max_corpora: int
+    files: int
+    files_per_day: int
+    bytes: int
+    bytes_per_day: int
+    chunks: int
+    chunks_per_day: int
+    resets_at: str
+    """The next midnight UTC, when the daily counts start again."""

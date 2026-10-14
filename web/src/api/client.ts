@@ -1,11 +1,13 @@
 import type {
   AgentSpec,
   Corpus,
+  CorpusDocument,
   Problem,
   RunRecord,
   RunTrace,
   Snapshot,
   Thread,
+  UploadUsage,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "/api/v1";
@@ -69,10 +71,11 @@ export function headers(extra: HeadersInit = {}): HeadersInit {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: headers(init.headers ?? {}),
-  });
+  const sendsForm = init.body instanceof FormData;
+  const merged = headers(init.headers ?? {}) as Record<string, string>;
+  // A form sets its own multipart Content-Type, with the boundary in it.
+  if (sendsForm) delete merged["Content-Type"];
+  const response = await fetch(`${BASE}${path}`, { ...init, headers: merged });
   if (response.status === 204) return undefined as T;
   const body = await response.json().catch(() => ({}) as Problem);
   if (!response.ok) throw new ApiError(response.status, body as Problem);
@@ -148,4 +151,25 @@ export const api = {
         throw error;
       },
     ),
+
+  /** A new private corpus. 409 past UPLOADS__MAX_CORPORA, 403 without corpora:write. */
+  createCorpus: (name: string) =>
+    request<Corpus>("/corpora", { method: "POST", body: JSON.stringify({ name }) }),
+
+  documents: (corpusId: string) =>
+    request<{ documents: CorpusDocument[] }>(`/corpora/${corpusId}/documents`).then(
+      (r) => r.documents,
+    ),
+
+  /** Stores the files and starts an ingest run; 429 past a daily limit. */
+  upload: (corpusId: string, files: File[]) => {
+    const form = new FormData();
+    for (const file of files) form.append("files", file, file.name);
+    return request<{ run_id: string | null }>(`/corpora/${corpusId}/documents`, {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  uploadUsage: () => request<UploadUsage>("/corpora/usage"),
 };

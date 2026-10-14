@@ -93,6 +93,11 @@ def _namespace() -> tuple[str, ...]:
 SEARCH_DOCUMENTS = "search_documents"
 NO_DOCUMENTS = "No documents are selected for this conversation."
 NO_PASSAGES = "No passages in the selected documents matched that search."
+STILL_INDEXING = (
+    "No passages matched yet: {documents} still being indexed in {corpora}, and cannot "
+    "be searched until that finishes, usually within a minute. Tell the user, and "
+    "suggest asking again shortly."
+)
 
 
 def make_search_documents(retriever: Retriever | None) -> BaseTool:
@@ -127,10 +132,30 @@ def make_search_documents(retriever: Retriever | None) -> BaseTool:
         context = get_runtime(AgentContext).context
         found = await retriever.search(context.tenant_id, corpus_ids, query)
         if not found.hits:
-            return NO_PASSAGES
+            return await _indexing(retriever, context.tenant_id, state.get("corpora") or [])
         return [search_result(hit) for hit in found.hits]
 
     return search_documents
+
+
+async def _indexing(retriever: Retriever, tenant_id: str, corpora: list[dict[str, Any]]) -> str:
+    """``NO_PASSAGES``, or why: documents just uploaded that are not indexed yet.
+
+    Only when nothing matched, so a search that found passages costs no extra
+    query (docs/design/tools.md, phase 2b).
+    """
+    pending: dict[str, int] = {}
+    for corpus in corpora:
+        docs = await retriever.store.list_documents(tenant_id, corpus["corpus_id"])
+        if waiting := sum(d.status == "pending" for d in docs):
+            pending[corpus.get("name") or corpus["corpus_id"]] = waiting
+    if not pending:
+        return NO_PASSAGES
+    total = sum(pending.values())
+    return STILL_INDEXING.format(
+        documents=f"{total} document is" if total == 1 else f"{total} documents are",
+        corpora=", ".join(f'"{name}"' for name in pending),
+    )
 
 
 CHAT_TOOLS = [now, calculate, remember, recall]

@@ -396,3 +396,54 @@ def test_only_an_admin_publishes_and_only_their_own_corpora(pg_app: TestApp) -> 
         f"/api/v1/corpora/{mine['corpus_id']}/documents", files=files, headers=admin
     )
     assert upload.status_code == 404
+
+
+def test_a_reviewer_uploads_within_the_daily_limits_in_redis(make_app: Any) -> None:
+    """Phase 2b end to end on real infrastructure (docs/design/tools.md, T13).
+
+    The counters are the Redis ones here, so this is where the Lua script's
+    all-or-nothing take and the 429's ``Retry-After`` are checked.
+    """
+    app: TestApp = make_app(
+        database_url=TEST_DATABASE_URL,
+        redis_url=TEST_REDIS_URL,
+        auth_enabled=True,
+        bootstrap_api_key=BOOTSTRAP_KEY,
+        limits={"rpm": 1000, "concurrent_runs": 50},
+        rag=RAG,
+        uploads={"max_corpora": 1, "files_per_day": 2, "chunks_per_day": 3},
+    )
+    client = app.test_client()
+    auth = {"Authorization": f"Bearer {BOOTSTRAP_KEY}"}
+    body = {
+        "tenant_id": tenant(),
+        "user_id": "reviewer",
+        "scopes": ["agents:run", "threads:read", "threads:write", "corpora:write"],
+    }
+    raw = client.post("/api/v1/keys", json=body, headers=auth).json()["api_key"]
+    reviewer = {"Authorization": f"Bearer {raw}"}
+
+    created = client.post("/api/v1/corpora", json={"name": "mine"}, headers=reviewer)
+    assert created.status_code == 201
+    corpus_id = created.json()["corpus_id"]
+    assert client.post("/api/v1/corpora", json={"name": "two"}, headers=reviewer).status_code == 409
+
+    two_chunks = b"# A\n\n## One\n\nalpha\n\n## Two\n\nbeta\n"
+    files = [
+        ("files", ("a.md", two_chunks, "text/markdown")),
+        ("files", ("b.md", two_chunks + b"x\n", "text/markdown")),
+    ]
+    url = f"/api/v1/corpora/{corpus_id}/documents"
+    accepted = client.post(url, files=files, headers=reviewer)
+    assert accepted.status_code == 202, accepted.json()
+    assert read_sse(client, accepted.json()["events_url"], reviewer)[-1] == "run.completed"
+    docs = client.get(url, headers=reviewer).json()["documents"]
+    assert sorted(d["status"] for d in docs) == ["failed", "ready"]  # 2 + 2 chunks > 3
+
+    third = [("files", ("c.md", b"# C\n\nthree\n", "text/markdown"))]
+    refused = client.post(url, files=third, headers=reviewer)
+    assert refused.status_code == 429
+    assert refused.json()["limit"] == "files"
+    assert 0 < int(refused.headers["Retry-After"]) <= 86_400
+    usage = client.get("/api/v1/corpora/usage", headers=reviewer).json()
+    assert (usage["files"], usage["chunks"], usage["limited"]) == (2, 2, True)

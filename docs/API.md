@@ -17,7 +17,8 @@ and the `request_id`, which also comes back in the `X-Request-ID` header.
 
 Slugs: `bad-request`, `unauthorized`, `forbidden`, `not-found`, `conflict`,
 `payload-too-large` (bodies over 8 MB), `rate-limited`, `over-budget` (a daily
-spending budget is used up; `scope` is `tenant` or `server`), `validation-failed`,
+spending budget is used up; `scope` is `tenant` or `server`), `over-quota` (a
+daily upload limit is used up; see **Corpora**), `validation-failed`,
 `upstream-error`, `unavailable`, `internal-error`, `http-error`, and `error`
 for anything unexpected. Every `429` carries a `Retry-After` header in whole
 seconds as well as `retry_after` in the body. A `validation-failed` problem lists `errors`, each
@@ -285,8 +286,9 @@ Named sets of a tenant's documents for retrieval (design:
 
 | Method | Path | Scope | Notes |
 |---|---|---|---|
-| POST | `/corpora` | `corpora:write` | `{"name":"my-docs"}`; `409` if the tenant has one by that name |
+| POST | `/corpora` | `corpora:write` | `{"name":"my-docs"}`; `409` if the tenant has one by that name, or already owns `UPLOADS__MAX_CORPORA` (3) |
 | GET | `/corpora` | `threads:read` | Your corpora, then public ones, with document and chunk counts |
+| GET | `/corpora/usage` | `threads:read` | Today's uploads against the daily limits, the corpus cap, and `resets_at` (next midnight UTC). `limited: false` for admin keys |
 | GET | `/corpora/<id>` | `threads:read` | |
 | DELETE | `/corpora/<id>` | `corpora:write` | Deletes its documents and chunks. Public corpora: `404` |
 | POST | `/corpora/<id>/documents` | `corpora:write` + `threads:write` + `agents:run` | Multipart `files` (`.md`, `.html`, `.pdf`, `.txt`). `202` with an `ingest` run |
@@ -311,8 +313,36 @@ if every file was a duplicate, `run_id` is `null`. Another tenant's corpus is
 request, 100 files per request.
 
 `corpora:write` is separate from `threads:write` so that a key can search
-corpora without adding to them: the demo's reviewer keys have the research
-scopes but not this one. Public corpora (`visibility: "public"`) are
+corpora without adding to them. The demo's reviewer keys have it, within
+limits ([design](design/tools.md), T13).
+
+**Upload limits.** For every key without `keys:admin`, per tenant per UTC day
+(`UPLOADS__*`, CONFIGURATION.md): 10 files, 5 MB and 2,000 chunks, and at
+most 3 corpora of its own. Files and megabytes are counted when an upload
+arrives, before anything is stored; a request that would pass either limit
+stores nothing and gets `429 over-quota`:
+
+```json
+{
+  "type": "https://errors.waypoint.local/over-quota",
+  "status": 429,
+  "detail": "This key may upload 10 files a day; 9 are used today and this upload has 2. The limit resets at midnight UTC.",
+  "limit": "files",
+  "limit_per_day": 10,
+  "used": 9,
+  "requested": 2,
+  "retry_after": 20412.7
+}
+```
+
+`Retry-After` is the time to the next midnight UTC. A duplicate file is given
+back. Chunks are counted by the ingest run once a document is chunked and
+before it is embedded: a document that would pass the chunk limit is marked
+`failed` with the reason, costs nothing, and the other documents in the
+upload still index. The dollar budget applies on top. Admin keys are not
+limited, so they can seed global corpora of any size.
+
+Public corpora (`visibility: "public"`) are
 listed for every key and searchable by every research and workspace run,
 and only the admin who published one can change it (below). The demo's `waypoint-docs` is one: this repository's `docs/`,
 kept indexed by the service itself (`RAG__SEED_DIR`, CONFIGURATION.md).

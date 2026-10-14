@@ -44,8 +44,9 @@ definition gives the general meaning first, then what it means here.
 | **Verifier** | The role that checks each sentence of a cited answer against its sources' quotes: research's briefings and workspace's cited replies. |
 | **Worker** | Two meanings: a gunicorn process serving requests, or a research `investigate` node instance answering one question. The text says which. |
 | **Global corpus** | A public corpus every tenant can select: published by an admin (`POST /corpora/{id}/visibility`) or seeded at boot (`waypoint-docs`). |
+| **Upload limits** | What a key with `corpora:write` may add per tenant per UTC day (`UPLOADS__*`): 3 corpora, 10 files, 5 MB, 2,000 chunks. Admin keys are exempt; a refusal is `429 over-quota`. |
 | **Workspace** | The agent that chats over a thread's selected documents, with checked citations and chat's memory; MCP tools and approval are its later phases. |
-| **`search_documents`** | Workspace's tool: searches the thread's corpus and returns passages as `search_result` blocks, which the reply cites. |
+| **`search_documents`** | Workspace's tool: searches the thread's corpora and returns passages as `search_result` blocks, which the reply cites; says so when documents are still being indexed. |
 | **Writer** | The research role that writes the briefing from the findings, and rewrites unsupported sentences during verification. |
 
 ## Platform

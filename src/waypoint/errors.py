@@ -70,6 +70,12 @@ class OverBudget(RateLimited):
     slug = "over-budget"
 
 
+class OverQuota(RateLimited):
+    """A daily upload limit is used up (``UPLOADS__*``, docs/design/tools.md T13)."""
+
+    slug = "over-quota"
+
+
 class UpstreamError(AppError):
     status, title, slug = 502, "Upstream Error", "upstream-error"
 

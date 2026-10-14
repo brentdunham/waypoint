@@ -7,8 +7,11 @@ like any other run. A file whose exact bytes are already in the corpus is not
 ingested again.
 
 Creating, deleting and uploading need the ``corpora:write`` scope; listing and
-searching do not. The demo's reviewer keys lack it: they can ask the public
-corpus, and add nothing to the server.
+searching do not. Reviewer keys have it, within limits (``UPLOADS__*``,
+docs/design/tools.md T13): a tenant owns at most ``max_corpora`` corpora, and
+uploads at most so many files, megabytes and chunks per UTC day. Over a daily
+limit the answer is ``429`` with ``Retry-After`` set to the next midnight UTC.
+Keys with ``keys:admin`` are not limited: they seed the global corpora.
 """
 
 import uuid
@@ -19,10 +22,12 @@ from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 
 from waypoint.agents.runtime import AgentRuntime, get_runtime
 from waypoint.api.deps import Admin, CorpusWriter, Reader
-from waypoint.errors import BadRequest, NotFound, PayloadTooLarge, ServiceUnavailable
+from waypoint.errors import BadRequest, Conflict, NotFound, PayloadTooLarge, ServiceUnavailable
+from waypoint.infra.security import Principal
 from waypoint.rag.parse import MEDIA_TYPES, media_type_for
 from waypoint.rag.store import NewDocument
 from waypoint.schemas import (
+    SCOPE_ADMIN,
     SCOPE_RUN,
     SCOPE_WRITE,
     CorpusList,
@@ -33,6 +38,7 @@ from waypoint.schemas import (
     DocumentOut,
     UploadAccepted,
     UploadedDocument,
+    UploadUsage,
 )
 from waypoint.tracing import current_span_context
 
@@ -54,10 +60,33 @@ def _rag_runtime(request: Request) -> AgentRuntime:
 Rag = Annotated[AgentRuntime, Depends(_rag_runtime)]
 
 
+def limited(principal: Principal) -> bool:
+    """Whether the upload limits apply: to every key but an admin's."""
+    return not ({SCOPE_ADMIN, "*"} & principal.scopes)
+
+
 @router.post("", status_code=201)
 async def create(payload: CreateCorpus, runtime: Rag, principal: CorpusWriter) -> CorpusOut:
+    """A new, private corpus. A tenant owns at most ``UPLOADS__MAX_CORPORA``.
+
+    Two creates at the same instant can both pass the count; the cap is a
+    bound on cost, and one corpus over it costs nothing until it is filled,
+    which the daily limits bound.
+    """
     embed_model = runtime.settings.rag.embeddings_model
     assert embed_model is not None  # _rag_runtime checked
+    cap = runtime.settings.uploads.max_corpora
+    if limited(principal):
+        own = [
+            c
+            for c in await runtime.corpora.list_corpora(principal.tenant_id)
+            if c.tenant_id == principal.tenant_id
+        ]
+        if len(own) >= cap:
+            raise Conflict(
+                f"This key may have {cap} corpora and has {len(own)}. Delete one first.",
+                max_corpora=cap,
+            )
     corpus = await runtime.corpora.create_corpus(principal.tenant_id, payload.name, embed_model)
     return CorpusOut.model_validate(corpus.public())
 
@@ -67,6 +96,34 @@ async def index(runtime: Rag, principal: Reader) -> CorpusList:
     """Your corpora, then public ones."""
     corpora = await runtime.corpora.list_corpora(principal.tenant_id)
     return CorpusList(corpora=[CorpusOut.model_validate(c.public()) for c in corpora])
+
+
+@router.get("/usage")
+async def usage(runtime: Rag, principal: Reader) -> UploadUsage:
+    """Today's uploads against the daily limits, and the corpus cap.
+
+    ``limited`` is false for admin keys: the numbers are counted for them
+    only when they upload with a reviewer's key.
+    """
+    assert runtime.quota is not None
+    used = await runtime.quota.usage(principal.tenant_id)
+    own = [
+        c
+        for c in await runtime.corpora.list_corpora(principal.tenant_id)
+        if c.tenant_id == principal.tenant_id
+    ]
+    return UploadUsage(
+        limited=limited(principal),
+        corpora=len(own),
+        max_corpora=runtime.settings.uploads.max_corpora,
+        files=used.files,
+        files_per_day=used.files_per_day,
+        bytes=used.bytes,
+        bytes_per_day=used.bytes_per_day,
+        chunks=used.chunks,
+        chunks_per_day=used.chunks_per_day,
+        resets_at=used.resets_at,
+    )
 
 
 @router.get("/{corpus_id}")
@@ -126,7 +183,10 @@ async def upload(
     The filename as sent (``docs/DEPLOY.md``) is the document's title and the
     first part of every chunk's heading, so send paths you want to see in a
     source list. Limits: ``RAG__MAX_UPLOAD_MB`` per file, 8 MB per request,
-    100 files per request.
+    100 files per request, and for keys without ``keys:admin`` the daily
+    ``UPLOADS__FILES_PER_DAY`` and ``UPLOADS__MB_PER_DAY``. Those are counted
+    before anything is stored; a file already in the corpus is given back.
+    Chunks are counted by the ingest run (``UPLOADS__CHUNKS_PER_DAY``).
     """
     principal.require(SCOPE_RUN)  # it starts an ingest run, on a new thread
     principal.require(SCOPE_WRITE)
@@ -139,8 +199,24 @@ async def upload(
         await runtime.limiter.admit(principal.tenant_id)
     limit = int(runtime.settings.rag.max_upload_mb * 1024 * 1024)
     new_docs = [await _read(f, limit) for f in files]
+    quota = runtime.quota if limited(principal) else None
+    if quota is not None:
+        await quota.take_files(
+            principal.tenant_id, len(new_docs), sum(len(d.content) for d in new_docs)
+        )
 
-    added = await runtime.corpora.add_documents(principal.tenant_id, corpus_id, new_docs)
+    try:
+        added = await runtime.corpora.add_documents(principal.tenant_id, corpus_id, new_docs)
+    except BaseException:
+        if quota is not None:
+            await quota.give_back_files(
+                principal.tenant_id, len(new_docs), sum(len(d.content) for d in new_docs)
+            )
+        raise
+    if quota is not None and (repeats := [a for a in added if not a.queued]):
+        await quota.give_back_files(
+            principal.tenant_id, len(repeats), sum(a.document.bytes for a in repeats)
+        )
     queued = [a.document.document_id for a in added if a.queued]
     body = UploadAccepted(
         corpus_id=corpus_id,
@@ -162,7 +238,7 @@ async def upload(
         thread_id=thread["thread_id"],
         principal=principal,
         request_id=str(getattr(request.state, "request_id", "-")),
-        payload={"corpus_id": corpus_id, "document_ids": queued},
+        payload={"corpus_id": corpus_id, "document_ids": queued, "limited": quota is not None},
         link=current_span_context(),
     )
     body.run_id = record.run_id

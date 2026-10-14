@@ -355,6 +355,17 @@ prompt cannot point the tool at another corpus. It returns the passages as
 `search_result` blocks, which Claude cites in its reply with
 `search_result_location` citations: the same objects a research worker's
 document citations are, checked live on 2026-10-13 before building on it.
+When nothing matches and a selected corpus still has documents being
+indexed, it says so instead, so the reply can tell the person to ask again
+in a moment rather than claim the documents are silent.
+
+**A reviewer's own documents.** Workspace's sidebar lets any key with
+`corpora:write` create corpora and upload into them, and shows each file
+going from "indexing" to its chunk count. What that may cost is bounded per
+tenant per UTC day (`UPLOADS__*`: 3 corpora; 10 files, 5 MB, 2,000 chunks),
+counted in Redis. Files and bytes are counted at upload, chunks by the ingest
+run before embedding, so a document over the limit fails alone and costs
+nothing. Admin keys are exempt; they seed the global corpora.
 
 **`cite`.** Turns the reply into what a research briefing looks like, so the
 verifier, the evals and the UI treat both the same way:
