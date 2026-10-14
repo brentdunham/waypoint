@@ -258,6 +258,26 @@ select_corpus -> recall_memories -> model <-> tools
 * **Memory is chat's.** `agents/memory.py` holds the recall node and the
   prompt block for both graphs, and the namespace has no agent in it, so a
   fact told to chat holds in workspace (W2).
+* **MCP tools come from configuration, per key.** `agents/mcp.py` keeps a
+  catalog of each `MCP__SERVERS` entry's tools, fetched through
+  `langchain.mcp`'s `MCPAdapter` in the background at boot and every
+  `MCP__REFRESH_S`; a server that is down has no tools until it answers, and
+  `/readyz` shows it as `mcp:<name>: unavailable` without failing. A run is
+  offered the tools of servers whose `tools:<server>` scope its key holds
+  (the scopes travel in the run's context), and of those only the ones that
+  need no approval: a trusted server's tools that declare `readOnlyHint`, or
+  any tool set to `false` in that server's `approval`. The model is bound per
+  tool set; with no MCP tools it is the same binding as before, so eval
+  replay keys did not move. The `tools` node runs only what this run was
+  offered, so a call to anything else comes back as an unknown tool.
+* **Each MCP call is ours, not the adapter's.** Tools are named
+  `{server}_{tool}`. A call sends the tenant and user in the request's
+  `_meta` and the server's token as a bearer header, has the server's
+  timeout, and turns a timeout, an unreachable server or an `isError` result
+  into a tool result the model reads, never a failed run. Past
+  `MCP__MAX_CALLS_PER_RUN` calls in one answer, the next ones are not made and
+  the model is told why. Elicitation is off: the calling client offers no
+  elicitation capability. Tool spans carry `waypoint.tool.server`.
 
 ## 5. Context, state, config are three different things
 

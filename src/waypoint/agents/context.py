@@ -26,6 +26,10 @@ class AgentContext:
     (:func:`waypoint.agents.models.resolve_models`). A tuple of pairs, not a dict, so
     the context stays hashable. Empty -> each node resolves from settings."""
     tags: tuple[str, ...] = field(default_factory=tuple)
+    scopes: tuple[str, ...] = ()
+    """The scopes of the key that started this run. Workspace offers the tools
+    of the MCP servers they allow (``tools:<server>``; docs/design/tools.md, T8).
+    Each run, a resume included, carries the scopes of the key that sent it."""
 
     def model_for(self, role: str) -> str | None:
         return dict(self.models).get(role)

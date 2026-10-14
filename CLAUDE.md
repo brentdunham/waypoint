@@ -12,9 +12,9 @@ rediscovering it.
 * `docs/ROADMAP.md`: what is done and what is next.
 * `docs/design/`: design docs. **Current: the workspace agent,
   `docs/design/tools.md` (ROADMAP item 5); phase 1 done (deployed to Bob
-  2026-10-13); phases 2a (several corpora, global corpora) and 2b
-  (reviewers' own corpora within `UPLOADS__*` limits) built 2026-10-14;
-  phase 3 (MCP client) next.** Each phase updates every
+  2026-10-13); phases 2a and 2b (several corpora, reviewers' own corpora)
+  deployed 2026-10-14; phase 3 (MCP client, `agents/mcp.py`) built
+  2026-10-14; phase 4 (tool approval) next.** Each phase updates every
   document in that design's Documentation table in the same commit as its
   code. `observability.md` is complete (deployed 2026-10-13; case study
   `docs/case-studies/cost.md`). `rag.md` is complete (all five phases,

@@ -287,12 +287,6 @@ def test_earlier_searches_count_only_when_cited() -> None:
     assert [f["question"] for f in findings] == ["old", "new"]
 
 
-def test_the_tool_node_can_run_search_documents() -> None:
-    graph = workspace.build(build_settings(), checkpointer=InMemorySaver())
-    tool_node = graph.get_graph().nodes["tools"].data
-    assert "search_documents" in tool_node.tools_by_name  # type: ignore[union-attr]
-
-
 def test_passages_that_share_a_heading_are_told_apart() -> None:
     from waypoint.agents.graphs.workspace import _source_list
 

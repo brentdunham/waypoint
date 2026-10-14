@@ -193,6 +193,89 @@ class ResearchSettings(BaseModel):
     )
 
 
+class McpServer(BaseModel):
+    """One MCP server Workspace may call (docs/design/tools.md, T7)."""
+
+    name: str = Field(
+        pattern=r"^[a-z][a-z0-9_]{0,23}$",
+        description=(
+            "Short and unique. Prefixes its tools' names (notes_search) and names the "
+            "scope a key needs, tools:<name>."
+        ),
+    )
+    url: str = Field(
+        pattern=r"^https?://",
+        description="Streamable HTTP endpoint, e.g. http://notes:8001/mcp.",
+    )
+    trusted: bool = Field(
+        default=False,
+        description=(
+            "Believe its tool annotations. Only a trusted server's tools that declare "
+            "readOnlyHint run without approval (T4)."
+        ),
+    )
+    token: str | None = Field(
+        default=None,
+        description="Sent as 'Authorization: Bearer <token>' on every request.",
+    )
+    timeout_s: float = Field(default=20.0, gt=0, le=300, description="Per tool call.")
+    approval: dict[str, bool] = Field(
+        default_factory=dict,
+        description=(
+            "Per tool, by the name the server gives it: true always asks, false never "
+            "does. Wins over the annotations."
+        ),
+    )
+
+    @property
+    def scope(self) -> str:
+        return f"tools:{self.name}"
+
+
+class McpSettings(BaseModel):
+    """External tools for Workspace over MCP (docs/design/tools.md, phase 3)."""
+
+    servers: list[McpServer] = Field(
+        default_factory=list,
+        description=(
+            'JSON list: [{"name": "notes", "url": "http://notes:8001/mcp", "trusted": '
+            'true, "token": "..."}]. Empty: no MCP tools.'
+        ),
+    )
+    max_calls_per_run: int = Field(
+        default=8,
+        ge=1,
+        le=100,
+        description=(
+            "MCP tool calls one Workspace run may make; past it the model is told so "
+            "instead of the call running."
+        ),
+    )
+    refresh_s: float = Field(
+        default=300.0,
+        ge=10,
+        description=(
+            "How often each server's tool list is fetched again, and how soon a server "
+            "that was down is tried again."
+        ),
+    )
+
+    @field_validator("servers", mode="before")
+    @classmethod
+    def _blank_is_empty(cls, v: object) -> object:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return []
+        return v
+
+    @field_validator("servers")
+    @classmethod
+    def _unique(cls, v: list[McpServer]) -> list[McpServer]:
+        names = [s.name for s in v]
+        if dupes := sorted({n for n in names if names.count(n) > 1}):
+            raise ValueError(f"MCP__SERVERS names must be unique; repeated: {dupes}")
+        return v
+
+
 class WorkspaceSettings(BaseModel):
     """The workspace agent (docs/design/tools.md): chat over documents and tools."""
 
@@ -536,6 +619,7 @@ class Settings(BaseSettings):
     stream: StreamSettings = Field(default_factory=StreamSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
+    mcp: McpSettings = Field(default_factory=McpSettings)
     evals: EvalSettings = Field(default_factory=EvalSettings)
     rag: RagSettings = Field(default_factory=RagSettings)
     uploads: UploadSettings = Field(default_factory=UploadSettings)

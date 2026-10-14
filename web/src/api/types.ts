@@ -129,6 +129,8 @@ export interface TraceStep {
   role?: string | null;
   model?: string | null;
   tool?: string | null;
+  /** The MCP server a tool step called; absent for built-in tools. */
+  server?: string | null;
   mode?: string | null;
   cost_usd?: number | null;
   input_tokens?: number | null;

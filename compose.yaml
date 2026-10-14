@@ -50,6 +50,9 @@ services:
       UPLOADS__FILES_PER_DAY: ${UPLOADS__FILES_PER_DAY:-10}
       UPLOADS__MB_PER_DAY: ${UPLOADS__MB_PER_DAY:-5.0}
       UPLOADS__CHUNKS_PER_DAY: ${UPLOADS__CHUNKS_PER_DAY:-2000}
+      MCP__SERVERS: ${MCP__SERVERS:-}
+      MCP__MAX_CALLS_PER_RUN: ${MCP__MAX_CALLS_PER_RUN:-8}
+      MCP__REFRESH_S: ${MCP__REFRESH_S:-300.0}
     ports: ["8000:8000"]
     depends_on:
       postgres: { condition: service_healthy }

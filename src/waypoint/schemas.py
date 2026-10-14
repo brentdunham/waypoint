@@ -235,6 +235,8 @@ class TraceStep(Out):
     role: str | None = None
     model: str | None = None
     tool: str | None = None
+    server: str | None = None
+    """The MCP server a tool step called; absent for built-in tools."""
     mode: str | None = None
     cost_usd: float | None = None
     input_tokens: int | None = None

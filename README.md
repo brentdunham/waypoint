@@ -43,7 +43,8 @@ Three agents ship in the registry, chosen to exercise the hard parts:
   (global ones and your own, uploaded from the sidebar within daily limits)
   and it answers from them through a `search_documents` tool, with `[n]`
   citations that the research agent's verifier checks before you see them.
-  Shares chat's memory. MCP tools and approval for tool calls are next
+  Shares chat's memory. Read-only tools from configured MCP servers, for keys
+  with that server's scope; approval for tools that change something is next
   ([design](docs/design/tools.md)).
 
 Around them:

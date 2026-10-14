@@ -385,3 +385,15 @@ verifier, the evals and the UI treat both the same way:
 fact told to either agent holds in both and `/memories` stays one list
 (decision [D26](07-decisions.md#d26-workspace-shares-chats-memory)).
 
+**External tools over MCP.** Servers are configuration (`MCP__SERVERS`), not
+code. Their tool lists are fetched in the background and refreshed, so a
+server that is down costs only its own tools. A run gets the tools of the
+servers its key has a `tools:<server>` scope for, and only those that can run
+without a person's approval: a trusted server's read-only tools. Annotations
+such as `readOnlyHint` are a server's claims about itself, so an untrusted
+server's tools always need approval, which arrives in the next phase; until
+then they are not offered. Each call carries the tenant in the MCP request's
+`_meta`, has a timeout, and counts against `MCP__MAX_CALLS_PER_RUN`; a timeout,
+an error or the limit comes back to the model as a tool result it can explain,
+not a failed run.
+

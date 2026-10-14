@@ -53,6 +53,8 @@ describe("run timeline", () => {
     );
     expect(describeStep(worker!.children[0]!)).toBe("Document search · 420ms · 3 passages (hybrid)");
     expect(describeStep(write!.children[0]!)).toBe("Tool · remember · 30ms");
+    const external = step({ id: "x", kind: "tool", name: "execute_tool notes_search", tool: "notes_search", server: "notes", duration_ms: 120 });
+    expect(describeStep(external)).toBe("Tool · notes_search · notes server · 120ms");
   });
 
   it("formats durations at every scale", () => {

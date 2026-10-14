@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from waypoint.agents.graphs import chat, ingest, research, workspace
+from waypoint.agents.mcp import McpCatalog
 from waypoint.agents.models import check_overrides, resolve_models
 from waypoint.agents.types import Graph
 from waypoint.errors import NotFound
@@ -40,6 +41,8 @@ class AgentSpec:
     """The builder takes ``corpora=``, the runtime's corpus store."""
     uses_quota: bool = False
     """The builder takes ``quota=``, the daily upload limits (``UPLOADS__*``)."""
+    uses_mcp: bool = False
+    """The builder takes ``mcp=``, the MCP tool catalog (``MCP__SERVERS``)."""
 
     def public(self) -> dict[str, Any]:
         return {
@@ -91,6 +94,7 @@ AGENTS: dict[str, AgentSpec] = {
         model_roles=workspace.ROLES,
         # True from phase 4 (tool approval); nothing in it interrupts yet.
         uses_corpora=True,
+        uses_mcp=True,
         example={
             "messages": [
                 {"role": "user", "content": "How does Waypoint recover a dropped event stream?"}
@@ -149,6 +153,7 @@ def build_all(
     *,
     corpora: CorpusStore | None = None,
     quota: UploadQuota | None = None,
+    mcp: McpCatalog | None = None,
     **compile_kwargs: Any,
 ) -> dict[str, Graph]:
     graphs: dict[str, Graph] = {}
@@ -156,5 +161,7 @@ def build_all(
         extra: dict[str, Any] = {"corpora": corpora} if spec.uses_corpora else {}
         if spec.uses_quota:
             extra["quota"] = quota
+        if spec.uses_mcp:
+            extra["mcp"] = mcp
         graphs[name] = spec.builder(settings, **extra, **compile_kwargs)
     return graphs

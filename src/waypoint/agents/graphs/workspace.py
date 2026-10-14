@@ -20,6 +20,8 @@ import datetime as dt
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import BaseTool
+from langgraph.config import get_config
 from langgraph.constants import TAG_NOSTREAM
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -34,9 +36,11 @@ from waypoint.agents.citations import (
     strip_typed_markers,
 )
 from waypoint.agents.context import AgentContext
+from waypoint.agents.mcp import McpCatalog, over_limit
 from waypoint.agents.memory import memory_block, recall_memories
 from waypoint.agents.models import (
     ModelRouter,
+    RoleModel,
     build_rag_embeddings,
     build_reranker,
     model_of,
@@ -91,7 +95,11 @@ class CorpusUnavailableError(ValueError):
 
 
 def build(
-    settings: Settings, *, corpora: CorpusStore | None = None, **compile_kwargs: Any
+    settings: Settings,
+    *,
+    corpora: CorpusStore | None = None,
+    mcp: McpCatalog | None = None,
+    **compile_kwargs: Any,
 ) -> Graph:
     router = ModelRouter(settings, "workspace", ROLES)
     rag_embeddings = build_rag_embeddings(settings) if corpora is not None else None
@@ -117,6 +125,23 @@ def build(
         "assistant",
         lambda m: structured(m, Revision, settings).with_config(tags=[TAG_NOSTREAM]),
     )
+    # MCP tools depend on the run's key (T8) and on what discovery found, so
+    # the model is bound per tool set. Without MCP tools the two bindings
+    # above are used as before, so their eval replay keys do not change.
+    with_mcp: dict[tuple[Any, ...], RoleModel] = {}
+
+    def mcp_tools(context: AgentContext) -> list[BaseTool]:
+        return mcp.runnable_for(context.scopes) if mcp is not None else []
+
+    def assistant_for(documents: bool, extra: list[BaseTool]) -> RoleModel:
+        if not extra:
+            return assistant_with_documents if documents else assistant
+        assert mcp is not None
+        key = (documents, mcp.version, tuple(t.name for t in extra))
+        if key not in with_mcp:
+            offered = [*(tools if documents else WORKSPACE_TOOLS), *extra]
+            with_mcp[key] = router.bind("assistant", lambda m: m.bind_tools(offered))
+        return with_mcp[key]
 
     async def select_corpus(
         state: WorkspaceState, runtime: Runtime[AgentContext]
@@ -161,12 +186,59 @@ def build(
             documents=DOCUMENTS.format(name=_names(selected)) if selected else NO_DOCUMENTS,
             memories=memory_block(state.get("recalled") or []),
         )
-        bound = assistant_with_documents if selected else assistant
+        bound = assistant_for(bool(selected), mcp_tools(runtime.context))
         reply = await bound(runtime.context).ainvoke(
             [SystemMessage(system), *state.get("messages", [])]
         )
         stamp_model(reply, bound.name(runtime.context))
         return {"messages": [reply], "step_count": state.get("step_count", 0) + 1}
+
+    async def run_tools(state: WorkspaceState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+        """The reply's tool calls, with MCP calls capped per run (T9).
+
+        Offers the same tools the model was bound with for this key, so a
+        call to a tool the key may not use comes back as an unknown tool.
+        Past ``MCP__MAX_CALLS_PER_RUN`` an MCP call is not made; the model is
+        told why, in that call's result.
+        """
+        messages = state.get("messages", [])
+        reply = messages[-1]
+        assert isinstance(reply, AIMessage)  # route() sends only replies with tool calls
+        extra = mcp_tools(runtime.context)
+        external = {t.name for t in extra}
+        limit = settings.mcp.max_calls_per_run
+        used = sum(
+            1
+            for m in messages[_turn_start(messages) :]
+            if isinstance(m, ToolMessage) and m.name in external and m.artifact is None
+        )
+        calls, refused = [], []
+        for call in reply.tool_calls:
+            if call["name"] in external:
+                if used >= limit:
+                    refused.append(call)
+                    continue
+                used += 1
+            calls.append(call)
+        out: list[ToolMessage] = []
+        if calls:
+            node = ToolNode([*tools, *extra])
+            only = reply.model_copy(update={"tool_calls": calls})
+            result = await node.ainvoke({**state, "messages": [*messages[:-1], only]}, get_config())
+            out = list(result["messages"])
+        out += [
+            ToolMessage(
+                over_limit(limit),
+                tool_call_id=call["id"],
+                name=call["name"],
+                status="error",
+                artifact={"refused": "MCP__MAX_CALLS_PER_RUN"},
+            )
+            for call in refused
+        ]
+        order = {call["id"]: i for i, call in enumerate(reply.tool_calls)}
+        out.sort(key=lambda m: order.get(m.tool_call_id, len(order)))
+        return {"messages": out}
 
     def route(state: WorkspaceState) -> str:
         last = state["messages"][-1]
@@ -230,7 +302,7 @@ def build(
         call_model,
         retry_policy=RetryPolicy(max_attempts=3, initial_interval=0.5, backoff_factor=2.0),
     )
-    builder.add_node("tools", ToolNode(tools))
+    builder.add_node("tools", run_tools)
     # Malformed verifier output is handled inside check_citations; this
     # retries the rest, such as a rate limit.
     builder.add_node("cite", cite_reply, retry_policy=RetryPolicy(max_attempts=3))

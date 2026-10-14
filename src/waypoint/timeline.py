@@ -38,6 +38,7 @@ TEXT = {
     "waypoint.role": "role",
     "gen_ai.request.model": "model",
     "gen_ai.tool.name": "tool",
+    "waypoint.tool.server": "server",
     "waypoint.rag.mode": "mode",
     "waypoint.status": "status",
 }

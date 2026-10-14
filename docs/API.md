@@ -431,3 +431,10 @@ curl -s -X POST $BASE/keys -H "$AUTH" -d '{
 
 Revocation clears the 30-second in-process key cache on the worker that
 handled it; other workers pick it up within the TTL.
+
+**Tool scopes.** `tools:<server>` lets a key's Workspace runs use the tools of
+the MCP server of that name (`MCP__SERVERS`, CONFIGURATION.md); `*` allows
+every server. A key without it gets none of that server's tools, so existing
+keys get no external tools until granted. `/readyz` lists each server as
+`mcp:<name>` (`ok` or `unavailable`); an unavailable tool server never makes
+the service unready.

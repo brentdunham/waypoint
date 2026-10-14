@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import Request
 
+from waypoint.agents.mcp import McpCatalog
 from waypoint.agents.models import (
     build_contextualizer,
     build_embeddings,
@@ -59,6 +60,8 @@ class AgentRuntime:
     corpora: CorpusStore = field(default_factory=MemoryCorpusStore)
     quota: UploadQuota | None = None
     """Daily upload limits (``UPLOADS__*``); ``None`` only in hand-built runtimes."""
+    mcp: McpCatalog | None = None
+    """Tools from ``MCP__SERVERS``, discovered in the background."""
     redis: Any = None
     store: Any = None
     checkpointer: Any = None
@@ -81,6 +84,10 @@ class AgentRuntime:
             checks["redis"] = "off"
         else:
             checks["redis"] = "ok" if await redis_infra.ping(self.redis) else "down"
+        # Shown, never "down": a tool server is optional and must not take the
+        # service out of rotation (docs/design/tools.md, T7).
+        for name, state in (self.mcp.status() if self.mcp else {}).items():
+            checks[f"mcp:{name}"] = "unavailable" if state["error"] else "ok"
         return checks
 
     async def aclose(self) -> None:
@@ -162,12 +169,9 @@ async def create_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> Agen
         {"cache": cache} if cache is not None else {}
     )
     corpora = await _corpus_store(settings, db)
-    quota: UploadQuota = (
-        RedisUploadQuota(redis_client, settings.uploads)
-        if redis_client is not None
-        else MemoryUploadQuota(settings.uploads)
-    )
-    graphs = build_all(settings, corpora=corpora, quota=quota, **compile_kwargs)
+    quota = _upload_quota(settings, redis_client)
+    mcp = _mcp_catalog(settings, closers)
+    graphs = build_all(settings, corpora=corpora, quota=quota, mcp=mcp, **compile_kwargs)
 
     runs = RunManager(
         bus=bus, db=db, limiter=limiter, settings=settings, graphs=graphs, tracing=tracing
@@ -191,11 +195,28 @@ async def create_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> Agen
         bus=bus,
         corpora=corpora,
         quota=quota,
+        mcp=mcp,
         redis=redis_client,
         store=store,
         checkpointer=checkpointer,
         _closers=closers,
     )
+
+
+def _upload_quota(settings: Settings, redis_client: Any) -> UploadQuota:
+    if redis_client is not None:
+        return RedisUploadQuota(redis_client, settings.uploads)
+    return MemoryUploadQuota(settings.uploads)
+
+
+def _mcp_catalog(settings: Settings, closers: list[Any]) -> McpCatalog:
+    """Started at once and discovering in the background: a server that is down
+    never holds up boot (T7). The graphs read it per run, so tools found later
+    are offered from then on."""
+    mcp = McpCatalog(settings.mcp)
+    mcp.start()
+    closers.append(mcp.aclose)
+    return mcp
 
 
 def _start_seeding(settings: Settings, db: Database | None, closers: list[Any]) -> None:

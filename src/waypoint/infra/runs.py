@@ -210,6 +210,7 @@ class RunManager:
                     durability=durability,
                     release=release,
                     span=span,
+                    scopes=tuple(sorted(principal.scopes)),
                 ),
                 name=f"run-{run_id}",
             )
@@ -246,6 +247,7 @@ class RunManager:
         durability: str,
         release: Any,
         span: Span,
+        scopes: tuple[str, ...] = (),
     ) -> None:
         run_id = record.run_id
         limits = self._settings.limits
@@ -269,6 +271,7 @@ class RunManager:
             run_id=run_id,
             agent=record.agent,
             models=tuple(sorted(record.models.items())),
+            scopes=scopes,
         )
         graph_input: Any = Command(resume=resume) if resume is not None else payload
 

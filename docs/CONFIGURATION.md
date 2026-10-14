@@ -234,6 +234,30 @@ chosen per thread, by run input (`corpus_ids`), not by a setting; retrieval uses
 | `LIMITS__RECURSION_LIMIT` | `40` | LangGraph super-steps per run. The backstop against a looping agent. |
 | `LIMITS__RUN_TIMEOUT_S` | `300` | Wall clock per run. |
 
+## MCP tools (Workspace)
+
+External tools for the workspace agent over MCP ([design](design/tools.md),
+phase 3). None by default.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `MCP__SERVERS` | `[]` | JSON list of servers. Each: `name` (lowercase slug, prefixes its tools: `notes_search`, and names the scope `tools:<name>`), `url` (Streamable HTTP), `trusted` (default `false`), `token` (sent as a bearer header), `timeout_s` (per call, default 20), `approval` (per tool by the server's name for it: `true` always asks, `false` never). |
+| `MCP__MAX_CALLS_PER_RUN` | `8` | External tool calls one Workspace answer may make. Past it the model is told so instead. |
+| `MCP__REFRESH_S` | `300` | How often each server's tool list is fetched again, and how soon a server that was down is retried. |
+
+```bash
+MCP__SERVERS='[{"name": "notes", "url": "http://notes:8001/mcp", "trusted": true, "token": "..."}]'
+```
+
+Which tools run (T4): a per-tool `approval` setting wins; otherwise only a
+**trusted** server's tools that declare `readOnlyHint` run. Annotations are
+claims a server makes about itself, so an untrusted server's are not
+believed. Until tool approval lands (phase 4), a tool that would need
+approval is not offered at all. Each call carries the tenant and user in the
+MCP request's `_meta` (`io.waypoint/tenant`, `io.waypoint/user`), which is how
+a server keeps tenants apart. Discovery runs in the background: a server that
+is down at boot is logged and retried, never fatal.
+
 ## Upload limits (per tenant per UTC day, enforced in Redis)
 
 What a key with `corpora:write` may add to the server (docs/design/tools.md,

@@ -124,12 +124,15 @@ class ScriptedChatModel(BaseChatModel):
             import json as _json
             import re
 
-            match = re.search(r"\[\[tool:(\w+)\((.*?)\)\]\]", text)
-            if match:
-                name, raw = match.group(1), match.group(2) or "{}"
+            # Several markers make several calls in one reply, as a model may.
+            matches = re.findall(r"\[\[tool:(\w+)\((.*?)\)\]\]", text)
+            if matches:
                 return AIMessage(
                     content="",
-                    tool_calls=[{"name": name, "args": _json.loads(raw), "id": "call_1"}],
+                    tool_calls=[
+                        {"name": name, "args": _json.loads(raw or "{}"), "id": f"call_{i}"}
+                        for i, (name, raw) in enumerate(matches, start=1)
+                    ],
                 )
         if self.responses:
             reply = self.responses[self._cursor % len(self.responses)]

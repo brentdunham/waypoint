@@ -356,6 +356,9 @@ class TraceHandler(AsyncCallbackHandler):
                 "gen_ai.operation.name": "execute_tool",
                 "gen_ai.tool.name": tool,
             }
+            # Set on MCP tools by agents/mcp.py (docs/design/tools.md, T9).
+            if server := (kwargs.get("metadata") or {}).get("waypoint_tool_server"):
+                attrs["waypoint.tool.server"] = str(server)
             if self._content:
                 attrs["waypoint.tool_input"] = input_str[:CONTENT_LIMIT]
             self._start(f"execute_tool {tool}", run_id, parent_run_id, attrs)

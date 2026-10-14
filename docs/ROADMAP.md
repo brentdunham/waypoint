@@ -403,7 +403,13 @@ built 2026-10-14: reviewer keys get `corpora:write`, bounded per tenant per
 UTC day (`UPLOADS__*`: 3 corpora; 10 files, 5 MB, 2,000 chunks; `429
 over-quota` at midnight UTC), the chunk check in ingest, upload with indexing
 status in the UI, and "still indexing" from the tool. Ingest estimated at
-about $0.016 per MB; to be measured on Bob. Phase 3 (MCP client) is next.
+about $0.016 per MB; to be measured on Bob. Deployed 2026-10-14. Phase 3
+built 2026-10-14: LangChain upgraded to 1.4.5 with `langchain[mcp]`
+(fingerprints and eval replay keys unchanged), `MCP__SERVERS` discovered in
+the background, tools per key through `tools:<server>` scopes, only a trusted
+server's read-only tools until approval exists, a per-run call cap and
+timeouts that come back to the model as messages, and the server on tool
+spans. Phase 4 (tool approval) is next.
 
 ### 6. Durable run queue
 

@@ -111,6 +111,7 @@ export function describe(step: TraceStep): string {
     }
   } else {
     parts.push(`Tool · ${step.tool ?? step.name.replace(/^execute_tool /, "")}`);
+    if (step.server) parts.push(`${step.server} server`);
     parts.push(formatDuration(step.duration_ms));
   }
   if (step.error) parts.push("failed");

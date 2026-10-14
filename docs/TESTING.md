@@ -27,6 +27,13 @@ cycle, fan-out and the `merge_findings` reducer, checkpoint history and
 forking, memory round-trips, serialization, the citation verifier, and stream
 resilience.
 
+**MCP tools** (`tests/test_mcp.py`) run against an in-memory FastMCP server:
+the catalog's `connect` hook hands it a client for the server object instead
+of an HTTP URL, so discovery, scopes, the approval policy, the call cap,
+timeouts, server errors and the tenant in `_meta` are tested with no network.
+The HTTP transport itself was checked by hand against a local FastMCP server
+(design log, phase 3).
+
 ## 2. Integration tier — real Postgres and Redis
 
 ```bash
