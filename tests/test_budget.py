@@ -304,6 +304,9 @@ def test_a_tenant_over_budget_gets_a_clean_429(
     )
     client: TestClient = app.test_client()
     auth = {"Authorization": f"Bearer {BOOTSTRAP_KEY}"}
+    # /usage sums the tenant's runs today from run_audit, which outlives a test:
+    # an earlier run in the same database counts too, so compare the change.
+    before = client.get("/api/v1/usage", headers=auth).json()["cost_usd"] or 0.0
     thread_id = new_thread(client, "chat", auth)
     done = run_and_wait(client, thread_id, {"message": "hello"}, auth)
     assert done["usage"]["cost_usd"] == pytest.approx(0.30)
@@ -318,4 +321,4 @@ def test_a_tenant_over_budget_gets_a_clean_429(
     usage = client.get("/api/v1/usage", headers=auth).json()
     assert usage["budget_usd_per_day"] == 0.25
     assert usage["balance_usd"] == pytest.approx(-0.05, abs=1e-3)
-    assert usage["cost_usd"] == pytest.approx(0.30)
+    assert usage["cost_usd"] == pytest.approx(before + 0.30)

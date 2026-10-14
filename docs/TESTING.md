@@ -42,6 +42,13 @@ uv run pytest -m integration
 Skipped automatically when those two variables are unset, so the default run
 stays hermetic.
 
+**Not on Windows.** The test client runs the app on a Proactor event loop,
+which psycopg refuses, so every Postgres test fails there with
+`PoolTimeout` after 30 s per test. Run this tier on Linux or macOS (CI, WSL,
+or a container). Postgres needs pgvector 0.8 or later: the vector search sets
+`hnsw.iterative_scan`, which 0.6 rejects. Found 2026-10-14, when the tier had
+been skipped on the Windows dev machine without anyone noticing.
+
 These exist for the things that are *only* true with real infrastructure:
 
 * a thread paused on an interrupt is resumed by a **different app object**,
