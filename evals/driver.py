@@ -13,6 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from fastmcp import Client
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.outputs import LLMResult
 from langgraph.checkpoint.memory import InMemorySaver
@@ -23,6 +24,7 @@ from evals.cases import Case
 from evals.corpus import build_index, index_fingerprint, load_manifest, read_corpus
 from evals.replay import Replay
 from waypoint.agents.context import AgentContext, memory_namespace
+from waypoint.agents.mcp import McpCatalog
 from waypoint.agents.models import (
     INTERCEPTOR,
     build_contextualizer,
@@ -30,9 +32,10 @@ from waypoint.agents.models import (
     build_rag_embeddings,
 )
 from waypoint.agents.registry import get_spec
+from waypoint.mcp_demo import notes as notes_demo
 from waypoint.rag.store import CorpusStore, MemoryCorpusStore
 from waypoint.serialization import jsonable
-from waypoint.settings import Settings
+from waypoint.settings import McpServer, McpSettings, Settings
 from waypoint.usage import replies, usage_of
 
 EVAL_TENANT = "evals"
@@ -289,6 +292,10 @@ async def _run_case(
             settings = settings.model_copy(update={"rag": fake_rag})
         corpora, corpus_id = await corpus_index(settings, case.corpus)
         extra["corpora"] = corpora
+    scopes: tuple[str, ...] = ()
+    if case.notes is not None:
+        extra["mcp"] = await notes_catalog(case.notes)
+        scopes = (NOTES_SERVER.scope,)
     graph = spec.builder(settings, checkpointer=InMemorySaver(), store=store, **extra)
     recorder = UsageRecorder()
     run_id = str(uuid.uuid4())
@@ -299,6 +306,7 @@ async def _run_case(
         run_id=run_id,
         agent=agent,
         models=tuple(sorted(models.items())),
+        scopes=scopes,
     )
     config: Any = {
         "configurable": {"thread_id": run_id},
@@ -334,6 +342,25 @@ async def _run_case(
     if replay is not None:
         _record_replays(transcript, replay)
     return transcript
+
+
+NOTES_SERVER = McpServer(name="notes", url="http://notes.eval.invalid/mcp", trusted=True)
+"""The demo notes server, run in process for a case with ``notes``; never dialled."""
+
+
+async def notes_catalog(notes: list[str]) -> McpCatalog:
+    """The demo notes server holding ``notes`` for the eval tenant, as Workspace's MCP tools.
+
+    A fresh server per case and trial, so one case's adds and deletes never
+    reach another's.
+    """
+    store = notes_demo.MemoryNotes()
+    for text in notes:
+        store.add(EVAL_TENANT, text)
+    server = notes_demo.build(store)
+    catalog = McpCatalog(McpSettings(servers=[NOTES_SERVER]), connect=lambda _s: Client(server))
+    await catalog.refresh()
+    return catalog
 
 
 def _record_replays(transcript: Transcript, replay: Replay) -> None:

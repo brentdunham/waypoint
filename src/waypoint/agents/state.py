@@ -143,4 +143,7 @@ class WorkspaceState(TypedDict, total=False):
     report: str
     """The last reply as shown: the answer with ``[n]`` citations, then the
     ``Sources`` list, the same shape as a research briefing."""
+    approvals: dict[str, bool]
+    """Tool call id -> whether the person allowed it, for the last reply's
+    calls that needed approval (``approve_tools``). Replaced every time."""
     metadata: dict[str, Any]

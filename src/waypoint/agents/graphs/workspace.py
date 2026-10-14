@@ -19,14 +19,20 @@ agent, and its evals do not move when this one grows MCP tools and approval.
 import datetime as dt
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolCall,
+    ToolMessage,
+)
 from langchain_core.tools import BaseTool
 from langgraph.config import get_config
 from langgraph.constants import TAG_NOSTREAM
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
-from langgraph.types import RetryPolicy
+from langgraph.types import RetryPolicy, interrupt
 
 from waypoint.agents.citations import (
     CITATION,
@@ -36,7 +42,14 @@ from waypoint.agents.citations import (
     strip_typed_markers,
 )
 from waypoint.agents.context import AgentContext
-from waypoint.agents.mcp import McpCatalog, over_limit
+from waypoint.agents.mcp import (
+    McpCatalog,
+    McpTool,
+    approval_request,
+    approvals,
+    declined,
+    over_limit,
+)
 from waypoint.agents.memory import memory_block, recall_memories
 from waypoint.agents.models import (
     ModelRouter,
@@ -130,8 +143,58 @@ def build(
     # above are used as before, so their eval replay keys do not change.
     with_mcp: dict[tuple[Any, ...], RoleModel] = {}
 
+    def offered(context: AgentContext) -> dict[str, McpTool]:
+        return mcp.offered_for(context.scopes) if mcp is not None else {}
+
     def mcp_tools(context: AgentContext) -> list[BaseTool]:
-        return mcp.runnable_for(context.scopes) if mcp is not None else []
+        return [t.tool for t in offered(context).values()]
+
+    def plan_calls(
+        messages: list[Any], reply: AIMessage, external: set[str]
+    ) -> tuple[list[ToolCall], list[ToolCall]]:
+        """The reply's calls to make, and the MCP calls past the per-run cap.
+
+        Counts MCP calls this turn that ran (declined and refused ones carry
+        an artifact and do not count). Built-in tools never count.
+        """
+        limit = settings.mcp.max_calls_per_run
+        used = sum(
+            1
+            for m in messages[_turn_start(messages) :]
+            if isinstance(m, ToolMessage) and m.name in external and m.artifact is None
+        )
+        calls, refused = [], []
+        for call in reply.tool_calls:
+            if call["name"] in external:
+                if used >= limit:
+                    refused.append(call)
+                    continue
+                used += 1
+            calls.append(call)
+        return calls, refused
+
+    def awaiting(state: WorkspaceState, context: AgentContext) -> list[ToolCall]:
+        """The calls in the last reply that need a person's approval (T4)."""
+        messages = state.get("messages", [])
+        reply = messages[-1] if messages else None
+        if not isinstance(reply, AIMessage) or not reply.tool_calls:
+            return []
+        tools_ = offered(context)
+        calls, _ = plan_calls(messages, reply, set(tools_))
+        return [c for c in calls if c["name"] in tools_ and tools_[c["name"]].needs_approval]
+
+    def approve_tools(state: WorkspaceState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+        """Pause for a person before any call that could change something.
+
+        ``interrupt`` checkpoints the run and stops it; a resume re-enters
+        this node from the top and ``interrupt`` returns the answer. Nothing
+        has run yet at that point: the calls run in ``tools``, after this.
+        """
+        pending = awaiting(state, runtime.context)
+        if not pending:
+            return {"approvals": {}}
+        decision = interrupt(approval_request(pending, offered(runtime.context)))
+        return {"approvals": approvals(decision, pending)}
 
     def assistant_for(documents: bool, extra: list[BaseTool]) -> RoleModel:
         if not extra:
@@ -205,21 +268,13 @@ def build(
         reply = messages[-1]
         assert isinstance(reply, AIMessage)  # route() sends only replies with tool calls
         extra = mcp_tools(runtime.context)
-        external = {t.name for t in extra}
-        limit = settings.mcp.max_calls_per_run
-        used = sum(
-            1
-            for m in messages[_turn_start(messages) :]
-            if isinstance(m, ToolMessage) and m.name in external and m.artifact is None
-        )
-        calls, refused = [], []
-        for call in reply.tool_calls:
-            if call["name"] in external:
-                if used >= limit:
-                    refused.append(call)
-                    continue
-                used += 1
-            calls.append(call)
+        calls, refused = plan_calls(messages, reply, {t.name for t in extra})
+        needing = {c["id"] for c in awaiting(state, runtime.context)}
+        allowed = state.get("approvals") or {}
+        turned_down = [
+            c for c in calls if c["id"] in needing and allowed.get(str(c["id"])) is not True
+        ]
+        calls = [c for c in calls if c not in turned_down]
         out: list[ToolMessage] = []
         if calls:
             node = ToolNode([*tools, *extra])
@@ -228,7 +283,7 @@ def build(
             out = list(result["messages"])
         out += [
             ToolMessage(
-                over_limit(limit),
+                over_limit(settings.mcp.max_calls_per_run),
                 tool_call_id=call["id"],
                 name=call["name"],
                 status="error",
@@ -236,13 +291,25 @@ def build(
             )
             for call in refused
         ]
+        out += [
+            ToolMessage(
+                declined(),
+                tool_call_id=call["id"],
+                name=call["name"],
+                status="error",
+                artifact={"declined": True},
+            )
+            for call in turned_down
+        ]
         order = {call["id"]: i for i, call in enumerate(reply.tool_calls)}
         out.sort(key=lambda m: order.get(m.tool_call_id, len(order)))
         return {"messages": out}
 
-    def route(state: WorkspaceState) -> str:
+    def route(state: WorkspaceState, runtime: Runtime[AgentContext]) -> str:
         last = state["messages"][-1]
-        return "tools" if getattr(last, "tool_calls", None) else "cite"
+        if not getattr(last, "tool_calls", None):
+            return "cite"
+        return "approve_tools" if awaiting(state, runtime.context) else "tools"
 
     async def cite_reply(state: WorkspaceState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
         """Number the reply's document citations, list its sources, and check them.
@@ -302,6 +369,7 @@ def build(
         call_model,
         retry_policy=RetryPolicy(max_attempts=3, initial_interval=0.5, backoff_factor=2.0),
     )
+    builder.add_node("approve_tools", approve_tools)
     builder.add_node("tools", run_tools)
     # Malformed verifier output is handled inside check_citations; this
     # retries the rest, such as a rate limit.
@@ -310,7 +378,10 @@ def build(
     builder.add_edge(START, "select_corpus")
     builder.add_edge("select_corpus", "recall_memories")
     builder.add_edge("recall_memories", "model")
-    builder.add_conditional_edges("model", route, {"tools": "tools", "cite": "cite"})
+    builder.add_conditional_edges(
+        "model", route, {"approve_tools": "approve_tools", "tools": "tools", "cite": "cite"}
+    )
+    builder.add_edge("approve_tools", "tools")
     builder.add_edge("tools", "model")
     builder.add_edge("cite", END)
 

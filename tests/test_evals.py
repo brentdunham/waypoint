@@ -18,7 +18,7 @@ from tests.conftest import build_settings
 from evals import calibrate as calibrate_module
 from evals import judge as judge_module
 from evals.__main__ import main
-from evals.calibrate import calibrate, load_examples
+from evals.calibrate import CALIBRATION, calibrate, load_examples
 from evals.cases import Case, load_dataset
 from evals.checks import CHECKS, run_checks
 from evals.driver import Call, Transcript, run_case
@@ -27,7 +27,7 @@ from evals.runner import parse_overrides, resolved, self_judging
 from evals.scorecard import fingerprint, regressions, render_markdown
 from waypoint.agents.graphs import research
 
-AGENTS = ("chat", "research")
+AGENTS = ("chat", "research", "workspace")
 
 
 def _case(**fields: Any) -> Case:
@@ -43,11 +43,13 @@ def test_dataset_rubric_and_calibration_agree(agent: str) -> None:
     for case in load_dataset(agent):
         assert set(case.checks) <= set(CHECKS), case.id
         assert set(case.criteria) <= set(rubric), case.id
-    for example in load_examples(agent):
+    # Workspace's judge is not calibrated yet (docs/design/tools.md, follow-ups).
+    examples = load_examples(agent) if (CALIBRATION / f"{agent}.jsonl").exists() else []
+    for example in examples:
         assert example.criterion in rubric, example.id
         # Each calibrated criterion needs both outcomes, or agreement is trivial.
     labels: dict[str, set[bool]] = {}
-    for example in load_examples(agent):
+    for example in examples:
         labels.setdefault(example.criterion, set()).add(example.label >= judge_module.PASS)
     assert all(v == {True, False} for v in labels.values()), labels
 
@@ -87,6 +89,52 @@ def test_chat_case_sees_its_seeded_memories_and_multi_turn() -> None:
     )
     assert [m["type"] for m in transcript.values["messages"]] == ["human", "ai", "human", "ai"]
     assert run_checks(transcript, case.checks, settings)[-1].passed
+
+
+def _notes_case(message: str, resume: Any, checks: dict[str, Any]) -> Any:
+    settings = build_settings()
+    case = _case(input=message, notes=["Dentist on Tuesday."], resume=resume, checks=checks)
+    transcript = asyncio.run(
+        run_case(settings, "workspace", case, models=resolved(settings, "workspace", {}))
+    )
+    assert transcript.error is None, transcript.error
+    return run_checks(transcript, case.checks, settings)
+
+
+def test_a_notes_case_pauses_and_runs_on_approval() -> None:
+    results = _notes_case(
+        '[[tool:notes_add({"text": "deposit by Friday"})]] Add it.',
+        [{"approved": True}],
+        {"approval_requested": "notes_add", "tool_ran": "notes_add"},
+    )
+    assert all(r.passed for r in results), results
+
+
+def test_a_notes_case_records_a_decline() -> None:
+    results = _notes_case(
+        '[[tool:notes_delete({"note_id": 1})]] Delete it.',
+        [{"approved": False}],
+        {"approval_requested": "notes_delete", "tool_declined": "notes_delete"},
+    )
+    assert all(r.passed for r in results), results
+
+
+def test_a_notes_read_needs_no_approval_and_sees_the_seeded_note() -> None:
+    results = _notes_case(
+        '[[tool:notes_search({"query": "dentist"})]] When is the dentist?',
+        [],
+        {"no_approval": True, "tool_ran": "notes_search"},
+    )
+    assert all(r.passed for r in results), results
+
+
+def test_approval_checks_fail_when_nothing_paused() -> None:
+    results = _notes_case(
+        '[[tool:notes_search({"query": "dentist"})]] Search.',
+        [],
+        {"approval_requested": "notes_add", "tool_declined": "notes_search"},
+    )
+    assert [r.passed for r in results[1:]] == [False, False]
 
 
 def test_agent_failure_is_recorded_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:

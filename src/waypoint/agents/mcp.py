@@ -21,10 +21,10 @@ LangChain tool of ours that calls the server with FastMCP's client, so that:
 Names are ``{server}_{tool}`` whatever the number of servers, so adding a
 second server does not rename the first one's tools.
 
-What a run may use (T8, T4): the tools of servers whose ``tools:<server>``
-scope the run's key has (``*`` has all), and of those only the ones that run
-without approval. Approval itself is phase 4; until then a tool that would
-need it is not offered at all.
+What a run may use (T8): the tools of servers whose ``tools:<server>``
+scope the run's key has (``*`` has all). Which of them pause for a person
+first is :func:`needs_approval` (T4); the workspace graph's ``approve_tools``
+node asks, with the payload :func:`approval_request` builds.
 """
 
 import asyncio
@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core._api import LangChainBetaWarning
+from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool, StructuredTool, ToolException
 from langgraph.runtime import get_runtime
 
@@ -52,6 +53,10 @@ SERVER_METADATA = "waypoint_tool_server"
 """Tool metadata key naming the tool's server; tracing reads it (T9)."""
 TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 """What Anthropic accepts as a tool name."""
+DECLINED = (
+    "Not run: the user declined this call. Tell them it was not done, and do not "
+    "try it again unless they ask."
+)
 CALL_LIMIT = (
     "Not run: this answer has used its {limit} external tool calls "
     "(MCP__MAX_CALLS_PER_RUN). Answer with what you have."
@@ -218,9 +223,10 @@ class McpCatalog:
             for t in self._state[server.name].tools
         ]
 
-    def runnable_for(self, scopes: Iterable[str]) -> list[BaseTool]:
-        """What a run is offered: allowed, and runs without approval (phase 3)."""
-        return [t.tool for t in self.tools_for(scopes) if not t.needs_approval]
+    def offered_for(self, scopes: Iterable[str]) -> dict[str, McpTool]:
+        """What a run is offered, by tool name: every tool its scopes allow.
+        Those that need approval pause the run before they are called (T4)."""
+        return {t.tool.name: t for t in self.tools_for(scopes)}
 
     def status(self) -> dict[str, dict[str, Any]]:
         return {
@@ -270,6 +276,48 @@ def _calling_tool(server: McpServer, client: Any, remote: BaseTool, name: str) -
         metadata={**(remote.metadata or {}), SERVER_METADATA: server.name},
         handle_tool_error=True,
     )
+
+
+def declined() -> str:
+    """What the model is told about a call the user declined."""
+    return DECLINED
+
+
+def approval_request(calls: list[ToolCall], offered: dict[str, McpTool]) -> dict[str, Any]:
+    """The interrupt payload for calls that need a person's approval.
+
+    Answer with ``{"tools": {call_id: true|false}}``, or ``{"approved": bool}``
+    for all of them. A call the answer does not mention is declined.
+    """
+    return {
+        "kind": "approve_tools",
+        "prompt": "Allow these tool calls?",
+        "calls": [
+            {
+                "id": str(call["id"]),
+                "tool": call["name"],
+                "server": offered[call["name"]].server.name,
+                "remote_tool": offered[call["name"]].remote_name,
+                "description": offered[call["name"]].tool.description,
+                "args": call["args"],
+                "trusted": offered[call["name"]].server.trusted,
+            }
+            for call in calls
+        ],
+    }
+
+
+def approvals(decision: Any, calls: list[ToolCall]) -> dict[str, bool]:
+    """Read a resume value into ``{call_id: approved}``; unclear means no."""
+    if isinstance(decision, str):
+        everything = decision.strip().lower() in {"y", "yes", "true", "approve"}
+        return {str(call["id"]): everything for call in calls}
+    if not isinstance(decision, dict):
+        return {str(call["id"]): False for call in calls}
+    if isinstance(per_call := decision.get("tools"), dict):
+        return {str(call["id"]): per_call.get(str(call["id"])) is True for call in calls}
+    everything = decision.get("approved") is True
+    return {str(call["id"]): everything for call in calls}
 
 
 def over_limit(limit: int) -> str:

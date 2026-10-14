@@ -92,7 +92,7 @@ AGENTS: dict[str, AgentSpec] = {
         builder=workspace.build,
         input_key="messages",
         model_roles=workspace.ROLES,
-        # True from phase 4 (tool approval); nothing in it interrupts yet.
+        supports_interrupts=True,  # approve_tools (docs/design/tools.md, T4)
         uses_corpora=True,
         uses_mcp=True,
         example={

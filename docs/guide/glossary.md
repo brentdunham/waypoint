@@ -45,7 +45,8 @@ definition gives the general meaning first, then what it means here.
 | **Worker** | Two meanings: a gunicorn process serving requests, or a research `investigate` node instance answering one question. The text says which. |
 | **Global corpus** | A public corpus every tenant can select: published by an admin (`POST /corpora/{id}/visibility`) or seeded at boot (`waypoint-docs`). |
 | **MCP** | Model Context Protocol: how Workspace reaches external tool servers (`MCP__SERVERS`). A key needs `tools:<server>` to use a server's tools. |
-| **Trusted server** | An MCP server whose tool annotations are believed: its tools that declare `readOnlyHint` run without approval. Every other server's tools need approval. |
+| **Tool approval** | Workspace stopping before a tool call that could change something, until a person allows or declines it (`approve_tools`, an `interrupt()`). A declined call is never made. |
+| **Trusted server** | An MCP server whose tool annotations are believed: its tools that declare `readOnlyHint` run without approval. Every other server's tools, and a trusted server's tools that do not declare it, need approval. |
 | **Upload limits** | What a key with `corpora:write` may add per tenant per UTC day (`UPLOADS__*`): 3 corpora, 10 files, 5 MB, 2,000 chunks. Admin keys are exempt; a refusal is `429 over-quota`. |
 | **Workspace** | The agent that chats over a thread's selected documents, with checked citations and chat's memory; MCP tools and approval are its later phases. |
 | **`search_documents`** | Workspace's tool: searches the thread's corpora and returns passages as `search_result` blocks, which the reply cites; says so when documents are still being indexed. |

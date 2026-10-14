@@ -243,6 +243,34 @@ reply as shown, with its `Sources` list), `findings` (one per search the reply
 drew on) and `metadata` (`searches`, `document_sources_cited`,
 `verification`).
 
+### Approving tool calls
+
+A Workspace reply that calls an MCP tool which could change something pauses
+before the call (design T4: everything except a trusted server's read-only
+tools, unless `MCP__SERVERS[].approval` says otherwise). The run ends
+`interrupted`, and the thread's state has the pending interrupt:
+
+```json
+{"kind": "approve_tools", "prompt": "Allow these tool calls?",
+ "calls": [{"id": "toolu_01...", "tool": "notes_add", "server": "notes", "remote_tool": "add",
+            "description": "Save a new note for the user.", "args": {"text": "deposit by Friday"},
+            "trusted": true}]}
+```
+
+Nothing has run yet. Resume with a decision per call, or one for all:
+
+```bash
+curl -s -X POST "$BASE/threads/$TID/runs?wait=true" -H "$AUTH" \
+  -d '{"resume":{"tools":{"toolu_01...":true}}}' | jq .status
+# or {"resume":{"approved":false}} to decline everything
+```
+
+A call the answer does not mention is declined. A declined call is not made;
+the model gets "Not run: the user declined this call" as its result and says
+so. The pause lives in the checkpoint, so it survives a reload or a restart,
+and any device with the key can answer it. Read-only calls in the same reply
+run after the answer, with the approved ones.
+
 ## Time travel
 
 ```bash

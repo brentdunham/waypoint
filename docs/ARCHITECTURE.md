@@ -222,7 +222,7 @@ keys and eval fingerprints did not change.
 separate agent so chat stays the simple one ([design](design/tools.md), W1):
 
 ```
-select_corpus -> recall_memories -> model <-> tools
+select_corpus -> recall_memories -> model -> [approve_tools] -> tools -> model
                                       |
                                       v
                                     cite -> END
@@ -264,12 +264,18 @@ select_corpus -> recall_memories -> model <-> tools
   `MCP__REFRESH_S`; a server that is down has no tools until it answers, and
   `/readyz` shows it as `mcp:<name>: unavailable` without failing. A run is
   offered the tools of servers whose `tools:<server>` scope its key holds
-  (the scopes travel in the run's context), and of those only the ones that
-  need no approval: a trusted server's tools that declare `readOnlyHint`, or
-  any tool set to `false` in that server's `approval`. The model is bound per
-  tool set; with no MCP tools it is the same binding as before, so eval
-  replay keys did not move. The `tools` node runs only what this run was
-  offered, so a call to anything else comes back as an unknown tool.
+  (the scopes travel in the run's context). The model is bound per tool set;
+  with no MCP tools it is the same binding as before, so eval replay keys did
+  not move. The `tools` node runs only what this run was offered, so a call to
+  anything else comes back as an unknown tool.
+* **Anything that could change something waits for a person.** When a reply
+  calls a tool that needs approval (all but a trusted server's read-only
+  tools, unless `approval` in the server's config says otherwise), the route
+  goes through `approve_tools`, whose `interrupt()` checkpoints the run and
+  stops it before any call is made (section 3). The resume answers per call;
+  `tools` then runs the approved calls and answers each declined one with
+  "Not run: the user declined this call", which the model reports. Read-only
+  calls in the same reply wait for the answer and then run.
 * **Each MCP call is ours, not the adapter's.** Tools are named
   `{server}_{tool}`. A call sends the tenant and user in the request's
   `_meta` and the server's token as a bearer header, has the server's

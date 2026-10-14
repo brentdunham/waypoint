@@ -329,7 +329,9 @@ flowchart LR
     S((START)) --> sel[select_corpus<br/>resolve the thread's corpora<br/>for this tenant, when they change]
     sel --> recall[recall_memories<br/>shared with chat]
     recall --> model[model<br/>system prompt + memories + messages;<br/>search_documents bound only<br/>when the thread has documents]
-    model -->|tool calls| tools[tools<br/>now, calculate, remember,<br/>recall, search_documents]
+    model -->|calls that need approval| approve[approve_tools<br/>interrupt: a person allows<br/>or declines each call]
+    approve --> tools
+    model -->|other tool calls| tools[tools<br/>now, calculate, remember,<br/>recall, search_documents,<br/>MCP tools the key may use]
     tools --> model
     model -->|no tool calls| cite[cite<br/>number citations, list sources,<br/>verify with the research verifier]
     cite --> E((END))
@@ -388,12 +390,22 @@ fact told to either agent holds in both and `/memories` stays one list
 **External tools over MCP.** Servers are configuration (`MCP__SERVERS`), not
 code. Their tool lists are fetched in the background and refreshed, so a
 server that is down costs only its own tools. A run gets the tools of the
-servers its key has a `tools:<server>` scope for, and only those that can run
-without a person's approval: a trusted server's read-only tools. Annotations
-such as `readOnlyHint` are a server's claims about itself, so an untrusted
-server's tools always need approval, which arrives in the next phase; until
-then they are not offered. Each call carries the tenant in the MCP request's
-`_meta`, has a timeout, and counts against `MCP__MAX_CALLS_PER_RUN`; a timeout,
-an error or the limit comes back to the model as a tool result it can explain,
-not a failed run.
+servers its key has a `tools:<server>` scope for. A call the person might not
+want made waits for them: everything but a trusted server's read-only tools
+goes through `approve_tools` first (decision
+[D28](07-decisions.md#d28-anything-that-could-change-something-waits-for-a-person)).
+Annotations such as `readOnlyHint` are a server's claims about itself, so an
+untrusted server's tools always ask. Each call carries the tenant in the MCP
+request's `_meta`, has a timeout, and counts against `MCP__MAX_CALLS_PER_RUN`; a
+timeout, an error or the limit comes back to the model as a tool result it can
+explain, not a failed run.
+
+**Tool approval is research's plan approval, generalised.** The same
+`interrupt()`: the run checkpoints and stops, the web shows a card (here one
+row per call: tool, server and arguments, each with its own checkbox), and the
+answer resumes the run, from this device or another, today or tomorrow. The
+difference is what is being approved: a plan of questions there, a specific
+action with specific arguments here. A declined call is never made, and the
+model is told so in the call's result, so the reply says it was not done
+rather than going quiet about it.
 

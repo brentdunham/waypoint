@@ -114,6 +114,46 @@ def test_state_survives_a_process_restart(make_app, auth: dict[str, str]) -> Non
     assert resumed["result"]["report"]
 
 
+def test_a_tool_approval_survives_a_process_restart(make_app, auth: dict[str, str]) -> None:
+    """Workspace pauses before a write tool; another app object resumes it (T4)."""
+    from fastmcp import Client
+    from tests.conftest import TEST_DATABASE_URL, TEST_REDIS_URL
+    from tests.test_mcp import ADD, NOTES, notes_server
+
+    config = {
+        "database_url": TEST_DATABASE_URL,
+        "redis_url": TEST_REDIS_URL,
+        "auth_enabled": True,
+        "bootstrap_api_key": BOOTSTRAP_KEY,
+        "mcp": {"servers": [NOTES]},
+    }
+
+    def with_notes(app):
+        mcp = app.runtime.mcp
+        app.call(mcp.aclose)
+        server = notes_server()
+        mcp.connect = lambda _s: Client(server)
+        app.call(mcp.refresh)
+        return app.test_client()
+
+    first = make_app(**config)
+    thread_id = new_thread(with_notes(first), "workspace", auth)
+    paused = run_and_wait(first.test_client(), thread_id, {"message": ADD}, auth)
+    assert paused["status"] == "interrupted"
+    first.close()
+
+    second = make_app(**config)
+    client = with_notes(second)
+    state = client.get(f"/api/v1/threads/{thread_id}/state", headers=auth).json()
+    [pending] = state["interrupts"]
+    assert pending["value"]["kind"] == "approve_tools"
+    resumed = run_and_wait(client, thread_id, {"resume": {"approved": True}}, auth)
+    assert resumed["status"] == "completed", resumed
+    values = client.get(f"/api/v1/threads/{thread_id}/state", headers=auth).json()["values"]
+    tools = [m for m in values["messages"] if m.get("type") == "tool"]
+    assert "added call the venue" in tools[-1]["content"]
+
+
 # -- streaming ----------------------------------------------------------------
 
 

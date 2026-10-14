@@ -215,3 +215,7 @@ button.example:hover { border-color: var(--accent); }
 .uploads__docs .status-failed { color: #b42318; cursor: help; }
 .uploads__docs .status-pending { font-style: italic; }
 .uploads__error { color: #b42318; }
+
+.tool-calls { list-style: none; margin: 0 0 0.75rem; padding: 0; display: grid; gap: 0.6rem; }
+.tool-calls li { display: grid; gap: 0.25rem; }
+.tool-calls__args { margin: 0; padding: 0.5rem; background: rgba(127, 127, 127, 0.1); border-radius: 4px; font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; }

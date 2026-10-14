@@ -35,6 +35,11 @@ class Case(BaseModel):
     expect: str = ""
     """What a good answer contains, for the judge. Not a reference answer."""
     tags: list[str] = Field(default_factory=list)
+    notes: list[str] | None = None
+    """Workspace: run the demo notes MCP server (``waypoint.mcp_demo.notes``)
+    holding these notes for the case's tenant, and give the run its tools
+    (scope ``tools:notes``). ``[]`` is the server with no notes. Its write
+    tools pause for approval; ``resume`` answers them."""
     corpus: str | None = None
     """Research: a corpus under ``corpora/`` the workers also search (RAG). The
     driver indexes it once per process and passes its id as ``corpus_id``."""

@@ -409,7 +409,13 @@ built 2026-10-14: LangChain upgraded to 1.4.5 with `langchain[mcp]`
 the background, tools per key through `tools:<server>` scopes, only a trusted
 server's read-only tools until approval exists, a per-run call cap and
 timeouts that come back to the model as messages, and the server on tool
-spans. Phase 4 (tool approval) is next.
+spans. Phase 4 built 2026-10-14: any call except a trusted server's read-only
+tools pauses Workspace for approval (`approve_tools`, an `interrupt()`), per
+call, surviving a restart; a declined call is never made and the reply says
+so; a tool approval card in the web UI; the demo notes server in process for
+three new eval cases (`approval_requested`, `tool_declined`). The workspace
+baseline needs a new 3-trial run for the new cases. Phase 5 (the notes server
+on Bob) is next.
 
 ### 6. Durable run queue
 

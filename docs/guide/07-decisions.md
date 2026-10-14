@@ -450,3 +450,45 @@ before verification.
 **Consequences.** The verifier moved to `agents/verify.py` unchanged, so
 research's prompts, replay keys and fingerprint did not move.
 
+
+### D28. Anything that could change something waits for a person
+
+**Context.** Workspace calls tools on external MCP servers. A server labels
+its tools with hints such as `readOnlyHint`, but the MCP spec calls these
+untrusted unless the server is: they are claims a server makes about itself.
+
+**Decision.** A tool runs without asking only when its server is marked
+`trusted` and the tool declares `readOnlyHint`, or when the operator sets
+`approval: false` for it in `MCP__SERVERS`. Every other call stops the run
+with an `interrupt()` before it is made, showing the tool, its server and its
+arguments; each call is allowed or declined on its own. Built-in tools never
+ask.
+
+**Alternatives.** Asking only for tools flagged as dangerous: one missing flag
+runs a write unasked. Asking before every call: read-only lookups would make
+the agent unusable.
+
+**Consequences.** Safe by default, and quick for lookups. A declined call is
+answered with "Not run: the user declined this call", so the model says so
+instead of claiming it was done; the evals check that (`tool_declined`, and
+`honest_tools` grades it). The pause is a checkpoint, so it survives a reload
+or a restart (tested in the integration tier).
+
+### D29. MCP through `langchain.mcp`, calls through our own tool
+
+**Context.** LangChain 1.4 replaced `langchain-mcp-adapters` with a beta
+`langchain.mcp` namespace built on FastMCP.
+
+**Decision.** Use its `MCPAdapter` to discover tools (schemas, annotations,
+server identity), pinned below 1.5. Make each call through our own tool over
+FastMCP's client, which sends the tenant in the request's `_meta`, applies the
+server's timeout, and turns a timeout or an unreachable server into a message
+for the model.
+
+**Alternatives.** The older adapter package, which LangChain says to
+uninstall. The adapter's own tools: no per-call metadata, no per-server
+timeout, and a transport failure fails the whole run.
+
+**Consequences.** One file, `agents/mcp.py`, holds everything that touches the
+beta API, so a change there touches one place. Elicitation is off: the
+calling client does not offer it.

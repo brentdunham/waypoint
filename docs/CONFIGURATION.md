@@ -249,11 +249,11 @@ phase 3). None by default.
 MCP__SERVERS='[{"name": "notes", "url": "http://notes:8001/mcp", "trusted": true, "token": "..."}]'
 ```
 
-Which tools run (T4): a per-tool `approval` setting wins; otherwise only a
-**trusted** server's tools that declare `readOnlyHint` run. Annotations are
-claims a server makes about itself, so an untrusted server's are not
-believed. Until tool approval lands (phase 4), a tool that would need
-approval is not offered at all. Each call carries the tenant and user in the
+Which tools run without asking (T4): a per-tool `approval` setting wins;
+otherwise only a **trusted** server's tools that declare `readOnlyHint`.
+Every other call pauses the run for a person's approval first (API.md,
+"Approving tool calls"). Annotations are claims a server makes about itself,
+so an untrusted server's are not believed. Each call carries the tenant and user in the
 MCP request's `_meta` (`io.waypoint/tenant`, `io.waypoint/user`), which is how
 a server keeps tenants apart. Discovery runs in the background: a server that
 is down at boot is logged and retried, never fatal.

@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, auth } from "./api/client";
 import type { ChatMessage, Corpus, Finding } from "./api/types";
+import { isToolApproval } from "./approvals";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { ConnectionBar } from "./components/ConnectionBar";
 import { ResearchProgress } from "./components/ResearchProgress";
 import { RunTimeline } from "./components/RunTimeline";
 import { Sidebar } from "./components/Sidebar";
 import { TimeTravel } from "./components/TimeTravel";
+import { ToolApprovalCard } from "./components/ToolApprovalCard";
 import { Transcript } from "./components/Transcript";
 import { Welcome } from "./components/Welcome";
 import { useRun } from "./hooks/useRun";
@@ -205,7 +207,7 @@ export default function App() {
               briefing as two runs, so the plan's line says so. */}
           {run.usage && !run.busy && (
             <p className="muted small run-usage" title={usageBreakdown(run.usage)}>
-              {run.status === "interrupted" && "Plan: "}
+              {run.status === "interrupted" && (activeAgent === "research" ? "Plan: " : "So far: ")}
               {formatUsage(run.usage, run.durationMs)}
             </p>
           )}
@@ -213,7 +215,15 @@ export default function App() {
 
           {activeAgent === "research" && <ResearchProgress progress={run.progress} />}
 
-          {pending && (
+          {pending && isToolApproval(pending.value) && (
+            <ToolApprovalCard
+              key={pending.id ?? JSON.stringify(pending.value.calls)}
+              interrupt={pending}
+              busy={run.busy}
+              onDecide={decide}
+            />
+          )}
+          {pending && !isToolApproval(pending.value) && (
             <ApprovalCard
               key={pending.id ?? JSON.stringify(pending.value.plan)}
               interrupt={pending}

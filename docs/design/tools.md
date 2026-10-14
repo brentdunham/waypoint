@@ -1,8 +1,8 @@
 # Design: the workspace agent (documents, MCP tools, approval)
 
-Status: **phase 3 built** (2026-10-14): the MCP client, read-only tools only;
-2a and 2b (several corpora, reviewers' own corpora) built and deployed the
-same day; phase 1 deployed 2026-10-13. Phase 4 (tool approval) next. Written 2026-10-13. This note is the
+Status: **phase 4 built** (2026-10-14): tool approval; phase 3 (the MCP
+client) built and 2a and 2b deployed the same day; phase 1 deployed
+2026-10-13. Phase 5 (the notes server on Bob) next. Written 2026-10-13. This note is the
 hand-off for the coding sessions: what to build, what is decided, what is
 still open, in what order, and which documents each phase must update. Read
 it with [ARCHITECTURE.md](../ARCHITECTURE.md),
@@ -544,6 +544,64 @@ Deviations:
   graph without a catalog, so `MCP__SERVERS` cannot leak into a scorecard,
   and the MCP settings are not in the fingerprint. Phase 4 adds the eval
   cases that need a tool server.
+
+### Phase 4: tool approval (2026-10-14)
+
+Built:
+
+* `approve_tools` in the workspace graph, between `model` and `tools`. The
+  route sends a reply there only when one of its calls needs approval
+  (`needs_approval`, T4), so read-only rounds cost no extra step. The node
+  calls `interrupt()` with `{"kind": "approve_tools", "prompt", "calls": [{id,
+  tool, server, remote_tool, description, args, trusted}]}`; a resume
+  re-enters it and the answer becomes `approvals` in state. Only calls that
+  would be made under `MCP__MAX_CALLS_PER_RUN` are asked about.
+* The resume payload as designed, `{"tools": {call_id: true|false}}`, plus
+  `{"approved": bool}` (and "yes"/"no") for every call at once. A call the
+  answer does not mention is declined.
+* The decline path: `tools` runs the approved calls and the calls that need
+  no approval, and answers each declined one with "Not run: the user
+  declined this call. Tell them it was not done...". Declined and refused
+  calls carry an artifact, so they do not count against the call cap.
+* All of a key's MCP tools are now offered (phase 3 offered only those that
+  needed no approval). `supports_interrupts` is true for Workspace.
+* Web: `ToolApprovalCard`, one row per call with the tool, its server
+  ("untrusted server" when it is), its description and its arguments, each
+  with a checkbox; "Allow", "Allow 1 of 2", "Decline all". It is chosen by the
+  interrupt's `kind`; research keeps its plan card.
+* Evals: a case's `notes` runs the demo notes server in process for that
+  case and gives the run its tools (scope `tools:notes`). Checks
+  `approval_requested`, `no_approval`, `tool_ran`, `tool_declined`. Three
+  cases: a read that must not ask, an add that is approved and runs, a delete
+  that is declined and must be reported as not done. `honest_tools` now says
+  a declined or failed call did not happen.
+* Tests: 6 more in `tests/test_mcp.py` (pause, approve, decline never
+  reaching the server, per-call decisions, read-only never pausing, an
+  untrusted server's read-only tool asking, the notes server's tenant
+  isolation), 4 in `tests/test_evals.py` for the notes cases through the eval
+  driver, and an integration test that a second app object resumes a paused
+  approval from Postgres. Integration tier on Linux: 33 passed.
+
+Deviations:
+
+* **The demo server's logic came forward from phase 5.** The eval cases need
+  a server, so `waypoint/mcp_demo/notes.py` holds it now: search, list (read
+  only), add, delete, kept apart by the tenant in `_meta`, with an in-memory
+  store. Phase 5 adds what running it on Bob needs: an HTTP entry point, the
+  token check, a store that survives a restart, the compose service. It lives
+  in the package rather than `mcp_servers/notes/` so the same lint, types,
+  tests and image cover it.
+* **A second card, not a generalised one.** The plan card edits questions;
+  this one allows or declines actions. Sharing one component would mean a
+  card of conditionals, so `App.tsx` picks by `kind`.
+* **The workspace eval fingerprint changed** (fake mode `72e967bfacb7` to
+  `31f441c2a76a`): three new cases and the clearer `honest_tools`. Prompts,
+  settings and the ten existing cases' replay keys are unchanged, so a new
+  baseline replays those cases' agent calls and runs the new cases and the
+  judge live. Chat and research fingerprints are unchanged.
+* `tests/test_evals.py` now checks the workspace dataset against its rubric
+  and the known checks, as it did for chat and research; the workspace judge
+  has no calibration set yet, which the test allows.
 
 ## References
 

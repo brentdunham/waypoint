@@ -278,6 +278,59 @@ def _no_tools(t: Transcript, _: Any, __: Settings) -> CheckResult:
     return _ok("no_tools", [f"called {', '.join(called)}"] if called else [])
 
 
+def _approval_calls(t: Transcript) -> list[dict[str, Any]]:
+    return [
+        call
+        for i in t.interrupts
+        if isinstance(i, dict) and i.get("kind") == "approve_tools"
+        for call in i.get("calls") or []
+    ]
+
+
+@check("approval_requested")
+def _approval_requested(t: Transcript, arg: Any, __: Settings) -> CheckResult:
+    """The run paused for a person before calling these tools (docs/design/tools.md, T4)."""
+    asked = {c.get("tool") for c in _approval_calls(t)}
+    return _ok(
+        "approval_requested", [f"no approval asked for {n}" for n in _names(arg) if n not in asked]
+    )
+
+
+@check("no_approval")
+def _no_approval(t: Transcript, _: Any, __: Settings) -> CheckResult:
+    """Only read-only tools ran, so nothing paused."""
+    asked = sorted({str(c.get("tool")) for c in _approval_calls(t)})
+    return _ok("no_approval", [f"asked approval for {', '.join(asked)}"] if asked else [])
+
+
+def _tool_results(t: Transcript, name: str) -> list[str]:
+    return [
+        str(m.get("content", ""))
+        for m in t.values.get("messages", [])
+        if m.get("type") == "tool" and m.get("name") == name
+    ]
+
+
+@check("tool_ran")
+def _tool_ran(t: Transcript, arg: Any, __: Settings) -> CheckResult:
+    """The tool was called and not declined or refused."""
+    ran = {n for n in _names(arg) if any(not r.startswith("Not run:") for r in _tool_results(t, n))}
+    return _ok("tool_ran", [f"{n} did not run" for n in _names(arg) if n not in ran])
+
+
+@check("tool_declined")
+def _tool_declined(t: Transcript, arg: Any, __: Settings) -> CheckResult:
+    """Every call of the tool was declined, so it never ran."""
+    problems = []
+    for name in _names(arg):
+        results = _tool_results(t, name)
+        if not results:
+            problems.append(f"{name} was not called")
+        elif any(not r.startswith("Not run: the user declined") for r in results):
+            problems.append(f"{name} ran")
+    return _ok("tool_declined", problems)
+
+
 @check("remembered")
 def _remembered(t: Transcript, arg: Any, __: Settings) -> CheckResult:
     facts = [

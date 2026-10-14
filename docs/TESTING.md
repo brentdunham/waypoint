@@ -31,8 +31,18 @@ resilience.
 the catalog's `connect` hook hands it a client for the server object instead
 of an HTTP URL, so discovery, scopes, the approval policy, the call cap,
 timeouts, server errors and the tenant in `_meta` are tested with no network.
-The HTTP transport itself was checked by hand against a local FastMCP server
-(design log, phase 3).
+Tool approval is tested there too: a write pauses with nothing run, an
+approval runs it, a decline never reaches the server, calls are decided one
+by one, and an untrusted server's read-only tool still asks. The integration
+tier adds that a pause survives a restart: a second app object resumes it from
+Postgres. The HTTP transport itself was checked by hand against a local
+FastMCP server (design log, phase 3).
+
+**Eval cases with tools** (`notes` in a workspace case) run the demo notes
+server (`waypoint.mcp_demo.notes`) in process for that case alone. Its write
+tools pause like any other, and the case's `resume` list answers them in
+order: `{"approved": true}` allows every pending call, `{"approved": false}`
+declines them, `{"tools": {"<call id>": true}}` decides one by one.
 
 ## 2. Integration tier — real Postgres and Redis
 

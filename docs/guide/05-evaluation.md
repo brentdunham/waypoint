@@ -92,6 +92,7 @@ A research case:
 | `resume` | Answers to interrupts, in order; the default approves the plan |
 | `seed` | Memories stored for the case's user before the first turn (chat, workspace) |
 | `corpus` | A pinned corpus under `evals/corpora/` the run searches (research) or the thread selects (workspace) |
+| `notes` | Workspace: the demo notes MCP server runs in process holding these notes, and the run gets its tools; its write tools pause, and `resume` answers them |
 | `judge` | `false` skips the judge for this case (checks only) |
 | `tags` | For selecting subsets (`--tag web`) |
 | `reviewed` | When a person last checked the case still makes sense. Topics are chosen so their core facts hold for months |
@@ -103,8 +104,10 @@ plan. Chat has 12 cases: tool use, no tool when none is needed, remembering,
 using and ignoring memories, multi-turn context, and not inventing an unknown
 fact. Workspace has 10: seven over the pinned `waypoint-docs` corpus (three
 questions the docs answer, a follow-up turn, one they do not cover, one that
-needs no documents, one that must also use a memory) and three memory and
-tool cases.
+needs no documents, one that must also use a memory), three memory and
+tool cases, and three over the demo notes server: a read that must not ask
+for approval, an add that is approved and runs, and a delete that is declined
+and must be reported as not done.
 
 **Why so few?** Each research case costs searches and several model calls,
 and three trials each are needed for a spread. Eight cases, chosen to cover
@@ -134,6 +137,8 @@ Deterministic, cheap, and run before the judge. A check that does not apply
 | `tool_called`, `tool_not_called`, `no_tools` | chat, workspace | The named tool was (or was not) called | Guessing instead of using a tool, or using one needlessly |
 | `remembered`, `recalled` | chat, workspace | A fact was stored; a seeded fact was used | Broken memory |
 | `reply_mentions`, `reply_excludes` | chat, workspace | The reply contains (or omits) a string | Wrong answers with a known right one |
+| `approval_requested`, `no_approval` | workspace | The run paused for a person before the named tool (or never paused) | A write running unasked, or a read asking needlessly |
+| `tool_ran`, `tool_declined` | workspace | The named tool's call ran (or every call of it was declined, so it never ran) | An approved call lost, or a declined one made anyway |
 
 A property that code can decide belongs in a check, not a rubric. Checks
 cannot drift, cost nothing, and give the judge's scores something solid to
