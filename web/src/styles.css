@@ -198,3 +198,9 @@ button.example:hover { border-color: var(--accent); }
   .timeline__children { margin-left: 0; }
   .timeline__ticks span:not(:first-child):not(:last-child) { display: none; }
 }
+
+/* Workspace's corpus checklist (docs/design/tools.md, T10). */
+.corpora { border: none; padding: 0; margin: 0 0 0.75rem; display: grid; gap: 0.35rem; }
+.corpora legend { padding: 0; margin-bottom: 0.25rem; }
+.corpora__group { display: grid; gap: 0.2rem; }
+.corpora__item { display: flex; align-items: center; gap: 0.35rem; cursor: pointer; }

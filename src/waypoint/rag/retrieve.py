@@ -110,7 +110,7 @@ async def retrieve(
     store: CorpusStore,
     embeddings: Embeddings | None,
     tenant_id: str,
-    corpus_id: str,
+    corpus_id: str | Sequence[str],
     query: str,
     *,
     k: int,
@@ -119,7 +119,15 @@ async def retrieve(
     rrf_k: int = 60,
     reranker: Reranker | None = None,
 ) -> Retrieval:
-    """The ``k`` best chunks for ``query`` in a corpus the tenant can read."""
+    """The ``k`` best chunks for ``query`` in the corpora the tenant can read.
+
+    ``corpus_id`` is one corpus or several. With several (the workspace
+    agent, docs/design/tools.md T11), each method's candidates are fetched per
+    corpus and merged by score before fusion and reranking, so the rest of the
+    pipeline, and its cost, is the same as for one corpus. With one, nothing
+    differs from before.
+    """
+    corpus_ids = [corpus_id] if isinstance(corpus_id, str) else list(dict.fromkeys(corpus_id))
     if mode != "keyword" and embeddings is None:
         raise ValueError(f"mode {mode!r} needs an embeddings model")
 
@@ -135,14 +143,19 @@ async def retrieve(
 
     started = time.perf_counter()
     by_method: dict[str, list[ChunkHit]] = {}
-    if mode == "vector":
-        by_method["vector"] = await store.vector_search(tenant_id, corpus_id, vector, pool)
-    elif mode == "keyword":
-        by_method["keyword"] = await store.keyword_search(tenant_id, corpus_id, query, pool)
+
+    if mode in ("vector", "keyword"):
+        by_method[mode] = await _candidates(
+            store, tenant_id, corpus_ids, mode, vector=vector, query=query, limit=pool
+        )
     else:
         found_v, found_k = await asyncio.gather(
-            store.vector_search(tenant_id, corpus_id, vector, pool),
-            store.keyword_search(tenant_id, corpus_id, query, pool),
+            _candidates(
+                store, tenant_id, corpus_ids, "vector", vector=vector, query=query, limit=pool
+            ),
+            _candidates(
+                store, tenant_id, corpus_ids, "keyword", vector=vector, query=query, limit=pool
+            ),
         )
         by_method = {"vector": found_v, "keyword": found_k}
     search_s = time.perf_counter() - started
@@ -190,6 +203,41 @@ async def retrieve(
     )
 
 
+async def _candidates(
+    store: CorpusStore,
+    tenant_id: str,
+    corpus_ids: Sequence[str],
+    method: str,
+    *,
+    vector: list[float],
+    query: str,
+    limit: int,
+) -> list[ChunkHit]:
+    """One method's candidates across the corpora, merged (see ``_merged``)."""
+    if method == "vector":
+        found = await asyncio.gather(
+            *(store.vector_search(tenant_id, c, vector, limit) for c in corpus_ids)
+        )
+    else:
+        found = await asyncio.gather(
+            *(store.keyword_search(tenant_id, c, query, limit) for c in corpus_ids)
+        )
+    return _merged(found, limit)
+
+
+def _merged(per_corpus: Sequence[list[ChunkHit]], limit: int) -> list[ChunkHit]:
+    """One method's candidates from several corpora, best first, ``limit`` kept.
+
+    One corpus passes through untouched. Scores within a method are on one
+    scale (cosine similarity, or ``ts_rank_cd``), so sorting merges fairly.
+    """
+    if len(per_corpus) == 1:
+        return per_corpus[0]
+    merged = [hit for found in per_corpus for hit in found]
+    merged.sort(key=lambda h: (-h.score, _key(h.chunk)))
+    return merged[:limit]
+
+
 class Retriever:
     """``retrieve`` with the service's ``RAG__*`` defaults bound."""
 
@@ -206,7 +254,7 @@ class Retriever:
     async def search(
         self,
         tenant_id: str,
-        corpus_id: str,
+        corpus_id: str | Sequence[str],
         query: str,
         *,
         k: int | None = None,
@@ -221,7 +269,9 @@ class Retriever:
                 "waypoint.rag.k": k,
                 "waypoint.rag.candidates": self.settings.candidates,
                 "waypoint.rag.rerank": self.reranker is not None,
-                "waypoint.rag.corpus_id": corpus_id,
+                "waypoint.rag.corpus_id": corpus_id
+                if isinstance(corpus_id, str)
+                else ",".join(corpus_id),
             },
         ) as span:
             result = await retrieve(

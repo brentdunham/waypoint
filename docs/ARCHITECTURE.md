@@ -228,11 +228,20 @@ select_corpus -> recall_memories -> model <-> tools
                                     cite -> END
 ```
 
-* **The thread's corpus is state.** A run's input may carry `corpus_id`; the
-  checkpoint keeps it, so later turns search the same documents until a run
-  sends another one (or `null`). `select_corpus` resolves it for the caller's
-  tenant when it changes and fails the run on a corpus the tenant cannot read,
-  before any search.
+* **The thread's corpora are state.** A run's input may carry `corpus_ids`
+  (the older single `corpus_id` becomes a list of one); the checkpoint keeps
+  them, so later turns search the same documents until a run sends another
+  list (or `[]`). `select_corpus` resolves each for the caller's tenant when
+  the selection changes and fails the run on a corpus the tenant cannot read,
+  or on more than `WORKSPACE__MAX_CORPORA`, before any search.
+* **One search across them.** `retrieve` fetches each method's candidates per
+  corpus, merges them by score, and fuses and reranks once, so five corpora
+  cost what one does: one embedding, one rerank. Research passes one id and
+  gets exactly what it got before.
+* **Global corpora are published, not written.** An admin uploads into a
+  private corpus and then publishes it (`POST /corpora/{id}/visibility`).
+  The store runs that one update as the tables' owner, for the admin's own
+  tenant only, so the tenant role still never writes a public row (8a).
 * **`search_documents` returns `search_result` blocks.** The tool takes only a
   query; the corpus comes from state and the tenant from the run's context.
   It is bound to the model only when the thread has documents. Claude cites

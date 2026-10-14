@@ -23,6 +23,8 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [corpora, setCorpora] = useState<Corpus[]>([]);
   const [corpusId, setCorpusId] = useState("");
+  // Workspace selects several corpora at once (docs/design/tools.md, T10).
+  const [corpusIds, setCorpusIds] = useState<string[]>([]);
 
   useEffect(() => {
     // Corpora are optional: a server without RAG answers 503 and the picker hides.
@@ -53,12 +55,13 @@ export default function App() {
   const activeAgent = thread?.agent ?? agent;
   // A workspace thread's documents are in its state: show them in the picker
   // when the thread is opened or a run ends.
-  const threadCorpus = snapshot?.values["corpus_id"] as string | null | undefined;
+  const threadCorpora = snapshot?.values["corpus_ids"] as string[] | undefined;
+  const threadCorporaKey = threadCorpora?.join(",");
   useEffect(() => {
-    if (activeAgent === "workspace" && threadId && threadCorpus !== undefined) {
-      setCorpusId(threadCorpus ?? "");
+    if (activeAgent === "workspace" && threadId && threadCorporaKey !== undefined) {
+      setCorpusIds(threadCorporaKey ? threadCorporaKey.split(",") : []);
     }
-  }, [activeAgent, threadId, threadCorpus]);
+  }, [activeAgent, threadId, threadCorporaKey]);
 
   // Research findings get their own card; a workspace reply lists its sources inline.
   const findings: Finding[] = run.busy || activeAgent !== "research"
@@ -94,9 +97,9 @@ export default function App() {
       setDraft("");
       // Research: the corpus goes with the run's first input, and the approval
       // card can still switch it off. Workspace: every message carries the
-      // picker's choice, and the thread keeps it (none clears it).
+      // picker's selection, and the thread keeps it (an empty list clears it).
       if (activeAgent === "workspace") {
-        await run.launch(id, { message, input: { corpus_id: corpusId || null } });
+        await run.launch(id, { message, input: { corpus_ids: corpusIds } });
         return;
       }
       const withDocuments = agent === "research" && corpusId && !threadId;
@@ -112,12 +115,17 @@ export default function App() {
       run.reset();
       const corpus = corpusName ? corpora.find((c) => c.name === corpusName) : undefined;
       setCorpusId(corpus?.corpus_id ?? "");
+      setCorpusIds(corpus ? [corpus.corpus_id] : []);
       const id = (await api.createThread(name, text.slice(0, 60))).thread_id;
       setThreadId(id);
       await refreshThreads();
       await run.launch(
         id,
-        corpus ? { message: text, input: { corpus_id: corpus.corpus_id } } : { message: text },
+        !corpus
+          ? { message: text }
+          : name === "workspace"
+            ? { message: text, input: { corpus_ids: [corpus.corpus_id] } }
+            : { message: text, input: { corpus_id: corpus.corpus_id } },
       );
     });
 
@@ -145,6 +153,8 @@ export default function App() {
           corpora={corpora}
           corpusId={corpusId}
           onCorpus={setCorpusId}
+          corpusIds={corpusIds}
+          onCorpusIds={setCorpusIds}
           onAgent={(name) => {
             setAgent(name);
             // A thread belongs to one agent; picking another starts fresh.
@@ -269,7 +279,7 @@ export default function App() {
               placeholder={
                 activeAgent === "research"
                   ? "Topic to research…"
-                  : activeAgent === "workspace" && corpusId
+                  : activeAgent === "workspace" && corpusIds.length > 0
                     ? "Ask about your documents…"
                     : "Ask something…"
               }

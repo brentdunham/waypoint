@@ -217,13 +217,14 @@ heading as `title`; web sources have no `kind`. The briefing's
 
 ### Workspace over your documents
 
-A workspace thread searches a corpus once a run sends one; the thread keeps
-it for later turns:
+A workspace thread searches up to five corpora at once, your own and public
+ones, in one search (`WORKSPACE__MAX_CORPORA`). A run sends the selection as
+`corpus_ids`; the thread keeps it for later turns:
 
 ```bash
 TID=$(curl -s -X POST "$BASE/threads" -H "$AUTH" -d '{"agent":"workspace"}' | jq -r .thread_id)
 curl -s -X POST "$BASE/threads/$TID/runs?wait=true" -H "$AUTH" \
-  -d '{"message":"How does Waypoint recover a dropped event stream?","input":{"corpus_id":"'$CORPUS'"}}' \
+  -d '{"message":"How does Waypoint recover a dropped event stream?","input":{"corpus_ids":["'$CORPUS'","'$MINE'"]}}' \
   | jq -r .result.report
 # Clients reconnect with Last-Event-ID and the server replays from there [1]. ...
 #
@@ -231,10 +232,12 @@ curl -s -X POST "$BASE/threads/$TID/runs?wait=true" -H "$AUTH" \
 # [1] docs/ARCHITECTURE.md › 2. A run is not an HTTP request (document)
 ```
 
-Send `"input":{"corpus_id":null}` to stop searching documents. The same
-corpus rules as research apply: the tenant's own or a public one, and
-`RAG__EMBEDDINGS_MODEL` set, or the run fails before the model is called.
-The thread's state has `corpus` (`{corpus_id, name}`), `report` (the last
+Send `"input":{"corpus_ids":[]}` to stop searching documents. The older
+single `"corpus_id"` is still accepted as a list of one. The same corpus rules
+as research apply to each: the tenant's own or a public one, and
+`RAG__EMBEDDINGS_MODEL` set, or the run fails before the model is called; so
+does selecting more than the limit. The thread's state has `corpus_ids`,
+`corpora` (`[{corpus_id, name}]`), `report` (the last
 reply as shown, with its `Sources` list), `findings` (one per search the reply
 drew on) and `metadata` (`searches`, `document_sources_cited`,
 `verification`).
@@ -288,6 +291,7 @@ Named sets of a tenant's documents for retrieval (design:
 | DELETE | `/corpora/<id>` | `corpora:write` | Deletes its documents and chunks. Public corpora: `404` |
 | POST | `/corpora/<id>/documents` | `corpora:write` + `threads:write` + `agents:run` | Multipart `files` (`.md`, `.html`, `.pdf`, `.txt`). `202` with an `ingest` run |
 | GET | `/corpora/<id>/documents` | `threads:read` | Each with `status` (`pending`, `ready`, `failed`), `error` and `chunks` |
+| POST | `/corpora/<id>/visibility` | `keys:admin` | `{"visibility":"public"}` publishes one of your own corpora to every tenant; `"private"` takes it back. Another tenant's corpus: `404` |
 
 ```bash
 CORPUS=$(curl -s -X POST $BASE/corpora -H "$AUTH" -d '{"name":"my-docs"}' | jq -r .corpus_id)
@@ -309,9 +313,23 @@ request, 100 files per request.
 `corpora:write` is separate from `threads:write` so that a key can search
 corpora without adding to them: the demo's reviewer keys have the research
 scopes but not this one. Public corpora (`visibility: "public"`) are
-listed for every key and searchable by every research run, and no key can
-change them. The demo's `waypoint-docs` is one: this repository's `docs/`,
+listed for every key and searchable by every research and workspace run,
+and only the admin who published one can change it (below). The demo's `waypoint-docs` is one: this repository's `docs/`,
 kept indexed by the service itself (`RAG__SEED_DIR`, CONFIGURATION.md).
+
+**Global corpora.** An admin makes a corpus every tenant can select by
+creating it, uploading while it is private, then publishing it:
+
+```bash
+GLOBAL=$(curl -s -X POST $BASE/corpora -H "$ADMIN" -d '{"name":"handbook"}' | jq -r .corpus_id)
+curl -s -X POST $BASE/corpora/$GLOBAL/documents -H "$ADMIN" -F "files=@handbook.md"
+curl -s -X POST $BASE/corpora/$GLOBAL/visibility -H "$ADMIN" -d '{"visibility":"public"}'
+```
+
+A public corpus refuses uploads and deletes through the API; to change it,
+set it back to `private`, change it, and publish it again. Publishing runs as
+the tables' owner and only for the admin's own tenant, so no tenant role ever
+writes a public row ([design](design/tools.md), T12).
 
 ## Run timeline
 

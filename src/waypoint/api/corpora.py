@@ -18,7 +18,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 
 from waypoint.agents.runtime import AgentRuntime, get_runtime
-from waypoint.api.deps import CorpusWriter, Reader
+from waypoint.api.deps import Admin, CorpusWriter, Reader
 from waypoint.errors import BadRequest, NotFound, PayloadTooLarge, ServiceUnavailable
 from waypoint.rag.parse import MEDIA_TYPES, media_type_for
 from waypoint.rag.store import NewDocument
@@ -27,6 +27,7 @@ from waypoint.schemas import (
     SCOPE_WRITE,
     CorpusList,
     CorpusOut,
+    CorpusVisibility,
     CreateCorpus,
     DocumentList,
     DocumentOut,
@@ -82,6 +83,26 @@ async def destroy(corpus_id: str, runtime: Rag, principal: CorpusWriter) -> Resp
     if not await runtime.corpora.delete_corpus(principal.tenant_id, corpus_id):
         raise NotFound(f"Unknown corpus {corpus_id!r}.")
     return Response(status_code=204)
+
+
+@router.post("/{corpus_id}/visibility")
+async def visibility(
+    corpus_id: str, payload: CorpusVisibility, runtime: Rag, principal: Admin
+) -> CorpusOut:
+    """Publish one of your own corpora to every tenant, or take it back.
+
+    Admins only (``keys:admin``). This is how global corpora are made
+    (docs/design/tools.md, T12): create a corpus, upload into it while it is
+    private, then publish it. A public corpus cannot be uploaded to or deleted
+    through the API, as before; unpublish it first. Tenants never write a
+    public corpus, so row-level security stays as it was.
+    """
+    corpus = await runtime.corpora.set_visibility(
+        principal.tenant_id, corpus_id, payload.visibility
+    )
+    if corpus is None:
+        raise NotFound(f"Unknown corpus {corpus_id!r}.")
+    return CorpusOut.model_validate(corpus.public())
 
 
 @router.get("/{corpus_id}/documents")

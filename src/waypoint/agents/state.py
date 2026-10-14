@@ -125,12 +125,16 @@ class WorkspaceState(TypedDict, total=False):
     recalled: list[str]
     """Long-term memories loaded for this turn."""
     step_count: int
+    corpus_ids: list[str]
+    """Run input: the corpora ``search_documents`` searches, the tenant's own
+    and public ones. Kept in the thread's checkpoint, so they hold for later
+    turns until a run sends another list (``[]`` stops searching documents)."""
     corpus_id: str | None
-    """Run input: the corpus ``search_documents`` searches. Kept in the thread's
-    checkpoint, so it holds for later turns until a run sends another (or
-    ``None`` to stop searching documents)."""
-    corpus: dict[str, Any] | None
-    """``{"corpus_id", "name"}``, resolved for the tenant when ``corpus_id`` changes."""
+    """The older single-corpus input, still accepted: ``select_corpus`` turns
+    it into ``corpus_ids`` and clears it."""
+    corpora: list[dict[str, Any]]
+    """``{"corpus_id", "name"}`` per selected corpus, resolved for the tenant
+    when the selection changes."""
     findings: list[Finding]
     """The last reply's evidence: one finding per ``search_documents`` call it
     drew on (question = the query, answer = the passages, sources = the

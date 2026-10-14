@@ -111,7 +111,7 @@ def test_a_reply_cites_the_threads_documents(rag: TestClient) -> None:
     assert finding["question"] == "reconnect"
     assert all(s["url"].startswith("doc://") for s in finding["sources"])
     assert any(s.get("quotes") for s in finding["sources"])
-    assert values["metadata"]["corpus"] == {"corpus_id": corpus_id, "name": "docs"}
+    assert values["metadata"]["corpora"] == [{"corpus_id": corpus_id, "name": "docs"}]
     assert values["metadata"]["document_sources_cited"] == 1
     assert values["metadata"]["verification"]["sentences"] >= 1
 
@@ -122,7 +122,9 @@ def test_the_corpus_holds_for_later_turns(rag: TestClient) -> None:
     ask(rag, thread_id, "hello", corpus_id)
     ask(rag, thread_id, SEARCH)  # no input: the thread keeps its corpus
     values = rag.get(f"/api/v1/threads/{thread_id}/state").json()["values"]
-    assert values["corpus"]["corpus_id"] == corpus_id
+    assert values["corpus_ids"] == [corpus_id]  # the single corpus_id input, migrated
+    assert values["corpora"] == [{"corpus_id": corpus_id, "name": "docs"}]
+    assert not values.get("corpus_id")
     assert "[1]" in values["report"]
 
 
@@ -132,10 +134,10 @@ def test_a_thread_can_stop_searching_documents(rag: TestClient) -> None:
     ask(rag, thread_id, "hello", corpus_id)
     rag.post(
         f"/api/v1/threads/{thread_id}/runs?wait=true",
-        json={"message": "and now?", "input": {"corpus_id": None}},
+        json={"message": "and now?", "input": {"corpus_ids": []}},
     )
     values = rag.get(f"/api/v1/threads/{thread_id}/state").json()["values"]
-    assert values["corpus"] is None
+    assert values["corpora"] == []
 
 
 def test_an_unknown_corpus_fails_the_run(rag: TestClient) -> None:
@@ -314,3 +316,71 @@ def test_passages_that_share_a_heading_are_told_apart() -> None:
         "[2] 02-runs.md > 2.4 Reconnection (part 2) (document)",
         "[3] 02-runs.md > 2.4 Reconnection (part 1) (document)",
     ]
+
+
+# -- several corpora (T10, T11) and global corpora (T12) ------------------------------
+
+OTHER = b"""# Budgets
+
+## Daily cap
+
+A tenant over its daily dollar budget gets a 429 with Retry-After.
+"""
+
+
+def corpus_with(client: TestClient, name: str, filename: str, body: bytes) -> str:
+    corpus_id = str(client.post("/api/v1/corpora", json={"name": name}).json()["corpus_id"])
+    files = [("files", (filename, body, "text/markdown"))]
+    upload = client.post(f"/api/v1/corpora/{corpus_id}/documents", files=files).json()
+    assert read_sse(client, upload["events_url"])[-1] == "run.completed"
+    return corpus_id
+
+
+def test_one_search_covers_every_selected_corpus(rag: TestClient) -> None:
+    streams = corpus_with(rag, "streams", "streams.md", DOC)
+    budgets = corpus_with(rag, "budgets", "budgets.md", OTHER)
+    thread_id = new_thread(rag, "workspace")
+    body = {"message": SEARCH, "input": {"corpus_ids": [streams, budgets]}}
+    assert run_and_wait(rag, thread_id, body)["status"] == "completed"
+    values = rag.get(f"/api/v1/threads/{thread_id}/state").json()["values"]
+    assert [c["name"] for c in values["corpora"]] == ["streams", "budgets"]
+    tool = next(m for m in values["messages"] if m.get("type") == "tool")
+    assert "streams.md" in tool["content"]
+    assert "budgets.md" in tool["content"]  # passages from both corpora, one search
+    assert values["metadata"]["searches"] == 1
+
+
+def test_a_thread_selects_at_most_the_configured_number(make_app: Any) -> None:
+    client = make_app(rag=RAG, workspace={"max_corpora": 1}).test_client()
+    a = corpus_with(client, "a", "a.md", DOC)
+    b = corpus_with(client, "b", "b.md", OTHER)
+    thread_id = new_thread(client, "workspace")
+    done = run_and_wait(client, thread_id, {"message": "hi", "input": {"corpus_ids": [a, b]}})
+    assert done["status"] == "failed"
+    assert "WORKSPACE__MAX_CORPORA" in done["error"]
+
+
+def test_an_admin_publishes_a_corpus_to_every_tenant() -> None:
+    async def scenario() -> None:
+        store = MemoryCorpusStore()
+        mine = await store.create_corpus("admin", "handbook", "voyageai:voyage-4")
+        assert await store.get_corpus("acme", mine.corpus_id) is None  # private: invisible
+        published = await store.set_visibility("admin", mine.corpus_id, "public")
+        assert published is not None
+        assert published.visibility == "public"
+        assert await store.get_corpus("acme", mine.corpus_id) is not None
+        assert await store.set_visibility("acme", mine.corpus_id, "private") is None  # not theirs
+        assert (await store.set_visibility("admin", mine.corpus_id, "private")) is not None
+        assert await store.get_corpus("acme", mine.corpus_id) is None
+
+    asyncio.run(scenario())
+
+
+def test_the_visibility_endpoint(rag: TestClient) -> None:
+    corpus_id = str(rag.post("/api/v1/corpora", json={"name": "handbook"}).json()["corpus_id"])
+    response = rag.post(f"/api/v1/corpora/{corpus_id}/visibility", json={"visibility": "public"})
+    assert response.status_code == 200, response.json()
+    assert response.json()["visibility"] == "public"
+    unknown = "00000000-0000-0000-0000-000000000000"
+    response = rag.post(f"/api/v1/corpora/{unknown}/visibility", json={"visibility": "public"})
+    assert response.status_code == 404

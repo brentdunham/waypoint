@@ -129,6 +129,10 @@ class CorpusStore(Protocol):
 
     async def delete_corpus(self, tenant_id: str, corpus_id: str) -> bool: ...
 
+    async def set_visibility(
+        self, tenant_id: str, corpus_id: str, visibility: Visibility
+    ) -> Corpus | None: ...
+
     async def add_documents(
         self, tenant_id: str, corpus_id: str, documents: Sequence[NewDocument]
     ) -> list[Added]: ...
@@ -251,7 +255,8 @@ def _document(row: dict[str, Any]) -> DocumentInfo:
 
 class PgCorpusStore:
     """``owner=True`` runs every query as the tables' owner instead of the tenant
-    role, so it can write public corpora. Only the seeder makes one."""
+    role, so it can write public corpora. Only the seeder makes one; an admin
+    publishes through ``set_visibility``, which runs only its one update as owner."""
 
     def __init__(self, db: Database, *, owner: bool = False) -> None:
         self._db = db
@@ -327,6 +332,28 @@ class PgCorpusStore:
             (corpus_id, tenant_id, self._owner),
         )
         return row is not None
+
+    async def set_visibility(
+        self, tenant_id: str, corpus_id: str, visibility: Visibility
+    ) -> Corpus | None:
+        """Publish or unpublish one of ``tenant_id``'s own corpora.
+
+        Runs as the tables' owner: the tenant role may not write a public row,
+        by design. The caller must have checked that the principal is an admin
+        (``POST /corpora/{id}/visibility`` requires ``keys:admin``). Only the
+        tenant's own corpora: an admin cannot publish another tenant's.
+        """
+        if not is_uuid(corpus_id):
+            return None
+        async with owner_transaction(self._db) as conn:
+            cur = await conn.execute(
+                """update corpora set visibility = %s
+                   where corpus_id = %s and tenant_id = %s returning corpus_id""",
+                (visibility, corpus_id, tenant_id),
+            )
+            if await cur.fetchone() is None:
+                return None
+        return await self.get_corpus(tenant_id, corpus_id)
 
     # -- documents ------------------------------------------------------------
 
@@ -669,6 +696,16 @@ class MemoryCorpusStore:
             del self._docs[doc_id]
             self._chunks.pop(doc_id, None)
         return True
+
+    async def set_visibility(
+        self, tenant_id: str, corpus_id: str, visibility: Visibility
+    ) -> Corpus | None:
+        """As the Postgres store: the tenant's own corpora only; admin checked by the caller."""
+        corpus = self._corpora.get(corpus_id)
+        if corpus is None or corpus.tenant_id != tenant_id:
+            return None
+        self._corpora[corpus_id] = replace(corpus, visibility=visibility)
+        return self._counted(self._corpora[corpus_id])
 
     async def add_documents(
         self, tenant_id: str, corpus_id: str, documents: Sequence[NewDocument]

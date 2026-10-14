@@ -101,7 +101,8 @@ def make_search_documents(retriever: Retriever | None) -> BaseTool:
     It returns the matching passages as Claude ``search_result`` blocks, so the
     reply that uses them comes back with ``search_result_location`` citations,
     the same shape the research worker's document citations have
-    (docs/design/tools.md, phase 0). The corpus comes from the thread's state,
+    (docs/design/tools.md, phase 0). The corpora come from the thread's state
+    (resolved for the tenant by ``select_corpus``),
     never from the model, and the tenant from the run's context: the model can
     only choose the query.
     """
@@ -120,11 +121,11 @@ def make_search_documents(retriever: Retriever | None) -> BaseTool:
         Args:
             query: What to look for, in plain words, e.g. "how a dropped event stream is resumed".
         """
-        corpus_id = state.get("corpus_id")
-        if retriever is None or not corpus_id:
+        corpus_ids = [c["corpus_id"] for c in state.get("corpora") or []]
+        if retriever is None or not corpus_ids:
             return NO_DOCUMENTS
         context = get_runtime(AgentContext).context
-        found = await retriever.search(context.tenant_id, corpus_id, query)
+        found = await retriever.search(context.tenant_id, corpus_ids, query)
         if not found.hits:
             return NO_PASSAGES
         return [search_result(hit) for hit in found.hits]

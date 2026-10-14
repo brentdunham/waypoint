@@ -99,6 +99,36 @@ def test_retriever_uses_the_configured_defaults() -> None:
     asyncio.run(scenario())
 
 
+def test_several_corpora_are_one_search_and_one_corpus_is_unchanged() -> None:
+    async def scenario() -> None:
+        store, embeddings, first = await _corpus()
+        second = (await store.create_corpus("acme", "c2", "m")).corpus_id
+        [added] = await store.add_documents(
+            "acme", second, [NewDocument("b.md", "text/markdown", b"y")]
+        )
+        chunk = Chunk(0, "b.md > 0", ("Budgets cap a tenant's daily spend in dollars.",))
+        await store.write_chunks(
+            "acme", added.document.document_id, [chunk], embeddings.embed_documents([chunk.text])
+        )
+        query = "b.md > 0\n\nBudgets cap a tenant's daily spend in dollars."
+        both = await retrieve(store, embeddings, "acme", [first, second], query, k=4, mode="vector")
+        assert both.hits[0].chunk.heading == "b.md > 0"  # the other corpus's chunk wins
+        assert {h.chunk.heading.split(" ")[0] for h in both.hits} == {"a.md", "b.md"}
+
+        one = await retrieve(store, embeddings, "acme", first, query, k=3, mode="hybrid")
+        listed = await retrieve(store, embeddings, "acme", [first], query, k=3, mode="hybrid")
+        assert [(h.source, h.score) for h in one.hits] == [(h.source, h.score) for h in listed.hits]
+
+        # A corpus the tenant cannot read adds nothing, and hides nothing.
+        other = (await store.create_corpus("evil", "x", "m")).corpus_id
+        guarded = await retrieve(
+            store, embeddings, "acme", [first, other], query, k=3, mode="vector"
+        )
+        assert all(h.chunk.heading.startswith("a.md") for h in guarded.hits)
+
+    asyncio.run(scenario())
+
+
 # -- the eval's arithmetic ----------------------------------------------------------
 
 

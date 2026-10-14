@@ -104,7 +104,9 @@ def fingerprint(settings: Settings, agent: str, models: dict[str, str]) -> str:
     }
     if agent == "workspace":
         # Added only for workspace, so research and chat fingerprints are unchanged.
-        parts["workspace"] = settings.workspace.model_dump()
+        # Not max_corpora: a bound on what a thread may select, which no eval
+        # case reaches, like the upload cap in rag_settings.
+        parts["workspace"] = settings.workspace.model_dump(exclude={"max_corpora"})
     blob = json.dumps(parts, sort_keys=True, ensure_ascii=False).encode()
     return hashlib.sha256(blob).hexdigest()[:12]
 

@@ -53,6 +53,11 @@ class RememberFact(Strict):
     fact: str = Field(min_length=1, max_length=4_000)
 
 
+class CorpusVisibility(Strict):
+    visibility: Literal["private", "public"]
+    """``public``: every tenant can read and search it; only its owner's admin can change it."""
+
+
 class CreateCorpus(Strict):
     name: str = Field(min_length=1, max_length=100, pattern=r"^[\w .:-]+$")
     """Unique within the tenant. Letters, digits, spaces and ``_ . : -``."""

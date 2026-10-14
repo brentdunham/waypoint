@@ -2,8 +2,10 @@
 
 Chat's tool loop and long-term memory, plus:
 
-* **Documents.** A thread can select one of the tenant's corpora (run input
-  ``corpus_id``, kept in the checkpoint for later turns). The model then has a
+* **Documents.** A thread selects up to ``WORKSPACE__MAX_CORPORA`` corpora:
+  the tenant's own and public ones (run input ``corpus_ids``, kept in the
+  checkpoint for later turns; a single ``corpus_id`` is still accepted). One
+  search covers all of them (T10, T11). The model then has a
   ``search_documents`` tool that returns passages as ``search_result`` blocks,
   and its reply comes back with citations to them.
 * **Cited replies, checked.** The ``cite`` step turns those citations into
@@ -119,30 +121,47 @@ def build(
     async def select_corpus(
         state: WorkspaceState, runtime: Runtime[AgentContext]
     ) -> dict[str, Any]:
-        """Resolve the thread's corpus for this tenant when the run changes it."""
-        corpus_id = state.get("corpus_id")
-        current = state.get("corpus")
-        if not corpus_id:
-            return {"corpus": None} if current else {}
-        if current and current.get("corpus_id") == corpus_id:
-            return {}
+        """Resolve the thread's corpora for this tenant when the run changes them.
+
+        A run may send the older single ``corpus_id``; it becomes a list of
+        one and is cleared, so ``corpus_ids`` is the one place to look.
+        """
+        update: dict[str, Any] = {}
+        wanted = list(state.get("corpus_ids") or [])
+        if legacy := state.get("corpus_id"):
+            wanted = [legacy]
+            update = {"corpus_ids": wanted, "corpus_id": None}
+        wanted = list(dict.fromkeys(wanted))
+        current = state.get("corpora") or []
+        if [c["corpus_id"] for c in current] == wanted:
+            return update
+        if not wanted:
+            return {**update, "corpora": []}
+        if len(wanted) > settings.workspace.max_corpora:
+            raise CorpusUnavailableError(
+                f"At most {settings.workspace.max_corpora} corpora per thread "
+                f"(WORKSPACE__MAX_CORPORA); this run selected {len(wanted)}."
+            )
         if corpora is None or retriever is None:
             raise CorpusUnavailableError(
                 "This server has no document search (RAG__EMBEDDINGS_MODEL is not set)."
             )
-        found = await corpora.get_corpus(runtime.context.tenant_id, corpus_id)
-        if found is None:
-            raise CorpusUnavailableError(f"Unknown corpus {corpus_id!r}.")
-        return {"corpus": {"corpus_id": found.corpus_id, "name": found.name}}
+        resolved = []
+        for corpus_id in wanted:
+            found = await corpora.get_corpus(runtime.context.tenant_id, corpus_id)
+            if found is None:
+                raise CorpusUnavailableError(f"Unknown corpus {corpus_id!r}.")
+            resolved.append({"corpus_id": found.corpus_id, "name": found.name})
+        return {**update, "corpora": resolved}
 
     async def call_model(state: WorkspaceState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-        corpus = state.get("corpus")
+        selected = state.get("corpora") or []
         system = SYSTEM.format(
             locale=runtime.context.locale,
-            documents=DOCUMENTS.format(name=corpus["name"]) if corpus else NO_DOCUMENTS,
+            documents=DOCUMENTS.format(name=_names(selected)) if selected else NO_DOCUMENTS,
             memories=memory_block(state.get("recalled") or []),
         )
-        bound = assistant_with_documents if corpus else assistant
+        bound = assistant_with_documents if selected else assistant
         reply = await bound(runtime.context).ainvoke(
             [SystemMessage(system), *state.get("messages", [])]
         )
@@ -167,7 +186,7 @@ def build(
         report = body + _source_list(body, numbers, evidence.sources)
         metadata: dict[str, Any] = {
             "agent": runtime.context.agent,
-            "corpus": state.get("corpus"),
+            "corpora": state.get("corpora") or [],
             "searches": len(findings),
             "document_sources_cited": len(cited),
         }
@@ -352,6 +371,13 @@ class Evidence:
             for _, query, passages, evidence in kept
         ]
         return findings, numbers
+
+
+def _names(selected: list[dict[str, Any]]) -> str:
+    """The corpus names for ``DOCUMENTS``, whose template quotes one name:
+    several come out as ``"a", "b"``. Kept that way so a thread with one
+    corpus sees the prompt the baseline was measured with."""
+    return '", "'.join(c["name"] for c in selected)
 
 
 def _turn_start(messages: list[Any]) -> int:

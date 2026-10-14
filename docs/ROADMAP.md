@@ -396,8 +396,10 @@ blocks comes back cited through `langchain-anthropic`, and `langchain[mcp]`
 the research verifier (moved to `agents/verify.py` unchanged), a 10-case eval
 dataset and rubric, and the web picker. Chat's and research's fingerprints
 did not change. Baseline accepted the same day (`correct` 3.80, `grounded`
-3.93, `uses_memory` 3.50, $0.030 per run live). Deployed and checked on Bob the same day. Phase 2
-(attachments) is next.
+3.93, `uses_memory` 3.50, $0.030 per run live). Deployed and checked on Bob the same day. Phase 2a
+built 2026-10-14: a thread selects up to five corpora (global and its own) and
+one search covers them all; an admin publishes global corpora. Phase 2b
+(reviewers' own corpora, with limits) is next.
 
 ### 6. Durable run queue
 

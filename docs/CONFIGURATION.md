@@ -209,12 +209,13 @@ with one search each and one follow-up took about 70 seconds.
 
 ## Workspace agent
 
-Chat over a thread's documents ([design](design/tools.md)). The corpus is
-chosen per thread, by run input, not by a setting; retrieval uses the
+Chat over a thread's documents ([design](design/tools.md)). The corpora are
+chosen per thread, by run input (`corpus_ids`), not by a setting; retrieval uses the
 `RAG__*` settings above, and the agent's models are `MODELS__WORKSPACE__*`.
 
 | Variable | Default | Notes |
 |---|---|---|
+| `WORKSPACE__MAX_CORPORA` | `5` | Corpora one thread may select. One search covers them all: candidates per corpus are merged before one rerank, so this bounds database queries per search, not tokens (`RAG__TOP_K` does that). |
 | `WORKSPACE__VERIFY_CITATIONS` | `true` | Check every reply that cites documents with the research verifier: wrong or missing `[n]` fixed in code, unsupported sentences rewritten once by the assistant's model. One verifier call per citing reply (about $0.003 on Haiku 5.5, 5 to 15 s); replies that cite nothing are not checked. `metadata.verification` counts what changed. |
 
 ## Caching

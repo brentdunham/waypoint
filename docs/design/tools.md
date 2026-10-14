@@ -1,7 +1,7 @@
 # Design: the workspace agent (documents, MCP tools, approval)
 
-Status: **phase 1 done** (built, baselined and deployed to Bob 2026-10-13);
-phases 2 to 5 next. Written 2026-10-13. This note is the
+Status: **phase 2a built** (2026-10-14): several corpora per thread and global
+corpora; phase 1 done (deployed 2026-10-13). Phase 2b next. Written 2026-10-13. This note is the
 hand-off for the coding sessions: what to build, what is decided, what is
 still open, in what order, and which documents each phase must update. Read
 it with [ARCHITECTURE.md](../ARCHITECTURE.md),
@@ -114,6 +114,10 @@ settled with Brent on 2026-10-13.
 | T7 | **Servers in settings, tools discovered at startup.** `MCP__SERVERS` is a JSON list of `{name, url, trusted, scope, timeout_s, approval: {tool: bool}}`. Tool lists are fetched at boot and cached with the server's TTL; a server that is down at boot is logged and retried, never fatal. | Configuration, not code, adds a capability. A dead tool server must not take the API down. | A database table of servers (needs an admin UI first); discovery on every run (a network round trip each time). |
 | T8 | **Scopes per server: `tools:<server>`.** A run binds only the tools whose server scope the caller's key has; `*` gets all. Existing keys get no MCP tools until granted. | The ROADMAP's "filtered by API-key scopes", with a safe default for old keys. | One `tools` scope for everything. |
 | T9 | **Bounded and observable.** `MCP__MAX_CALLS_PER_RUN` (default 8) and a per-call timeout; a refused or timed-out call returns an error message to the model, not an exception. Tool spans gain `waypoint.tool.server`; the timeline whitelist adds it. | External tools are where cost and failures get unpredictable, which is why this item follows observability. | Relying on the graph's recursion limit alone. |
+| T10 | **A thread selects several corpora** (up to `WORKSPACE__MAX_CORPORA`, 5): public ("global") ones and the tenant's own, with checkboxes. Run input `corpus_ids`; the single `corpus_id` is still accepted and migrated. Decided with Brent 2026-10-14. | Reviewers want the project docs, global corpora an admin defines, and their own documents in one conversation. | One corpus per thread (phase 1). |
+| T11 | **One search across all selected corpora**: each method's candidates are fetched per corpus and merged by score, then fused and reranked once; the best `RAG__TOP_K` overall. Research keeps its single corpus through the same code with a list of one, which returns exactly what it did. | Same cost and latency as one corpus: one embedding, one rerank. | Per-corpus top results merged after reranking: cost grows with each corpus. |
+| T12 | **Global corpora are published by an admin**: create a corpus, upload while it is private, then `POST /corpora/{id}/visibility` with `public` (`keys:admin`, own tenant's corpora only). waypoint-docs is still seeded at boot. | Tenants never write a public row: the store publishes as the tables' owner, so row-level security is unchanged. | Seeded folders in config (needs a deploy per change); uploading straight into a public corpus (would need tenant writes to public rows). |
+| T13 | **Reviewers get named corpora of their own, capped** (phase 2b): `corpora:write` on reviewer keys, at most 3 corpora per tenant, and per tenant per day 10 files, 5 MB and 2,000 chunks; the dollar budget on top. Admin uploads are not limited. | Lets a reviewer bring their own documents without a separate scope or a single catch-all corpus. | One "Workspace uploads" corpus each and a `corpora:attach` scope (open decision 2, superseded). |
 
 ## Open decisions (settle in phase 0)
 
@@ -123,7 +127,8 @@ settled with Brent on 2026-10-13.
    blocks through unchanged, and returns the citations on the reply. One live
    call, under $0.01. If it does not, the tool node builds the `tool_result`
    itself, as the research worker builds its user message.
-2. **Where attachments go.** *Decided 2026-10-13 (Brent): as proposed.* Proposed: one corpus per tenant named
+2. **Where attachments go.** *Decided 2026-10-13 (Brent): as proposed; superseded
+   2026-10-14 by T13 (named corpora of their own).* Proposed: one corpus per tenant named
    "Workspace uploads", made on first attach, and the thread searches its
    picked corpus plus that one. Alternative: a corpus per thread (cleaner
    isolation, many small corpora).
@@ -186,7 +191,8 @@ in the same commit as the code.
 |---|---|---|
 | 0 | Settle open decisions 1 to 7. Spikes: search results through `langchain-anthropic`; `langchain[mcp]` 1.4 installs alongside the current stack. | Both spikes recorded in the log; decisions written in. |
 | 1 | The `workspace` agent: registry entry, graph with memory and the built-in tools, `search_documents`, thread corpus and picker, sources under replies, shared verifier, `workspace` eval dataset and first baseline. | A reviewer link asks the docs a question in Workspace and gets a verified, cited answer; chat's and research's eval fingerprints are unchanged. |
-| 2 | Attachments: `corpora:attach`, the attachments endpoint, per-tenant daily limits, "still indexing" from the tool until ingest finishes. | A reviewer attaches a file and the next answer cites it; the 11th file in a day gets a clean 429. |
+| 2a | Several corpora per thread (T10, T11), global corpora published by an admin (T12), the checkbox picker. | A thread searches waypoint-docs and another corpus in one search; an admin publishes a corpus every tenant can select; research's results and fingerprint unchanged. |
+| 2b | Reviewers' own corpora (T13): `corpora:write` on reviewer keys, the corpus cap and daily limits (429 with `Retry-After`), the chunk check in ingest, upload with indexing status in the UI, "still indexing" from the tool. | A reviewer creates a corpus, uploads a file, and the next answer cites it; the 11th file in a day gets a clean 429. |
 | 3 | MCP client: `MCP__SERVERS`, discovery and cache, scopes, call cap and timeout, tracing attribute. Offline tests against an in-memory FastMCP server. | A configured server's read-only tools appear in Workspace for a key with its scope and not for one without. |
 | 4 | Approval: `approve_tools`, policy T4, resume payload, generalised `ApprovalCard`, decline path, eval cases. | A write tool pauses, survives a reload, and runs or is declined on the answer. |
 | 5 | Demo: the notes server in compose, reviewer keys get `tools:notes` and `corpora:attach`, deployed to Bob. | A reviewer adds a note from Workspace after approving it, on Bob. |
@@ -361,6 +367,40 @@ verifier ran on `claude-haiku-5-5` (6,344 in, 2,191 out, $0.0017); one
 sentence went to the reviser on `claude-sonnet-5`, which read 4,510 tokens
 to write 23 ($0.0092). The reviser is the dearer half of checking a reply;
 running it on Haiku is a candidate for a later measured change.
+
+### Phase 2a: several corpora and global corpora (2026-10-14)
+
+Brent asked, before attachments were built, for a thread to search several
+corpora at once: this repository's docs, global corpora he defines as admin,
+and a reviewer's own. Phase 2 was re-planned as 2a and 2b (T10 to T13), and
+the single uploads corpus of open decision 2 was dropped.
+
+Built:
+
+* `rag/retrieve.py`: `retrieve` and `Retriever.search` take one corpus id or
+  several. Each method's candidates are fetched per corpus and merged by
+  score (`_merged`), then the pipeline runs as before. With one corpus the
+  list passes through untouched; a test checks that one id and a list of one
+  return the same hits and scores, and that a corpus the tenant cannot read
+  adds nothing.
+* Workspace: state `corpus_ids` (run input) and `corpora` (resolved names);
+  a legacy `corpus_id` becomes a list of one and is cleared. More than
+  `WORKSPACE__MAX_CORPORA` (5) fails the run before any search. The
+  `DOCUMENTS` prompt template is unchanged: several names are joined as
+  `"a", "b"` inside its quotes, so a one-corpus thread sees the exact prompt
+  the baseline measured, and the workspace fingerprint did not move.
+* `CorpusStore.set_visibility` and `POST /corpora/{id}/visibility`
+  (`keys:admin`). Postgres runs the update as the tables' owner and only for
+  the caller's own tenant; the tenant role still cannot write a public row.
+  A public corpus still refuses uploads and deletes through the API.
+* Web: a checklist under Documents for Workspace, grouped Global and Yours,
+  capped at five; research keeps its single dropdown.
+* Tests: one search over two corpora, the cap, legacy migration, publishing
+  in the memory store and through the API (admin only, own tenant only,
+  Postgres tier), and the merge.
+
+Unchanged by design: chat, research (prompts, cache keys, fingerprint) and the
+workspace baseline.
 
 ## References
 

@@ -196,6 +196,15 @@ class ResearchSettings(BaseModel):
 class WorkspaceSettings(BaseModel):
     """The workspace agent (docs/design/tools.md): chat over documents and tools."""
 
+    max_corpora: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description=(
+            "Corpora one thread may select. One search covers them all, so this bounds "
+            "the database queries per search, not the model's input (top_k does that)."
+        ),
+    )
     verify_citations: bool = Field(
         default=True,
         description=(

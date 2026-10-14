@@ -352,3 +352,47 @@ def test_seeding_keeps_a_public_corpus_in_step_with_a_directory(
         assert await owner.delete_corpus(SYSTEM_TENANT, first.corpus_id)
 
     run(pg_app, scenario)
+
+
+def test_only_an_admin_publishes_and_only_their_own_corpora(pg_app: TestApp) -> None:
+    """T12 (docs/design/tools.md): global corpora are published by an admin.
+
+    The store publishes as the tables' owner, so the tenant role still never
+    writes a public row; the API checks ``keys:admin`` first.
+    """
+    auth = {"Authorization": f"Bearer {BOOTSTRAP_KEY}"}
+    client: TestClient = pg_app.test_client()
+
+    def key(scopes: list[str], tenant_id: str) -> dict[str, str]:
+        body = {"tenant_id": tenant_id, "user_id": "u", "scopes": scopes}
+        raw = client.post("/api/v1/keys", json=body, headers=auth).json()["api_key"]
+        return {"Authorization": f"Bearer {raw}"}
+
+    admin_tenant, reviewer_tenant = tenant(), tenant()
+    admin = key(["*"], admin_tenant)
+    writer = key(["agents:run", "threads:read", "threads:write", "corpora:write"], reviewer_tenant)
+    mine = client.post("/api/v1/corpora", json={"name": "handbook"}, headers=admin).json()
+    theirs = client.post("/api/v1/corpora", json={"name": "notes"}, headers=writer).json()
+    public = {"visibility": "public"}
+
+    denied = client.post(
+        f"/api/v1/corpora/{theirs['corpus_id']}/visibility", json=public, headers=writer
+    )
+    assert denied.status_code == 403
+    other = client.post(
+        f"/api/v1/corpora/{theirs['corpus_id']}/visibility", json=public, headers=admin
+    )
+    assert other.status_code == 404  # an admin publishes only their own tenant's corpora
+
+    published = client.post(
+        f"/api/v1/corpora/{mine['corpus_id']}/visibility", json=public, headers=admin
+    )
+    assert published.status_code == 200
+    listed = client.get("/api/v1/corpora", headers=writer).json()["corpora"]
+    assert any(c["corpus_id"] == mine["corpus_id"] and c["visibility"] == "public" for c in listed)
+    # Still unwritable through the API while public: unpublish first.
+    files = [("files", ("a.md", b"# A\n\ntext\n", "text/markdown"))]
+    upload = client.post(
+        f"/api/v1/corpora/{mine['corpus_id']}/documents", files=files, headers=admin
+    )
+    assert upload.status_code == 404

@@ -326,7 +326,7 @@ Design: [design/tools.md](../design/tools.md).
 
 ```mermaid
 flowchart LR
-    S((START)) --> sel[select_corpus<br/>resolve the thread's corpus<br/>for this tenant, when it changes]
+    S((START)) --> sel[select_corpus<br/>resolve the thread's corpora<br/>for this tenant, when they change]
     sel --> recall[recall_memories<br/>shared with chat]
     recall --> model[model<br/>system prompt + memories + messages;<br/>search_documents bound only<br/>when the thread has documents]
     model -->|tool calls| tools[tools<br/>now, calculate, remember,<br/>recall, search_documents]
@@ -340,11 +340,14 @@ and approval for tool calls, add moving parts. Keeping them out of `chat`
 keeps the simplest agent simple and its eval baseline still (decision
 [D25](07-decisions.md#d25-workspace-is-a-separate-agent-from-chat)).
 
-**The thread's documents are state.** A run may send `corpus_id` in its
-input; the checkpoint keeps it, so every later turn searches the same corpus
-until a run sends another one or `null`. The design first put the corpus on
-the thread's record; state needed no API change and survives time travel like
-everything else.
+**The thread's documents are state.** A run may send `corpus_ids` in its
+input: up to five corpora, global (public, published by an admin) and the
+tenant's own, picked with checkboxes in the UI. The checkpoint keeps them, so
+every later turn searches the same corpora until a run sends another list or
+`[]`. The design first put one corpus on the thread's record; state needed no
+API change and survives time travel like everything else. One search covers
+every selected corpus: candidates are fetched per corpus, merged by score and
+reranked once, so the cost is that of searching one.
 
 **`search_documents`.** The model chooses only the query. The corpus comes
 from state (`InjectedState`) and the tenant from the run's context, so a

@@ -180,6 +180,24 @@ docker compose exec postgres psql -U waypoint -c \
   "select tenant_id, count(*) runs, round(sum(cost_usd), 2) usd from run_audit where started_at > now() - interval '30 days' group by 1 order by 3 desc nulls last"
 ```
 
+## Global corpora
+
+Corpora every reviewer can select in Workspace, besides the seeded
+`waypoint-docs`. With an admin key (`*` or `keys:admin`): create a corpus,
+upload into it while it is private, then publish it.
+
+```bash
+ADMIN="Authorization: Bearer $BOOTSTRAP_API_KEY"
+BASE=https://waypoint.brentdunham.com/api/v1
+ID=$(curl -s -X POST $BASE/corpora -H "$ADMIN" -H 'Content-Type: application/json' -d '{"name":"handbook"}' | jq -r .corpus_id)
+curl -s -X POST $BASE/corpora/$ID/documents -H "$ADMIN" -F "files=@handbook.md"
+# wait for the ingest run to finish (GET /corpora/$ID/documents shows each status), then:
+curl -s -X POST $BASE/corpora/$ID/visibility -H "$ADMIN" -H 'Content-Type: application/json' -d '{"visibility":"public"}'
+```
+
+To change one later, set it back to `private`, upload or delete, and publish
+again; while private it disappears from other tenants' pickers.
+
 ## Operating it
 
 | Task | Command |
