@@ -1,7 +1,16 @@
 {
   "agent": "workspace",
-  "cases": 10,
+  "cases": 13,
   "checks": {
+    "approval_requested": {
+      "applicable": 6,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 6
+    },
     "citations_resolve": {
       "applicable": 12,
       "not_applicable": 0,
@@ -24,19 +33,28 @@
       "applicable": 9,
       "not_applicable": 0,
       "pass_rate": {
-        "mean": 0.8889,
-        "stdev": 0.1925
+        "mean": 1.0,
+        "stdev": 0.0
       },
-      "passed": 8
+      "passed": 9
     },
     "completed": {
-      "applicable": 30,
+      "applicable": 39,
       "not_applicable": 0,
       "pass_rate": {
         "mean": 1.0,
         "stdev": 0.0
       },
-      "passed": 30
+      "passed": 39
+    },
+    "no_approval": {
+      "applicable": 3,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 3
     },
     "recalled": {
       "applicable": 6,
@@ -57,13 +75,13 @@
       "passed": 3
     },
     "reply_mentions": {
-      "applicable": 9,
+      "applicable": 12,
       "not_applicable": 0,
       "pass_rate": {
         "mean": 1.0,
         "stdev": 0.0
       },
-      "passed": 9
+      "passed": 12
     },
     "tool_called": {
       "applicable": 21,
@@ -73,29 +91,47 @@
         "stdev": 0.0
       },
       "passed": 21
+    },
+    "tool_declined": {
+      "applicable": 3,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 3
+    },
+    "tool_ran": {
+      "applicable": 3,
+      "not_applicable": 0,
+      "pass_rate": {
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "passed": 3
     }
   },
   "criteria": {
     "correct": {
-      "graded": 30,
+      "graded": 36,
       "judge": "uncalibrated",
       "mean": {
-        "mean": 3.8,
-        "stdev": 0.0
+        "mean": 3.8333,
+        "stdev": 0.1443
       },
-      "pass_rate": 0.9333
+      "pass_rate": 0.9444
     },
     "grounded": {
       "graded": 15,
       "judge": "uncalibrated",
       "mean": {
-        "mean": 3.9333,
-        "stdev": 0.1155
+        "mean": 4.0,
+        "stdev": 0.0
       },
       "pass_rate": 1.0
     },
     "honest_tools": {
-      "graded": 6,
+      "graded": 15,
       "judge": "uncalibrated",
       "mean": {
         "mean": 4.0,
@@ -107,20 +143,20 @@
       "graded": 6,
       "judge": "uncalibrated",
       "mean": {
-        "mean": 3.5,
-        "stdev": 0.5
+        "mean": 3.8333,
+        "stdev": 0.2887
       },
-      "pass_rate": 0.8333
+      "pass_rate": 1.0
     }
   },
-  "date": "2026-10-13T21:46:00+00:00",
+  "date": "2026-10-14T22:51:38+00:00",
   "elapsed_s_per_run": {
-    "mean": 3.4232,
-    "stdev": 6.525
+    "mean": 5.6376,
+    "stdev": 6.7133
   },
   "errors": 0,
-  "fingerprint": "7349c5597941",
-  "git_sha": "292fbec",
+  "fingerprint": "965b5b3098c6",
+  "git_sha": "29b11ac",
   "judge_model": "claude-haiku-4-5",
   "models": {
     "assistant": "claude-sonnet-5",
@@ -139,37 +175,36 @@
   "settings": {},
   "trials": 3,
   "usage": {
-    "cost_usd": 0.2088,
-    "cost_usd_if_live_per_run": 0.0302,
-    "cost_usd_per_run": 0.007,
+    "cost_usd": 0.2453,
+    "cost_usd_if_live_per_run": 0.0224,
+    "cost_usd_per_run": 0.0063,
     "replayed": {
-      "assistant": 64,
-      "verifier": 17
+      "assistant": 74
     },
     "replayed_without_usage": {},
     "roles": {
       "assistant": {
-        "calls": 8,
-        "input_tokens": 87584,
-        "input_tokens_per_run": 2919,
-        "latency_s_per_call": 3.74,
+        "calls": 12,
+        "input_tokens": 92099,
+        "input_tokens_per_run": 2362,
+        "latency_s_per_call": 2.54,
         "models": [
           "claude-sonnet-5"
         ],
-        "output_tokens": 2703,
-        "output_tokens_per_run": 90,
+        "output_tokens": 2570,
+        "output_tokens_per_run": 66,
         "searches": 0
       },
       "verifier": {
-        "calls": 4,
-        "input_tokens": 30848,
-        "input_tokens_per_run": 1028,
-        "latency_s_per_call": 7.81,
+        "calls": 21,
+        "input_tokens": 178596,
+        "input_tokens_per_run": 4579,
+        "latency_s_per_call": 7.49,
         "models": [
           "claude-haiku-5-5"
         ],
-        "output_tokens": 7054,
-        "output_tokens_per_run": 235,
+        "output_tokens": 35156,
+        "output_tokens_per_run": 901,
         "searches": 0
       }
     }

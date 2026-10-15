@@ -413,9 +413,10 @@ spans. Phase 4 built 2026-10-14: any call except a trusted server's read-only
 tools pauses Workspace for approval (`approve_tools`, an `interrupt()`), per
 call, surviving a restart; a declined call is never made and the reply says
 so; a tool approval card in the web UI; the demo notes server in process for
-three new eval cases (`approval_requested`, `tool_declined`). The workspace
-baseline needs a new 3-trial run for the new cases. Phase 5 (the notes server
-on Bob) is next.
+three new eval cases (`approval_requested`, `tool_declined`). New workspace
+baseline accepted the same day (`grounded` 4.00 after a fix: the verifier's
+evidence had been cutting off cited passages). Phase 5 (the notes server on
+Bob) is next.
 
 ### 6. Durable run queue
 

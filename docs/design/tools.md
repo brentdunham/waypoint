@@ -484,8 +484,13 @@ Built:
   `72e967bfacb7`), and the eval replay key parts that come from the library
   (`_signature` of a plain model, one with tools bound, one with web search,
   one with structured output, and `_input_key` of a message) were
-  byte-identical under 1.6.1 and 1.7.6 (4,193 bytes each). So stored eval
-  calls still replay; they were not re-run.
+  byte-identical under 1.6.1 and 1.7.6 (4,193 bytes each). I concluded that
+  stored eval calls would still replay. **That was wrong** (found in phase 4):
+  the first run on the new version replayed only 15 of the workspace agent's
+  calls. The check covered a plain user message, not a conversation with tool
+  calls and results in it, whose serialized form evidently changed. A second
+  run on the same version replayed 74 of 86, so the store works; it only had
+  to be refilled once.
 * `MCP__SERVERS`, `MCP__MAX_CALLS_PER_RUN` (8), `MCP__REFRESH_S` (300):
   `McpSettings` with `McpServer` (`name`, `url`, `trusted`, `token`,
   `timeout_s`, `approval`). The scope is `tools:<name>` (T8); not
@@ -602,6 +607,29 @@ Deviations:
 * `tests/test_evals.py` now checks the workspace dataset against its rubric
   and the known checks, as it did for chat and research; the workspace judge
   has no calibration set yet, which the test allows.
+
+The new baseline, and a verifier fix it led to:
+
+* The first 3-trial run (`20261014-172620`) scored `grounded` 3.73 against
+  the old baseline's 3.93, all of it from `docs-eval-costs` (2 in two of
+  three trials). The judge's reasons named sentences whose cited passage was
+  not in the evidence it was shown. The sentences were right: the passage
+  (the model-roles table in guide 04) says the verifier runs on Haiku. But a
+  finding's evidence was the search's passages cut at 6,000 characters, and
+  that answer cited six passages from one search, so the cited one fell past
+  the cut. The verifier reads the same evidence, so it could not see it
+  either.
+* Fix: cited passages are always in the evidence, whole; uncited ones fill
+  what is left of `MAX_EVIDENCE_CHARS` (`_evidence`, with a test). The
+  verifier and the judge now see what every citation points at.
+* The re-run (`20261014-175138`, fingerprint `965b5b3098c6`), accepted as the
+  baseline: `correct` 3.83, `grounded` 4.00, `honest_tools` 4.00,
+  `uses_memory` 3.83; every check passes, `claims_cited` 9 of 9 (8 of 9 in
+  the old baseline and the first run). Cost per run live $0.022. The two
+  `correct` scores of 2 are one trial each of `docs-with-memory` (the reply
+  ran longer than the remembered one-paragraph preference) and
+  `use-seeded-preference` (it gave feet as well as metres), the same kind of
+  misses the old baseline had.
 
 ## References
 
