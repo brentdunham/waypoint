@@ -242,13 +242,15 @@ worker's runs are reclaimed after the owner lease expires (30 s by default),
 on the next scan (10 s). Restarting or deploying only the api touches no
 runs. Recovery requires Postgres checkpoints and Redis persistence.
 
-Production acceptance after deploying this change remains pending: start
+For recovery acceptance after a deployment: start
 and approve a research run, find its driving container in worker logs,
 kill that container, and check that the same event stream has one
 `run.reclaimed` and one terminal event. Repeat with a worker restart during
 a run longer than the drain. Check for doubled partial text and usage from
 both attempts. Repeat an approved notes write across a handoff and check
-that only one note exists. These checks have not been run on Bob.
+that only one note exists. These checks passed on Bob on 2026-10-15, including
+a browser-driven graceful handoff and notes replay after worker restart.
+See [NEXT-STEPS.md](NEXT-STEPS.md) for run ids, measured cost and validation.
 
 ## Notes server
 

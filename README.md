@@ -26,7 +26,7 @@ the agents against a baseline.
 | [docs/API.md](docs/API.md) | Every endpoint, with curl |
 | [docs/TESTING.md](docs/TESTING.md) | How to run and extend each test tier |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What is done, what is next, and why in that order |
-| [docs/NEXT-STEPS.md](docs/NEXT-STEPS.md) | Follow-up fixes, verification, and remaining deployment acceptance |
+| [docs/NEXT-STEPS.md](docs/NEXT-STEPS.md) | Follow-up fixes, verification, and deployment acceptance results |
 | [docs/case-studies/grounded.md](docs/case-studies/grounded.md) | Raising citation quality with the eval loop: measure, calibrate the judge, fix, re-measure |
 | [docs/case-studies/cost.md](docs/case-studies/cost.md) | Cutting a research run's cost by 38%: where the money goes, three one-trial experiments, a three-trial confirmation, and a check that was counting honest sentences as failures |
 | [docs/case-studies/retrieval.md](docs/case-studies/retrieval.md) | Which retrieval techniques earned their place: reranking, contextual retrieval, embedding models, chunk size, top-k, measured on a reviewed gold set |

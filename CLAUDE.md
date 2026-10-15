@@ -13,12 +13,12 @@ rediscovering it.
 * `docs/design/`: design docs. `tools.md` (the workspace agent: documents,
   MCP tools in `agents/mcp.py`, tool approval, the `notes` demo server in
   `waypoint/mcp_demo/notes.py`; ROADMAP item 5) is complete, deployed to Bob
-  2026-10-15. **In progress: `queue.md`** (the durable run queue, ROADMAP
-  item 6): phase 1 built (the API only queues runs; `python -m waypoint.worker`,
-  the `worker` compose service, drives them), phases 2 and 3 (recovery,
-  idempotency and client safety) built locally;
-  production deployment and Bob kill/deploy acceptance checks pending.
-  `docs/NEXT-STEPS.md` records the follow-up validation. With Redis the API
+  2026-10-15. `queue.md` (the durable run queue, ROADMAP item 6) is complete,
+  deployed to Bob 2026-10-15: the API only queues runs;
+  `python -m waypoint.worker`, the `worker` compose service, drives them.
+  Recovery, idempotency and client safety passed live kill, graceful handoff,
+  browser and notes replay checks. `docs/NEXT-STEPS.md` records the results
+  and the timeline export race found during acceptance. With Redis the API
   drives no runs, so integration tests get a worker
   runtime from `TestApp` (docs/TESTING.md). Each phase updates every
   document in that design's Documentation table in the same commit as its

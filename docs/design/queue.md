@@ -1,8 +1,8 @@
 # Design: the durable run queue
 
-Status: **phases 1 to 3 implemented locally** (2026-10-15), not yet deployed.
-Local verification is recorded in [NEXT-STEPS.md](../NEXT-STEPS.md); Bob
-kill/deploy acceptance remains pending. All decisions settled with Brent
+Status: **complete and deployed to Bob** (2026-10-15), phases 1 to 3.
+Local verification and live kill, handoff, browser and notes replay acceptance
+are recorded in [NEXT-STEPS.md](../NEXT-STEPS.md). All decisions settled with Brent
 on 2026-10-15: Q2 as he changed it (the API only enqueues; runs execute in a
 separate `worker` service), the rest as proposed. Phase 0 is done. This note is the hand-off for the
 coding sessions: what to build, what is decided, what is still open, in what
@@ -401,6 +401,13 @@ starting checkpoint, or an empty branch if none existed. `sync` is default.
 Run record, SSE, cancel and historical trace ownership follow the thread
 user/tenant rule. In-memory thread lists use the database tier's user filter.
 Fractional run timeouts round the Redis slot TTL up to whole seconds.
-Validation results are in NEXT-STEPS.md. No production deployment or paid
-evaluation was performed. Bob kill/deploy and browser acceptance remain
-required before marking ROADMAP item 6 deployed and complete.
+Initial validation used no live model evaluations. Production deployment
+and acceptance then passed on Bob on 2026-10-15: SIGKILL recovery on the other
+worker, graceful restart after the drain, cumulative usage, one terminal
+event, browser recovery with one final reply, and notes checkpoint replay
+across restart without a duplicate mutation. The handoff run's two attempt
+snapshots sum to $0.040551. Acceptance found a trace export race, fixed in
+`d1e5e00`: timelines stay pending until the terminal attempt exports, rather
+than stopping at the handed-off attempt's root. Full Linux validation after
+the fix: 484 passed, one optional dataset skipped. NEXT-STEPS.md records the
+run ids, measurements and cleanup. ROADMAP item 6 is complete.

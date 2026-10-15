@@ -443,15 +443,19 @@ enqueues, and a separate `worker` service drives runs. Phase 0 done (spikes;
 `sync` durability measured at about 0.3 ms a step, so it becomes the default
 in phase 2). Phase 1 built: the run queue, `python -m waypoint.worker` and
 its compose service (two replicas), the slot carried by member, the cancel
-flag, `/readyz` reporting workers and the queue. Not yet deployed. Phase 2
-(reclaim and resume) and phase 3 safety are implemented locally as the
-2026-10-15 follow-up. See [NEXT-STEPS.md](NEXT-STEPS.md) for verification.
-Production deployment and the Bob kill/deploy acceptance checks remain
-pending; local tests are not a production deployment claim.
+flag, `/readyz` reporting workers and the queue. Phases 2 (reclaim and resume)
+and 3 (idempotency and client safety) built and deployed 2026-10-15.
+Live acceptance on Bob passed: SIGKILL recovery on the other worker,
+graceful handoff after the drain, one terminal event, accumulated usage,
+browser recovery with one final reply, and a single notes mutation after
+checkpoint replay across worker restart. Acceptance also found and fixed a
+timeline export race: a handed-off root alone must remain pending until
+the terminal attempt exports. See [NEXT-STEPS.md](NEXT-STEPS.md) for results.
+Item 6 is complete.
 
 ## Smaller open items
 
-* **Two runs on one thread.** Fixed locally 2026-10-15: an atomic queue/thread
+* **Two runs on one thread.** Fixed and deployed 2026-10-15: an atomic queue/thread
   reservation returns `409` for another queued or executing run and remains
   held during recovery. Ownership and stream lifetime fixes are part of the
   same follow-up ([NEXT-STEPS.md](NEXT-STEPS.md)).
