@@ -13,7 +13,8 @@ rediscovering it.
 * `docs/design/`: design docs. `tools.md` (the workspace agent: documents,
   MCP tools in `agents/mcp.py`, tool approval, the `notes` demo server in
   `waypoint/mcp_demo/notes.py`; ROADMAP item 5) is complete, deployed to Bob
-  2026-10-15. **No design is in progress; ROADMAP item 6 is next.** Each phase updates every
+  2026-10-15. **In progress: `queue.md`** (the durable run queue, ROADMAP
+  item 6), phase 0: Q2 decided (separate worker service), other open decisions waiting on Brent. Each phase updates every
   document in that design's Documentation table in the same commit as its
   code. `observability.md` is complete (deployed 2026-10-13; case study
   `docs/case-studies/cost.md`). `rag.md` is complete (all five phases,

@@ -437,6 +437,9 @@ names it.
 **Done when.** Killing a worker mid-run leaves the run to finish on another
 worker without client-visible loss.
 
+**Status.** Design in [design/queue.md](design/queue.md) (2026-10-15);
+phase 0 spikes done, decisions proposed.
+
 ## Smaller open items
 
 * **Context window management.** Chat threads grow without bound. Add
