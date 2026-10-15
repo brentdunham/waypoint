@@ -417,8 +417,10 @@ three new eval cases (`approval_requested`, `tool_declined`). New workspace
 baseline accepted the same day (`grounded` 4.00 after a fix: the verifier's
 evidence had been cutting off cited passages). Phase 5 built 2026-10-15: the
 notes server as its own compose service (SQLite, shared token, not
-published), reviewer keys with `tools:notes`. Item 5 is done once it is
-deployed and a reviewer key adds a note on Bob.
+published), reviewer keys with `tools:notes`; deployed and checked on Bob the
+same day with a fresh reviewer link (add approved and saved, the approval
+card back after a reload, list without asking, a declined delete reported as
+not done). Item 5 is complete.
 
 ### 6. Durable run queue
 

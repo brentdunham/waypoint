@@ -1,8 +1,8 @@
 # Design: the workspace agent (documents, MCP tools, approval)
 
-Status: **phase 5 built** (2026-10-15): the notes server as a compose
-service, reviewer keys with `tools:notes`. To deploy to Bob. Phases 1 to 4
-built and deployed 2026-10-13 and 2026-10-14. Written 2026-10-13. This note is the
+Status: **complete** (2026-10-15). All five phases built and deployed to
+Bob; phase 5's check passed there: a reviewer key added a note from
+Workspace after approving it. Written 2026-10-13. This note is the
 hand-off for the coding sessions: what to build, what is decided, what is
 still open, in what order, and which documents each phase must update. Read
 it with [ARCHITECTURE.md](../ARCHITECTURE.md),
@@ -678,7 +678,11 @@ through Docker's DNS on each request (cached 10 s), so a recreated api is
 found without a restart. Checked with `nginx -t`.
 
 Done when a reviewer adds a note from Workspace after approving it, on Bob:
-pending the deploy.
+**passed 2026-10-15** with a fresh reviewer link (`rev-phase5-test`). The
+add paused with an approval card, the card came back after a reload, Allow
+saved the note, listing ran without asking, and a declined delete left the
+note in place with a reply saying it was not deleted. The design is
+complete.
 
 ## References
 

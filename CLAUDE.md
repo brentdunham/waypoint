@@ -10,13 +10,10 @@ rediscovering it.
 * `docs/guide/`: the long-form design guide for reviewers (Mermaid diagrams,
   glossary). Keep it in step with any architecture change.
 * `docs/ROADMAP.md`: what is done and what is next.
-* `docs/design/`: design docs. **Current: the workspace agent,
-  `docs/design/tools.md` (ROADMAP item 5); phase 1 done (deployed to Bob
-  2026-10-13); phases 2a and 2b (several corpora, reviewers' own corpora)
-  deployed 2026-10-14; phases 3 (MCP client, `agents/mcp.py`) and 4 (tool
-  approval, `approve_tools`) built 2026-10-14; phase 5 (notes server as the
-  `notes` compose service, `waypoint/mcp_demo/notes.py`) built 2026-10-15,
-  to deploy to Bob.** Each phase updates every
+* `docs/design/`: design docs. `tools.md` (the workspace agent: documents,
+  MCP tools in `agents/mcp.py`, tool approval, the `notes` demo server in
+  `waypoint/mcp_demo/notes.py`; ROADMAP item 5) is complete, deployed to Bob
+  2026-10-15. **No design is in progress; ROADMAP item 6 is next.** Each phase updates every
   document in that design's Documentation table in the same commit as its
   code. `observability.md` is complete (deployed 2026-10-13; case study
   `docs/case-studies/cost.md`). `rag.md` is complete (all five phases,
