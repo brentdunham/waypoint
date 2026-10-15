@@ -669,6 +669,14 @@ Deviations:
   a JSON default without breaking its own `${...}` syntax, so DEPLOY.md says
   to paste the same value twice.
 
+Deploying it on Bob (2026-10-15): `notes` came up healthy and the api found
+its four tools, but the site answered 502. The web container's nginx had
+resolved `api` once, at its own start; `up -d --build` recreated the api
+with a new address, and nginx kept proxying to the old one. `docker compose
+restart web` fixed it on the spot; `web/nginx.conf` now resolves the api
+through Docker's DNS on each request (cached 10 s), so a recreated api is
+found without a restart. Checked with `nginx -t`.
+
 Done when a reviewer adds a note from Workspace after approving it, on Bob:
 pending the deploy.
 
