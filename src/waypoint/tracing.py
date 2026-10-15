@@ -42,7 +42,17 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter
-from opentelemetry.trace import Link, Span, SpanContext, SpanKind, Status, StatusCode, Tracer
+from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
+from opentelemetry.trace import (
+    Link,
+    Span,
+    SpanContext,
+    SpanKind,
+    Status,
+    StatusCode,
+    TraceFlags,
+    Tracer,
+)
 
 from waypoint.usage import PriceTable, load_prices, replies, usage_of
 
@@ -79,6 +89,52 @@ class Tracing:
 
 NOOP = Tracing(tracer=trace.NoOpTracer(), provider=None)
 
+_PRESET_TRACE_ID: ContextVar[int | None] = ContextVar("waypoint_preset_trace_id", default=None)
+
+
+class _PresetIds(RandomIdGenerator):
+    """Random ids, except a run's root span takes the trace id the API chose.
+
+    The API accepts a run and reports its trace id at once (on the 202 and in
+    ``run.started``), but a worker in another process makes the run's span
+    (docs/design/queue.md). The API picks the id with :func:`new_trace_id`;
+    the worker passes it to :func:`start_run_span`, which sets it here for the
+    one ``start_span`` call. The span stays a root, as O8 wants.
+    """
+
+    @override
+    def generate_trace_id(self) -> int:
+        return _PRESET_TRACE_ID.get() or super().generate_trace_id()
+
+
+def new_trace_id(tracing: Tracing) -> str | None:
+    """A fresh trace id for a run, or ``None`` with tracing off."""
+    if not tracing.enabled:
+        return None
+    return format(RandomIdGenerator().generate_trace_id(), "032x")
+
+
+def link_to_dict(link: SpanContext | None) -> dict[str, str] | None:
+    """A span context as JSON, to travel with a queued run."""
+    if link is None or not link.is_valid:
+        return None
+    return {"trace_id": format(link.trace_id, "032x"), "span_id": format(link.span_id, "016x")}
+
+
+def link_from_dict(data: dict[str, str] | None) -> SpanContext | None:
+    if not data:
+        return None
+    try:
+        ctx = SpanContext(
+            trace_id=int(data["trace_id"], 16),
+            span_id=int(data["span_id"], 16),
+            is_remote=True,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        )
+    except KeyError, ValueError:
+        return None
+    return ctx if ctx.is_valid else None
+
 
 def setup_tracing(settings: Settings, exporter: SpanExporter | None = None) -> Tracing:
     """Build this process's tracer from settings.
@@ -90,7 +146,9 @@ def setup_tracing(settings: Settings, exporter: SpanExporter | None = None) -> T
     endpoint = settings.otel_exporter_otlp_endpoint
     if exporter is None and not endpoint:
         return NOOP
-    provider = TracerProvider(resource=Resource.create({"service.name": SERVICE}))
+    provider = TracerProvider(
+        resource=Resource.create({"service.name": SERVICE}), id_generator=_PresetIds()
+    )
     if exporter is not None:
         provider.add_span_processor(SimpleSpanProcessor(exporter))
     else:
@@ -126,21 +184,29 @@ def start_run_span(
     tenant_id: str,
     resume: bool,
     link: SpanContext | None,
+    trace_id: str | None = None,
 ) -> Span:
-    """A run's root span: a new trace, linked to the request that started it (O8)."""
-    return tracing.tracer.start_span(
-        f"run {agent}",
-        context=otel_context.Context(),  # a new root, whatever is current
-        kind=SpanKind.INTERNAL,
-        links=[Link(link)] if link is not None else None,
-        attributes={
-            "waypoint.run_id": run_id,
-            "waypoint.thread_id": thread_id,
-            "waypoint.tenant_id": tenant_id,
-            "waypoint.agent": agent,
-            "waypoint.resume": resume,
-        },
-    )
+    """A run's root span: a new trace, linked to the request that started it (O8).
+
+    ``trace_id``: the id the API chose for the run (:func:`new_trace_id`).
+    """
+    token = _PRESET_TRACE_ID.set(int(trace_id, 16) if trace_id else None)
+    try:
+        return tracing.tracer.start_span(
+            f"run {agent}",
+            context=otel_context.Context(),  # a new root, whatever is current
+            kind=SpanKind.INTERNAL,
+            links=[Link(link)] if link is not None else None,
+            attributes={
+                "waypoint.run_id": run_id,
+                "waypoint.thread_id": thread_id,
+                "waypoint.tenant_id": tenant_id,
+                "waypoint.agent": agent,
+                "waypoint.resume": resume,
+            },
+        )
+    finally:
+        _PRESET_TRACE_ID.reset(token)
 
 
 def end_run_span(span: Span, status: str, error: str | None, usage: dict[str, Any] | None) -> None:

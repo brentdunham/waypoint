@@ -14,7 +14,10 @@ rediscovering it.
   MCP tools in `agents/mcp.py`, tool approval, the `notes` demo server in
   `waypoint/mcp_demo/notes.py`; ROADMAP item 5) is complete, deployed to Bob
   2026-10-15. **In progress: `queue.md`** (the durable run queue, ROADMAP
-  item 6), phase 0: Q2 decided (separate worker service), other open decisions waiting on Brent. Each phase updates every
+  item 6): phase 1 built (the API only queues runs; `python -m waypoint.worker`,
+  the `worker` compose service, drives them), phase 2 (reclaim and resume)
+  next. With Redis the API drives no runs, so integration tests get a worker
+  runtime from `TestApp` (docs/TESTING.md). Each phase updates every
   document in that design's Documentation table in the same commit as its
   code. `observability.md` is complete (deployed 2026-10-13; case study
   `docs/case-studies/cost.md`). `rag.md` is complete (all five phases,
@@ -26,7 +29,8 @@ rediscovering it.
 * `src/waypoint/`: the service. `agents/graphs/research.py` is the research
   agent, `agents/graphs/workspace.py` the workspace agent, `agents/verify.py`
   the shared citation checker; `agents/models.py` builds models and embeddings; `infra/db.py` owns
-  the schema and `migrate()`.
+  the schema and `migrate()`; `infra/runs.py` (`RunManager` in the API,
+  `RunWorker` in `worker.py`) and `infra/queue.py` run the run queue.
 * `evals/`: datasets, rubrics, calibration, baselines, results.
 * `web/`: React/Vite UI.
 
@@ -39,6 +43,10 @@ The dev machine is Windows (`C:\projects\waypoint`), PowerShell.
   `uv run python -m evals ...`. The `uv run <script>`
   entry points can fail on Windows with the uv trampoline.
 * Web: `cd web; npm test; npm run build`.
+* Running the stack locally with Redis up (`compose.dev.yaml`) needs two
+  processes: `uv run python -m waypoint` (the API, which only queues runs)
+  and `uv run python -m waypoint.worker` (drives them). Without Redis the API
+  drives its own.
 * psycopg needs the selector event loop on Windows; `src/waypoint/loops.py` provides it.
   Use that in any new entry point.
 * PowerShell tool calls time out after about 60 seconds. Start long jobs

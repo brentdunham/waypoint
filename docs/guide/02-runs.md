@@ -1,6 +1,7 @@
 # 2. Runs
 
-`src/waypoint/infra/runs.py`, `src/waypoint/infra/bus.py`, `src/waypoint/api/runs.py`.
+`src/waypoint/infra/runs.py`, `src/waypoint/infra/bus.py`, `src/waypoint/infra/queue.py`,
+`src/waypoint/worker.py`, `src/waypoint/api/runs.py`.
 
 A **run** is one execution of an agent's graph on a thread: from a start
 request until the graph finishes, fails, is cancelled, or pauses for a person.
@@ -34,6 +35,10 @@ stateDiagram-v2
     end note
 ```
 
+`running` starts when the API accepts the run, so it covers the time the run
+waits on the queue for a worker as well as the time a worker drives it
+([2.6](#26-the-run-queue-and-the-workers)).
+
 `interrupted` is a terminal state on purpose. A paused run holds nothing: no
 task, no connection, no memory. Resuming is a new run with its own id, its own
 event stream and, if the caller asks, its own model choices.
@@ -59,7 +64,7 @@ flowchart TD
     usd -- yes --> slot{Concurrency slot<br/>LIMITS__CONCURRENT_RUNS}
     slot -- none free --> e429b[429 rate-limited]
     slot -- taken --> meta[Write run record to Redis,<br/>audit row to Postgres,<br/>append run.started]
-    meta --> task[asyncio.create_task drive]
+    meta --> task[XADD the job to runs:queue<br/>a worker drives it, 2.6]
     task --> wait{?wait=true}
     wait -- no --> r202[202 run_id, events_url, cancel_url]
     wait -- yes --> r200[block until terminal event,<br/>200 with the result]
@@ -68,8 +73,9 @@ flowchart TD
 The concurrency slot is taken **before** the POST returns. An over-quota
 caller gets a clean `429` from the request it made, instead of a run that
 fails later for a reason it cannot see. If anything between taking the slot
-and creating the task fails, the slot is released at once rather than left
-for the lease to expire (`RunManager._abandon`).
+and queueing the run fails, the slot is released at once rather than left for
+the lease to expire (`RunManager._abandon`). The worker that drives the run
+gives the slot back when the run ends.
 
 `?wait=true` exists for scripts and tests. Real clients take the `run_id` and
 stream.
@@ -156,35 +162,94 @@ header and cannot be aborted cleanly. `web/src/api/sse.ts` reads the stream
 with `fetch` and parses frames itself, which is what lets it own
 `Last-Event-ID` and tie the stream to a component's lifetime.
 
-## 2.5 Cancellation across workers
+## 2.5 Cancellation across processes
 
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant W2 as worker 2
-    participant P as Redis pub/sub runs:cancel
-    participant W1 as worker 1 (owns the task)
+    participant A as api process
+    participant R as Redis
+    participant W as worker (drives the run)
 
-    C->>W2: POST /runs/{id}/cancel
-    W2->>W2: task in my table? no
-    W2->>P: PUBLISH run id
-    W2-->>C: 202
-    P-->>W1: run id
-    W1->>W1: task.cancel()
-    W1->>W1: append run.cancelled, release slot, audit
+    C->>A: POST /runs/{id}/cancel
+    A->>R: SET run:{id}:cancel
+    A->>R: PUBLISH runs:cancel run id
+    A-->>C: 202
+    R-->>W: run id
+    W->>W: inside the graph? task.cancel()
+    W->>W: append run.cancelled, release slot, audit
 ```
 
-Pub/sub is the right tool here, unlike for events: a cancel only matters to
-the worker running the task, and that worker is subscribed for as long as the
-task exists. A cancel for a run that already ended returns `409`.
+Pub/sub is the right tool for a run being driven, unlike for events: a cancel
+only matters to the worker running the task, and that worker is subscribed
+for as long as the task exists. The flag covers a run no worker is driving
+yet: a worker checks it when it takes a run off the queue and again as the
+run enters its graph, and the API sets it before it publishes, so a cancel
+cannot fall between the two. A run cancelled while queued ends `cancelled`
+without its graph running. A cancel for a run that already ended returns
+`409`.
 
-## 2.6 Limits on a run
+## 2.6 The run queue and the workers
+
+The API does not run graphs. It admits a run (2.2) and puts it on the Redis
+Stream `runs:queue`; a separate process, `python -m waypoint.worker`, takes it
+off and drives it. Design: [design/queue.md](../design/queue.md).
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as api process
+    participant Q as Redis queue (runs:queue)
+    participant W as worker
+    participant E as Redis run events
+
+    C->>A: POST /threads/{id}/runs
+    A->>E: run.started (with trace_id)
+    A->>Q: XADD job
+    A-->>C: 202 run_id
+    C->>A: GET /runs/{id}/events (SSE)
+    W->>Q: XREADGROUP (one run, when it has room)
+    Q-->>W: job
+    W->>E: token, node, custom ... events
+    A-->>C: the same events, as they land
+    W->>E: run.completed
+    W->>Q: XACK + XDEL
+```
+
+Why a separate process: a run used to be a task on the event loop of the
+api process that took the POST, so a deploy cancelled every run in flight and
+a process that died left its runs `running` for good. Now restarting or
+deploying the api leaves runs alone, workers scale on their own, and a long
+research run cannot slow a request.
+
+* **The job** carries what the worker needs: input or resume value,
+  `durability`, models, the key's scopes, the trace id the API chose (so the
+  run's trace is still one root span, linked to the request), and the
+  concurrency slot's member id, which the worker gives back.
+* **Claiming.** Each worker reads the consumer group `workers` one entry at a
+  time while it drives fewer than `QUEUE__CONCURRENCY` (8) runs. Redis gives
+  each entry to one consumer, and it stays in the group's pending list until
+  the worker acks it when the run ends, however it ends.
+* **Liveness.** Every `QUEUE__HEARTBEAT_S` (10 s) a worker writes
+  `worker:<name>` with a 30 s TTL. `/readyz` on the API reports
+  `workers: ok (2)` and `queue: 0 queued, 1 running`, or
+  `workers: unavailable`; with no worker, runs are accepted and wait.
+* **Stopping.** On SIGTERM a worker takes nothing new and gives its runs
+  `QUEUE__DRAIN_S` (20 s) to end before it cancels the rest.
+* **Without Redis** there is no queue to share, so the API process runs a
+  worker of its own on an in-memory queue, through the same code.
+
+What this does not do yet: a worker that dies mid-run leaves that run in the
+pending list, unfinished. Reclaiming it with `XAUTOCLAIM` and resuming it from
+its last checkpoint is the design's phase 2.
+
+## 2.7 Limits on a run
 
 | Limit | Default | Enforced by |
 |---|---|---|
 | Run starts per tenant | 60 per minute (`LIMITS__RPM`) | Lua token bucket in Redis |
 | Spend per tenant, and for the server | US dollars per day (`BUDGET__*`; the demo: $0.35 and $0.70) | Lua bucket in Redis, refilling continuously; checked before a run, charged per model call |
-| Concurrent runs per tenant | 4 (`LIMITS__CONCURRENT_RUNS`) | Lua semaphore; lease = run timeout + 30 s |
+| Concurrent runs per tenant | 4 (`LIMITS__CONCURRENT_RUNS`) | Lua semaphore; lease = run timeout + 30 s, restarted when a worker starts the run |
 | Wall-clock per run | 300 s (`LIMITS__RUN_TIMEOUT_S`) | `asyncio.timeout` around the graph |
 | Super-steps per run | 40 (`LIMITS__RECURSION_LIMIT`) | LangGraph recursion limit |
 | Request body | 8 MB | ASGI middleware, before parsing |
@@ -192,7 +257,7 @@ task exists. A cancel for a run that already ended returns `409`.
 The research agent also bounds its own loop (rounds, follow-ups, searches per
 worker); see [4.5](04-agents.md#45-the-research-agent).
 
-## 2.7 Durability modes
+## 2.8 Durability modes
 
 The `durability` field on a start request is passed to LangGraph and decides
 when checkpoints are written:
@@ -206,7 +271,7 @@ when checkpoints are written:
 An interrupt is always durable: the graph cannot pause without writing the
 checkpoint it will resume from.
 
-## 2.8 What the run record holds
+## 2.9 What the run record holds
 
 `GET /runs/{id}` returns the record kept in Redis under `run:{id}:meta`, next
 to the event stream at `run:{id}:events`: `run_id`, `thread_id`, `agent`,

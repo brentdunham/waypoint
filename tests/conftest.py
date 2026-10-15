@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from waypoint import create_app
-from waypoint.agents.runtime import AgentRuntime
+from waypoint.agents.runtime import AgentRuntime, start_runtime, stop_runtime
 from waypoint.settings import Settings
 
 BOOTSTRAP_KEY = "ak_test000000.test-key-do-not-use-in-production"
@@ -50,6 +50,8 @@ def build_settings(**overrides: Any) -> Settings:
         "embeddings_model": None,
         "openai_api_key": None,
         "voyage_api_key": None,
+        # A worker stopped with a run in flight gives up at once (QUEUE__DRAIN_S).
+        "queue": {"drain_s": 0.5},
     }
     base.update(overrides)
     # _env_file=None: the developer's .env (real keys, EMBEDDINGS_MODEL, a live
@@ -82,15 +84,38 @@ class TestApp:
     One ``TestClient`` per app, entered once, because entering it is what runs
     the lifespan; a second client would build a second runtime. Its event loop
     lives in a portal thread for the life of the app, and so do the runs.
+
+    With Redis the API only queues runs, so the app also gets ``workers``
+    worker runtimes (``python -m waypoint.worker`` without the process), on
+    the same loop but with their own pools, as separate processes would have.
     """
 
     __test__ = False  # not a test class, whatever its name says
 
-    def __init__(self, app: FastAPI) -> None:
+    def __init__(self, app: FastAPI, *, workers: int | None = None) -> None:
+        """``workers``: worker runtimes to start; one by default when Redis is set."""
+        if workers is None:
+            workers = 1 if app.state.settings.redis_dsn else 0
         self.app = app
         self.client = TestClient(app, raise_server_exceptions=False)
         self.client.__enter__()
         self._open = True
+        self.workers: list[AgentRuntime] = [self.start_worker() for _ in range(workers)]
+
+    def start_worker(self) -> AgentRuntime:
+        """Boot one more worker runtime on the app's loop."""
+
+        async def boot() -> AgentRuntime:
+            return await start_runtime(
+                self.app.state.settings, tracing=self.app.state.tracing, role="worker"
+            )
+
+        return self.call(boot)
+
+    def stop_worker(self, worker: AgentRuntime) -> None:
+        if worker in self.workers:
+            self.workers.remove(worker)
+            self.call(stop_runtime, worker)
 
     def test_client(self) -> TestClient:
         return self.client
@@ -110,6 +135,8 @@ class TestApp:
         """Run the lifespan's shutdown. Safe to call twice."""
         if self._open:
             self._open = False
+            for worker in list(self.workers):
+                self.stop_worker(worker)
             self.client.__exit__(None, None, None)
 
 
@@ -118,8 +145,8 @@ def make_app() -> Iterator[Any]:
     """Factory so a test can ask for a differently configured app."""
     created: list[TestApp] = []
 
-    def factory(**overrides: Any) -> TestApp:
-        application = TestApp(create_app(build_settings(**overrides)))
+    def factory(*, workers: int | None = None, **overrides: Any) -> TestApp:
+        application = TestApp(create_app(build_settings(**overrides)), workers=workers)
         created.append(application)
         return application
 

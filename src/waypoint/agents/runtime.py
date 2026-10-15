@@ -1,5 +1,12 @@
 """Process-wide runtime: everything expensive, built once, on the shared loop.
 
+Two roles share it (docs/design/queue.md). The API (``role="api"``) admits
+runs and puts them on the queue; with Redis it never drives one. The worker
+(``role="worker"``, ``python -m waypoint.worker``) takes runs off the queue
+and drives them, so it alone discovers MCP tools and listens for cancels.
+Without Redis there is no shared queue, so the API process runs a worker of
+its own.
+
 Order matters. The Postgres pool has to exist before the checkpointer and store
 can bind to it; the checkpointer and store have to exist before graphs compile;
 graphs have to exist before the run manager can drive them. All of it is built
@@ -11,7 +18,7 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Request
 
@@ -31,9 +38,10 @@ from waypoint.infra import redis as redis_infra
 from waypoint.infra.bus import EventBus, MemoryBus, RedisBus
 from waypoint.infra.cache import RedisCache
 from waypoint.infra.db import Database
+from waypoint.infra.queue import MemoryRunQueue, RedisRunQueue, RunQueue
 from waypoint.infra.quota import MemoryUploadQuota, RedisUploadQuota, UploadQuota
 from waypoint.infra.ratelimit import Limiter
-from waypoint.infra.runs import RunManager
+from waypoint.infra.runs import ALIVE_FILE, RunManager, RunWorker
 from waypoint.infra.security import KeyStore, parse_key_id
 from waypoint.infra.threads import ThreadStore
 from waypoint.rag.seed import describe, seed_public_corpus
@@ -45,6 +53,8 @@ log = logging.getLogger(__name__)
 
 STARTUP_TIMEOUT_S = 90
 SHUTDOWN_TIMEOUT_S = 20
+
+type Role = Literal["api", "worker"]
 
 
 @dataclass(slots=True)
@@ -61,7 +71,13 @@ class AgentRuntime:
     quota: UploadQuota | None = None
     """Daily upload limits (``UPLOADS__*``); ``None`` only in hand-built runtimes."""
     mcp: McpCatalog | None = None
-    """Tools from ``MCP__SERVERS``, discovered in the background."""
+    """Tools from ``MCP__SERVERS``, discovered in the background by the
+    process that drives runs."""
+    queue: RunQueue = field(default_factory=MemoryRunQueue)
+    worker: RunWorker | None = None
+    """This process's worker: always in ``role="worker"``, and in the API
+    when there is no Redis to share a queue through."""
+    role: Role = "api"
     redis: Any = None
     store: Any = None
     checkpointer: Any = None
@@ -84,13 +100,42 @@ class AgentRuntime:
             checks["redis"] = "off"
         else:
             checks["redis"] = "ok" if await redis_infra.ping(self.redis) else "down"
-        # Shown, never "down": a tool server is optional and must not take the
-        # service out of rotation (docs/design/tools.md, T7).
-        for name, state in (self.mcp.status() if self.mcp else {}).items():
-            checks[f"mcp:{name}"] = "unavailable" if state["error"] else "ok"
+        if self.worker is not None:
+            # Shown, never "down": a tool server is optional and must not take
+            # the service out of rotation (docs/design/tools.md, T7).
+            for name, state in (self.mcp.status() if self.mcp else {}).items():
+                checks[f"mcp:{name}"] = "unavailable" if state["error"] else "ok"
+        else:
+            checks |= await self._worker_checks()
+        return checks
+
+    async def _worker_checks(self) -> dict[str, str]:
+        """What the workers report: how many are alive, the queue, MCP servers.
+
+        Never "down": with no worker the API still answers and accepts runs,
+        which wait in the queue; ``unavailable`` says why they wait.
+        """
+        try:
+            workers = await self.queue.workers()
+            stats = await self.queue.stats()
+        except Exception:
+            return {"workers": "unknown"}
+        checks = {
+            "workers": f"ok ({len(workers)})" if workers else "unavailable",
+            "queue": f"{stats['queued']} queued, {stats['running']} running",
+        }
+        servers: dict[str, bool] = {}
+        for worker in workers:
+            for name, state in (worker.get("mcp") or {}).items():
+                servers[name] = servers.get(name, False) or not state.get("error")
+        if workers:
+            for server in self.settings.mcp.servers:
+                checks[f"mcp:{server.name}"] = "ok" if servers.get(server.name) else "unavailable"
         return checks
 
     async def aclose(self) -> None:
+        if self.worker is not None:
+            await self.worker.aclose()
         await self.runs.aclose()
         for closer in reversed(self._closers):
             with contextlib.suppress(Exception):
@@ -98,10 +143,13 @@ class AgentRuntime:
         self._closers.clear()
 
 
-async def create_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> AgentRuntime:
+async def create_runtime(
+    settings: Settings, *, tracing: Tracing = NOOP, role: Role = "api"
+) -> AgentRuntime:
     # Before any connection opens: a typo in MODELS__* is a config error, and
     # finding it at the first run of that agent would be far from the cause.
     check_model_config(settings, roles_by_agent())
+    _check_role(settings, role)
     closers: list[Any] = []
     db: Database | None = None
     redis_client: Any = None
@@ -168,21 +216,28 @@ async def create_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> Agen
     compile_kwargs: dict[str, Any] = {"checkpointer": checkpointer, "store": store} | (
         {"cache": cache} if cache is not None else {}
     )
+    drives_runs = role == "worker" or redis_client is None
     corpora = await _corpus_store(settings, db)
     quota = _upload_quota(settings, redis_client)
-    mcp = _mcp_catalog(settings, closers)
+    mcp = _mcp_catalog(settings, closers, discover=drives_runs)
     graphs = build_all(settings, corpora=corpora, quota=quota, mcp=mcp, **compile_kwargs)
 
-    runs = RunManager(
-        bus=bus, db=db, limiter=limiter, settings=settings, graphs=graphs, tracing=tracing
+    queue, runs, worker = await _runs(
+        settings,
+        role,
+        redis_client=redis_client,
+        bus=bus,
+        db=db,
+        limiter=limiter,
+        graphs=graphs,
+        mcp=mcp,
+        tracing=tracing,
+        drives_runs=drives_runs,
     )
-    await runs.start_listener()
 
     keys = KeyStore(db) if db is not None else None
-    if keys is not None:
-        await _seed_bootstrap_key(keys, db, settings)
-
-    _start_seeding(settings, db, closers)
+    if role == "api":
+        await _api_only(settings, db, keys, closers)
 
     return AgentRuntime(
         settings=settings,
@@ -196,11 +251,75 @@ async def create_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> Agen
         corpora=corpora,
         quota=quota,
         mcp=mcp,
+        queue=queue,
+        worker=worker,
+        role=role,
         redis=redis_client,
         store=store,
         checkpointer=checkpointer,
         _closers=closers,
     )
+
+
+def _check_role(settings: Settings, role: Role) -> None:
+    if role == "worker" and not settings.redis_dsn:
+        raise RuntimeError(
+            "The worker needs REDIS_URL: it takes runs from the queue the API "
+            "writes to. Without Redis, the API runs its own runs."
+        )
+
+
+async def _api_only(
+    settings: Settings, db: Database | None, keys: KeyStore | None, closers: list[Any]
+) -> None:
+    """The bootstrap key and the seeded corpus: once, by the API, not per worker."""
+    if keys is not None:
+        await _seed_bootstrap_key(keys, db, settings)
+    _start_seeding(settings, db, closers)
+
+
+async def _runs(
+    settings: Settings,
+    role: Role,
+    *,
+    redis_client: Any,
+    bus: EventBus,
+    db: Database | None,
+    limiter: Limiter | None,
+    graphs: dict[str, Graph],
+    mcp: McpCatalog,
+    tracing: Tracing,
+    drives_runs: bool,
+) -> tuple[RunQueue, RunManager, RunWorker | None]:
+    """The queue, the API's run manager and, if this process drives runs, its worker."""
+    queue: RunQueue = RedisRunQueue(redis_client) if redis_client else MemoryRunQueue()
+    await queue.ensure()  # the group exists before the first run is queued
+    runs = RunManager(
+        bus=bus,
+        db=db,
+        limiter=limiter,
+        settings=settings,
+        graphs=graphs,
+        queue=queue,
+        tracing=tracing,
+    )
+    worker = None
+    if drives_runs:
+        worker = RunWorker(
+            queue=queue,
+            bus=bus,
+            db=db,
+            limiter=limiter,
+            settings=settings,
+            graphs=graphs,
+            tracing=tracing,
+            status=lambda: {"mcp": mcp.status()},
+            alive_file=ALIVE_FILE if role == "worker" else None,
+            drain=role == "worker",
+        )
+        await worker.start()
+
+    return queue, runs, worker
 
 
 def _upload_quota(settings: Settings, redis_client: Any) -> UploadQuota:
@@ -209,13 +328,15 @@ def _upload_quota(settings: Settings, redis_client: Any) -> UploadQuota:
     return MemoryUploadQuota(settings.uploads)
 
 
-def _mcp_catalog(settings: Settings, closers: list[Any]) -> McpCatalog:
+def _mcp_catalog(settings: Settings, closers: list[Any], *, discover: bool) -> McpCatalog:
     """Started at once and discovering in the background: a server that is down
     never holds up boot (T7). The graphs read it per run, so tools found later
-    are offered from then on."""
+    are offered from then on. Only a process that drives runs discovers; the
+    API's catalog stays empty and ``/readyz`` reports what the workers see."""
     mcp = McpCatalog(settings.mcp)
-    mcp.start()
-    closers.append(mcp.aclose)
+    if discover:
+        mcp.start()
+        closers.append(mcp.aclose)
     return mcp
 
 
@@ -351,20 +472,30 @@ async def _seed_bootstrap_key(keys: KeyStore, db: Database | None, settings: Set
     )
 
 
-async def start_runtime(settings: Settings, *, tracing: Tracing = NOOP) -> AgentRuntime:
+async def start_runtime(
+    settings: Settings, *, tracing: Tracing = NOOP, role: Role = "api"
+) -> AgentRuntime:
     async with asyncio.timeout(STARTUP_TIMEOUT_S):
-        runtime = await create_runtime(settings, tracing=tracing)
+        runtime = await create_runtime(settings, tracing=tracing, role=role)
     log.info(
         "agent runtime ready",
-        extra={"agents": sorted(runtime.graphs), "model": settings.model},
+        extra={
+            "agents": sorted(runtime.graphs),
+            "model": settings.model,
+            "role": role,
+            "drives_runs": runtime.worker is not None,
+        },
     )
     return runtime
 
 
 async def stop_runtime(runtime: AgentRuntime) -> None:
-    """Cancel runs in flight and close pools. Bounded, so shutdown cannot hang."""
+    """Drain this process's runs, if it drives any, and close pools. Bounded,
+    so shutdown cannot hang."""
+    # A worker first gives its runs QUEUE__DRAIN_S to end.
+    drain = runtime.worker.drain_s if runtime.worker is not None else 0
     with contextlib.suppress(Exception):
-        async with asyncio.timeout(SHUTDOWN_TIMEOUT_S):
+        async with asyncio.timeout(SHUTDOWN_TIMEOUT_S + drain):
             await runtime.aclose()
 
 

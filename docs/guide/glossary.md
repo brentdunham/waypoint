@@ -42,7 +42,7 @@ definition gives the general meaning first, then what it means here.
 | **Thread** | A conversation with one agent, owned by one tenant and user, made of checkpoints. |
 | **Time travel** | Reading or writing an earlier checkpoint. Writing forks a new branch. |
 | **Verifier** | The role that checks each sentence of a cited answer against its sources' quotes: research's briefings and workspace's cited replies. |
-| **Worker** | Two meanings: a gunicorn process serving requests, or a research `investigate` node instance answering one question. The text says which. |
+| **Worker** | Three meanings: a run worker (`python -m waypoint.worker`, see Worker (run) under Platform), a gunicorn process serving requests, or a research `investigate` node instance answering one question. The text says which. |
 | **Global corpus** | A public corpus every tenant can select: published by an admin (`POST /corpora/{id}/visibility`) or seeded at boot (`waypoint-docs`). |
 | **MCP** | Model Context Protocol: how Workspace reaches external tool servers (`MCP__SERVERS`). A key needs `tools:<server>` to use a server's tools. |
 | **Tool approval** | Workspace stopping before a tool call that could change something, until a person allows or declines it (`approve_tools`, an `interrupt()`). A declined call is never made. |
@@ -56,18 +56,24 @@ definition gives the general meaning first, then what it means here.
 
 | Term | Definition |
 |---|---|
+| **Ack** | A worker telling the run queue a run is done with (`XACK`, then `XDEL`), however it ended. Until then the run is in the consumer group's pending list. |
 | **API key** | `ak_<key_id>.<secret>`. Only its SHA-256 is stored. Resolves to a principal. |
+| **Consumer group** | A Redis Streams group (`workers` on `runs:queue`) that gives each queued run to exactly one of its readers. Each worker process is one consumer. |
+| **Drain** | What a worker does on SIGTERM: take no new runs, give those in flight `QUEUE__DRAIN_S` to end, then cancel the rest. |
 | **Event** | One item in a run's stream: `run.*` lifecycle, `token`, `node`, `custom`, `heartbeat`. |
 | **Event bus** | Where run events are written and read: Redis Streams in production, in memory without Redis. |
 | **`Last-Event-ID`** | The SSE header a reconnecting client sends so the server resumes after that event. Equal to the Redis Stream id here. |
-| **Lease** | How long a concurrency slot lives without being released: run timeout + 30 s. |
+| **Lease** | How long a concurrency slot lives without being released: run timeout + 30 s, restarted when a worker starts the run. |
+| **Heartbeat (worker)** | A worker's `worker:<name>` key in Redis, rewritten every `QUEUE__HEARTBEAT_S` with a TTL of three beats. `/readyz` counts live workers from these. |
 | **Principal** | Who is calling: tenant, user, key id and scopes. |
 | **Problem (RFC 9457)** | The error body format: `type` slug, title, status, detail, request id. |
+| **Run queue** | The Redis Stream `runs:queue`. The API adds a job for each run it accepts; workers take jobs off it through a consumer group. In memory, inside the API process, without Redis. |
 | **Scope** | A permission on an API key: `threads:read`, `threads:write`, `agents:run`, `keys:admin`, `tenant:admin` (other users' threads in the tenant), or `*`. |
 | **SSE** | Server-Sent Events: a long HTTP response of `id`/`event`/`data` frames. |
 | **Tenant** | The customer organisation a group of users belongs to, and the outer unit of isolation: threads, memory, cache entries and limits are per tenant. A label on each API key (`tenant_id`), not a managed entity. See [6.2](06-security-and-operations.md#62-tenant-isolation). |
 | **Terminal event** | `run.completed`, `run.failed`, `run.cancelled` or `run.interrupted`. A stream that closes without one was dropped. |
 | **Token bucket** | A rate limit that refills continuously up to a capacity; allows short bursts, enforces an average. |
+| **Worker (run)** | A `python -m waypoint.worker` process: takes runs off the run queue and drives their graphs, up to `QUEUE__CONCURRENCY` at once. Not a gunicorn worker (an API process) and not a research worker (a `Send` branch). |
 
 ## Evaluation
 

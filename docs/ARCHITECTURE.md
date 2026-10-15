@@ -12,14 +12,19 @@ failure it prevents.
 ```
 browser ──► nginx ──► gunicorn (N workers, UvicornWorker)
                           │
-                          ├─ FastAPI, async handlers, one event loop
-                          │  per worker; runs are tasks on it
+                          ├─ FastAPI, async handlers, one event loop per
+                          │  process; admits runs and queues them
                           │
                           ├──────────────────────────────┐
                           ▼                              ▼
                     Postgres                          Redis
-             checkpoints, long-term store,     run event streams, cancel
-             threads, api_keys, run_audit      pub/sub, limits, node cache
+             checkpoints, long-term store,     run queue, run event streams,
+             threads, api_keys, run_audit      cancels, limits, node cache
+                          ▲                              ▲
+                          └───────────┬──────────────────┘
+                                      │
+                    worker (python -m waypoint.worker, N replicas)
+                    takes runs off the queue and drives the graphs
 ```
 
 ## 1. One event loop per process, owned by the server
@@ -30,9 +35,11 @@ A psycopg pool, an `AsyncPostgresSaver`, a Redis connection and a running
 graph all bind to the event loop they were created on. So everything is
 created on one loop and stays there: the server's. FastAPI's lifespan builds
 the runtime (`start_runtime`) before the first request, every handler is
-`async def` and awaits it directly, and every run is an `asyncio.Task` on the
-same loop. Shutdown cancels runs in flight and closes the pools, bounded at
-20 seconds (`stop_runtime`); gunicorn's graceful timeout is 30.
+`async def` and awaits it directly. With Redis, the API process does not run
+graphs at all: the worker process does (§2a), with the same rule, one loop
+built by `start_runtime` and everything on it. Shutdown closes the pools,
+bounded at 20 seconds (`stop_runtime`), plus `QUEUE__DRAIN_S` in a worker;
+gunicorn's graceful timeout is 30.
 
 Until 2026-10 this was Flask, which is WSGI: `flask[async]` runs each
 `async def` view in a fresh event loop, which breaks every loop-bound object
@@ -47,8 +54,8 @@ that still carries `X-Request-ID`. Not Starlette's `BaseHTTPMiddleware`: it
 runs the endpoint in a separate task, which loses the log ContextVar bound
 here and interferes with streaming responses.
 
-Keep worker counts low (2 is the default). Runs are I/O bound; concurrency
-comes from the loop, not from forking.
+Keep worker counts low (2 is the default). Requests and event streams are I/O
+bound; concurrency comes from the loop, not from forking.
 
 ## 2. A run is not an HTTP request
 
@@ -58,10 +65,10 @@ The naive design ties a graph run to the POST that started it. Then a
 four-minute run needs a four-minute request, a dropped connection loses the
 work, a proxy timeout kills it, and a second tab cannot watch.
 
-Instead: `POST` starts an `asyncio.Task` on the worker's loop and returns `202`
-with a `run_id`. The task writes every event to a **Redis Stream**. Clients
-attach separately over SSE — from any worker, any number of times, after any
-reconnect.
+Instead: `POST` admits the run, puts it on the run queue (§2a) and returns
+`202` with a `run_id`. The worker that drives it writes every event to a
+**Redis Stream**. Clients attach separately over SSE, from any API process,
+any number of times, after any reconnect.
 
 Redis Streams rather than pub/sub, specifically because `XADD` gives every
 event a monotonic id and `XREAD` can start from any id. That is exactly the
@@ -86,9 +93,52 @@ Two rules keep a *quiet* run's stream alive:
 
 `tests/test_stream_resilience.py` covers both.
 
-Cancellation crosses workers over pub/sub, which is the right tool there:
-`POST /runs/<id>/cancel` publishes the id, every worker's listener checks its
-local task table, and whichever one owns it calls `.cancel()`.
+Cancellation crosses processes two ways. `POST /runs/<id>/cancel` sets a flag
+(`run:<id>:cancel`) and publishes the id. Every worker's listener checks its
+local task table, and whichever one is driving the run inside its graph calls
+`.cancel()`. A run still on the queue, or being set up, finds the flag
+instead: a worker checks it when it takes the run and again as the run enters
+its graph, and the flag is set before the message is sent, so no cancel falls
+between the two.
+
+## 2a. The API queues runs; workers drive them
+
+`src/waypoint/infra/queue.py`, `src/waypoint/infra/runs.py` (`RunWorker`),
+`src/waypoint/worker.py`; design in [design/queue.md](design/queue.md).
+
+A run used to be a task on the loop of whichever API process took the POST.
+A deploy then cancelled every run in flight, and a process that died left its
+runs `running` forever. Now the API only admits: it checks the agent, takes
+the tenant's concurrency slot (so a `429` is still a `429` from the POST),
+writes the run's meta, audit row and `run.started`, and `XADD`s a job to the
+stream `runs:queue`. The job carries everything a worker needs: input or
+resume value, durability, models, scopes, the trace id the API chose, the
+request span to link to, and the slot's member id.
+
+`python -m waypoint.worker` is the same image with no HTTP server. Each
+process reads the consumer group `workers` (`XREADGROUP`, one entry at a
+time, up to `QUEUE__CONCURRENCY` runs at once), drives each run exactly as
+the API used to, and `XACK`s and `XDEL`s the entry when the run ends, however
+it ends. It gives the slot back by member. It alone discovers MCP tools,
+because it alone calls them. Every `QUEUE__HEARTBEAT_S` it writes
+`worker:<name>` with a TTL, and `/readyz` on the API counts those
+(`workers`, `queue`); with none, runs wait in the queue and readiness says
+why, without taking the API out of rotation. On SIGTERM a worker takes no new
+runs and gives those in flight `QUEUE__DRAIN_S` to end.
+
+The run's trace stays one trace even though two processes touch it: the API
+picks the trace id (`new_trace_id`) so the `202` and `run.started` carry it,
+and the worker's run span takes that id through a custom id generator, so it
+is still a root span linked to the request (O8).
+
+Without Redis there is nothing to share a queue through, so the API process
+runs a worker of its own on an in-memory queue (`MemoryRunQueue`). That keeps
+`python -m waypoint` and the unit tests self-contained, through the same
+code.
+
+Not yet: a run whose worker dies stays in the group's pending list and is not
+picked up again. Reclaiming it, and resuming it from its last checkpoint, is
+phase 2 of the design.
 
 ## 3. Interrupts are the point
 
@@ -262,7 +312,9 @@ select_corpus -> recall_memories -> model -> [approve_tools] -> tools -> model
   catalog of each `MCP__SERVERS` entry's tools, fetched through
   `langchain.mcp`'s `MCPAdapter` in the background at boot and every
   `MCP__REFRESH_S`; a server that is down has no tools until it answers, and
-  `/readyz` shows it as `mcp:<name>: unavailable` without failing. A run is
+  `/readyz` shows it as `mcp:<name>: unavailable` without failing. The worker
+process discovers and calls the tools (§2a); the API reports what its workers
+see. A run is
   offered the tools of servers whose `tools:<server>` scope its key holds
   (the scopes travel in the run's context). The model is bound per tool set;
   with no MCP tools it is the same binding as before, so eval replay keys did
@@ -328,7 +380,9 @@ The semaphore is a sorted set scored by Redis server time (not worker clocks),
 with a lease: entries older than the lease are swept on every acquire, so a
 worker that dies mid-run cannot leak a slot forever. And the slot is taken
 *before* the POST returns, so an over-quota caller gets a clean `429` instead
-of a run that mysteriously fails later.
+of a run that mysteriously fails later. The API takes it; the worker that
+drives the run restarts its lease when the run starts (time in the queue does
+not count) and gives it back by member when it ends.
 
 ## 8. Postgres carries five things on one pool
 
@@ -452,10 +506,10 @@ with `--control-socket /tmp/gunicorn.ctl` instead.
 
 ## What is deliberately missing
 
-* **A queue.** Runs execute in the worker that accepted them. That is right up
-  to the point where you want work to survive a pod eviction — then put the
-  run in a real queue and have workers pick it up. The bus and the audit table
-  already give you the observability half of that.
+* **Recovering a dead worker's runs.** Runs are queued and driven by workers
+  (§2a), but a worker that dies mid-run leaves its runs unfinished. Phase 2 of
+  [design/queue.md](design/queue.md) reclaims them with `XAUTOCLAIM` and
+  resumes them from their last checkpoint.
 * **Auth beyond API keys.** Swap `KeyStore.resolve` for JWT verification; the
   `Principal` everything else depends on does not change.
 * **Per-tenant model routing.** Models are chosen per agent, role and run

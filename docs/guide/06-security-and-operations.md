@@ -196,16 +196,20 @@ stream block that is not at least 1 s shorter than the Redis socket timeout is
 refused; an
 empty `${VAR:-}` from compose counts as unset rather than as an empty key.
 
-**Shutdown** cancels runs in flight and closes pools within 20 s;
-gunicorn's graceful timeout is 30 s. A run cancelled by shutdown ends in
-`cancelled` and releases its slot.
+**Shutdown.** The api drives no runs (with Redis), so stopping it closes
+pools within 20 s and touches no run; gunicorn's graceful timeout is 30 s. A
+worker on SIGTERM takes no new runs, gives those in flight `QUEUE__DRAIN_S`
+(20 s) to end, then cancels the rest, inside compose's 30 s
+`stop_grace_period`. A run cancelled by shutdown ends in `cancelled` and
+releases its slot.
 
 ## 6.7 Health
 
 | Endpoint | Checks | Use |
 |---|---|---|
 | `GET /api/v1/healthz` | nothing | Liveness; the container healthcheck |
-| `GET /api/v1/readyz` | Postgres and Redis ping, graphs compiled | Readiness; `503` when a configured backend is down |
+| `GET /api/v1/readyz` | Postgres and Redis ping, graphs compiled; live workers and the queue | Readiness; `503` when a configured backend is down. `workers: unavailable` does not fail it |
+| `python -m waypoint.worker --check` | the worker's heartbeat file is under 30 s old | The worker container's healthcheck |
 
 `off` in a readiness check means not configured; `down` means configured and
 unreachable. Only `down` fails readiness, so a development instance with no
@@ -226,7 +230,10 @@ survive a restart) is what the integration tier tests.
 |---|---|---|
 | Client connection drops | None on the run | Client reconnects with `Last-Event-ID` |
 | SSE reader errors | Response ends without a terminal event | Client treats it as a drop and reconnects |
-| Worker restarts mid-run | That run's task dies and its record is left as `running` | Slot lease expires; checkpoint history is intact up to the last step (no queue: [decision 11](07-decisions.md#d11-no-job-queue-yet)) |
+| api restarts or is deployed | None on runs: workers drive them | None needed |
+| Worker stopped (deploy, restart) | Runs in flight get `QUEUE__DRAIN_S` to end, then end `cancelled` | Start them again; [design/queue.md](../design/queue.md) phase 2 hands them to another worker instead |
+| Worker dies mid-run | That run's task dies; its record is left as `running` and its queue entry pending | Slot lease expires; checkpoint history is intact up to the last step. Reclaiming the run is phase 2 of the queue design |
+| No worker running | Runs are accepted and wait in the queue; `/readyz` says `workers: unavailable` | Start a worker (`docker compose up -d worker`) |
 | Run exceeds 300 s | `run.failed` with type `timeout` | Raise `LIMITS__RUN_TIMEOUT_S` or lower research bounds |
 | Model returns malformed structured output | Retried up to 3 times by the node | Verify step degrades to the unverified draft |
 | Web search rejected by the provider | Run fails with the fix in the message | Enable web search for the org, or `RESEARCH__WEB_SEARCH=false` |

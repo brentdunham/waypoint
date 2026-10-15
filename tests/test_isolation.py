@@ -6,8 +6,6 @@ the cache key at all.
 """
 
 import asyncio
-import contextlib
-from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -21,6 +19,7 @@ from tests.conftest import build_settings, new_thread, run_and_wait
 from waypoint.agents.context import AgentContext
 from waypoint.agents.graphs import chat, research
 from waypoint.infra.bus import MemoryBus
+from waypoint.infra.queue import MemoryRunQueue
 from waypoint.infra.runs import RunManager
 from waypoint.infra.security import Principal
 
@@ -94,13 +93,12 @@ class _CountingLimiter:
     def __init__(self) -> None:
         self.held = 0
 
-    @contextlib.asynccontextmanager
-    async def slot(self, tenant_id: str) -> AsyncIterator[str]:
+    async def acquire(self, tenant_id: str) -> str:
         self.held += 1
-        try:
-            yield "member"
-        finally:
-            self.held -= 1
+        return "member"
+
+    async def release(self, tenant_id: str, member: str) -> None:
+        self.held -= 1
 
 
 class _BrokenBus(MemoryBus):
@@ -118,6 +116,7 @@ def test_failed_start_gives_the_concurrency_slot_back() -> None:
             limiter=limiter,  # type: ignore[arg-type]
             settings=build_settings(),
             graphs={"chat": object()},  # type: ignore[dict-item]
+            queue=MemoryRunQueue(),
         )
         principal = Principal(tenant_id="acme", user_id="u", key_id="k", scopes=frozenset("*"))
         with pytest.raises(ConnectionError):

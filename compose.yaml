@@ -1,59 +1,88 @@
 name: waypoint
 
+# One environment for the api and the worker, so the two cannot drift: the
+# worker builds the same graphs, with the same models, keys and limits.
+x-app-env: &app-env
+  ENV: production
+  JSON_LOGS: "true"
+  DATABASE_URL: postgresql://waypoint:waypoint@postgres:5432/waypoint
+  REDIS_URL: redis://redis:6379/0
+  SECRET_KEY: ${SECRET_KEY:-change-me}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
+  MODEL: ${MODEL:-claude-sonnet-4-5}
+  MODELS__RESEARCH__SEARCHER: ${MODELS__RESEARCH__SEARCHER:-}
+  MODELS__RESEARCH__VERIFIER: ${MODELS__RESEARCH__VERIFIER:-}
+  MODELS__WORKSPACE__VERIFIER: ${MODELS__WORKSPACE__VERIFIER:-}
+  FAKE_MODEL: ${FAKE_MODEL:-false}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+  LIMITS__RPM: ${LIMITS__RPM:-60}
+  LIMITS__CONCURRENT_RUNS: ${LIMITS__CONCURRENT_RUNS:-4}
+  # Off by default on a laptop; compose.prod.yaml turns budgets on and
+  # requires the amounts. Set both amounts to try them locally.
+  BUDGET__ENABLED: ${BUDGET__ENABLED:-false}
+  BUDGET__TENANT_USD_PER_DAY: ${BUDGET__TENANT_USD_PER_DAY:-}
+  BUDGET__GLOBAL_USD_PER_DAY: ${BUDGET__GLOBAL_USD_PER_DAY:-}
+  BUDGET__TENANTS: ${BUDGET__TENANTS:-}
+  # Tracing is off unless an OTLP/HTTP endpoint is given (CONFIGURATION.md).
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+  TRACING__CONTENT: ${TRACING__CONTENT:-false}
+  TRACING__PANEL: ${TRACING__PANEL:-false}
+  TRACING__QUERY_URL: ${TRACING__QUERY_URL:-}
+  EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-}
+  EMBEDDINGS_DIMS: ${EMBEDDINGS_DIMS:-1536}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  RAG__EMBEDDINGS_MODEL: ${RAG__EMBEDDINGS_MODEL:-}
+  RAG__EMBEDDINGS_DIMS: ${RAG__EMBEDDINGS_DIMS:-1024}
+  VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+  RAG__RERANK: ${RAG__RERANK:-true}
+  RAG__SEED_DIR: ${RAG__SEED_DIR:-}
+  RAG__SEED_CORPUS: ${RAG__SEED_CORPUS:-waypoint-docs}
+  RESEARCH__WEB_SEARCH: ${RESEARCH__WEB_SEARCH:-true}
+  RESEARCH__MAX_SEARCHES: ${RESEARCH__MAX_SEARCHES:-2}
+  RESEARCH__MAX_ROUNDS: ${RESEARCH__MAX_ROUNDS:-1}
+  RESEARCH__MAX_FOLLOW_UPS: ${RESEARCH__MAX_FOLLOW_UPS:-3}
+  RESEARCH__VERIFY_CITATIONS: ${RESEARCH__VERIFY_CITATIONS:-true}
+  WORKSPACE__VERIFY_CITATIONS: ${WORKSPACE__VERIFY_CITATIONS:-true}
+  UPLOADS__MAX_CORPORA: ${UPLOADS__MAX_CORPORA:-3}
+  UPLOADS__FILES_PER_DAY: ${UPLOADS__FILES_PER_DAY:-10}
+  UPLOADS__MB_PER_DAY: ${UPLOADS__MB_PER_DAY:-5.0}
+  UPLOADS__CHUNKS_PER_DAY: ${UPLOADS__CHUNKS_PER_DAY:-2000}
+  MCP__SERVERS: ${MCP__SERVERS:-}
+  MCP__MAX_CALLS_PER_RUN: ${MCP__MAX_CALLS_PER_RUN:-8}
+  MCP__REFRESH_S: ${MCP__REFRESH_S:-300.0}
+  # The worker's (docs/design/queue.md); read by the api only when it has no Redis.
+  QUEUE__CONCURRENCY: ${QUEUE__CONCURRENCY:-8}
+  QUEUE__DRAIN_S: ${QUEUE__DRAIN_S:-20}
+
 services:
   api:
     build: .
-    environment:
-      ENV: production
-      JSON_LOGS: "true"
-      DATABASE_URL: postgresql://waypoint:waypoint@postgres:5432/waypoint
-      REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY:-change-me}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
-      MODEL: ${MODEL:-claude-sonnet-4-5}
-      MODELS__RESEARCH__SEARCHER: ${MODELS__RESEARCH__SEARCHER:-}
-      MODELS__RESEARCH__VERIFIER: ${MODELS__RESEARCH__VERIFIER:-}
-      MODELS__WORKSPACE__VERIFIER: ${MODELS__WORKSPACE__VERIFIER:-}
-      FAKE_MODEL: ${FAKE_MODEL:-false}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
-      LIMITS__RPM: ${LIMITS__RPM:-60}
-      LIMITS__CONCURRENT_RUNS: ${LIMITS__CONCURRENT_RUNS:-4}
-      # Off by default on a laptop; compose.prod.yaml turns budgets on and
-      # requires the amounts. Set both amounts to try them locally.
-      BUDGET__ENABLED: ${BUDGET__ENABLED:-false}
-      BUDGET__TENANT_USD_PER_DAY: ${BUDGET__TENANT_USD_PER_DAY:-}
-      BUDGET__GLOBAL_USD_PER_DAY: ${BUDGET__GLOBAL_USD_PER_DAY:-}
-      BUDGET__TENANTS: ${BUDGET__TENANTS:-}
-      # Tracing is off unless an OTLP/HTTP endpoint is given (CONFIGURATION.md).
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
-      TRACING__CONTENT: ${TRACING__CONTENT:-false}
-      TRACING__PANEL: ${TRACING__PANEL:-false}
-      TRACING__QUERY_URL: ${TRACING__QUERY_URL:-}
-      EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-}
-      EMBEDDINGS_DIMS: ${EMBEDDINGS_DIMS:-1536}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      RAG__EMBEDDINGS_MODEL: ${RAG__EMBEDDINGS_MODEL:-}
-      RAG__EMBEDDINGS_DIMS: ${RAG__EMBEDDINGS_DIMS:-1024}
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
-      RAG__RERANK: ${RAG__RERANK:-true}
-      RAG__SEED_DIR: ${RAG__SEED_DIR:-}
-      RAG__SEED_CORPUS: ${RAG__SEED_CORPUS:-waypoint-docs}
-      RESEARCH__WEB_SEARCH: ${RESEARCH__WEB_SEARCH:-true}
-      RESEARCH__MAX_SEARCHES: ${RESEARCH__MAX_SEARCHES:-2}
-      RESEARCH__MAX_ROUNDS: ${RESEARCH__MAX_ROUNDS:-1}
-      RESEARCH__MAX_FOLLOW_UPS: ${RESEARCH__MAX_FOLLOW_UPS:-3}
-      RESEARCH__VERIFY_CITATIONS: ${RESEARCH__VERIFY_CITATIONS:-true}
-      WORKSPACE__VERIFY_CITATIONS: ${WORKSPACE__VERIFY_CITATIONS:-true}
-      UPLOADS__MAX_CORPORA: ${UPLOADS__MAX_CORPORA:-3}
-      UPLOADS__FILES_PER_DAY: ${UPLOADS__FILES_PER_DAY:-10}
-      UPLOADS__MB_PER_DAY: ${UPLOADS__MB_PER_DAY:-5.0}
-      UPLOADS__CHUNKS_PER_DAY: ${UPLOADS__CHUNKS_PER_DAY:-2000}
-      MCP__SERVERS: ${MCP__SERVERS:-}
-      MCP__MAX_CALLS_PER_RUN: ${MCP__MAX_CALLS_PER_RUN:-8}
-      MCP__REFRESH_S: ${MCP__REFRESH_S:-300.0}
+    environment: *app-env
     ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Drives runs (docs/design/queue.md): takes them off the Redis queue the api
+  # writes to. The api's image, another command, no port. Two replicas, so a
+  # worker that dies leaves one to carry on. SIGTERM drains: no new runs, and
+  # QUEUE__DRAIN_S for those in flight, inside the 30 s grace period.
+  worker:
+    build: .
+    command: ["python", "-m", "waypoint.worker"]
+    environment: *app-env
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-m", "waypoint.worker", "--check"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

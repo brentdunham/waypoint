@@ -1,6 +1,7 @@
 # Infrastructure only -- run the API and Vite on the host against these.
 #   docker compose -f compose.dev.yaml up -d
 #   uv run python -m waypoint          # :8000
+#   uv run python -m waypoint.worker   # drives runs; with Redis up, the API only queues them
 #   cd web && npm run dev         # :5173
 # Traces: set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 for the API,
 # then open http://localhost:16686 (service "waypoint").

@@ -298,6 +298,35 @@ class WorkspaceSettings(BaseModel):
     )
 
 
+class QueueSettings(BaseModel):
+    """The run queue and its workers (docs/design/queue.md).
+
+    With Redis, the API only enqueues runs and ``python -m waypoint.worker``
+    executes them; these settings are the worker's. Without Redis the API
+    process drives its own runs from an in-memory queue.
+    """
+
+    concurrency: int = Field(
+        default=8,
+        ge=1,
+        le=256,
+        description="Runs one worker process drives at once.",
+    )
+    drain_s: float = Field(
+        default=20.0,
+        ge=0,
+        description=(
+            "On shutdown, how long a worker waits for its runs to end before it "
+            "stops the rest. Keep it under the container's stop grace period (30 s)."
+        ),
+    )
+    heartbeat_s: float = Field(
+        default=10.0,
+        gt=0,
+        description="How often a worker reports itself alive (Redis and its liveness file).",
+    )
+
+
 class UploadSettings(BaseModel):
     """What a tenant may add to the server (docs/design/tools.md, T13).
 
@@ -623,6 +652,7 @@ class Settings(BaseSettings):
     evals: EvalSettings = Field(default_factory=EvalSettings)
     rag: RagSettings = Field(default_factory=RagSettings)
     uploads: UploadSettings = Field(default_factory=UploadSettings)
+    queue: QueueSettings = Field(default_factory=QueueSettings)
 
     # --- tracing -------------------------------------------------------------
     otel_exporter_otlp_endpoint: str | None = Field(

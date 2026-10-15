@@ -215,6 +215,18 @@ class Limiter:
     @asynccontextmanager
     async def slot(self, tenant_id: str) -> AsyncIterator[str]:
         """Hold one of the tenant's concurrent-run slots for the duration."""
+        member = await self.acquire(tenant_id)
+        try:
+            yield member
+        finally:
+            await self.release(tenant_id, member)
+
+    async def acquire(self, tenant_id: str) -> str:
+        """Take a concurrent-run slot and return its member id, or raise.
+
+        The API takes the slot when it accepts a run; the worker that drives
+        the run gives it back by member (docs/design/queue.md, Q1).
+        """
         key = f"rl:{{{tenant_id}}}:slots"
         member = uuid.uuid4().hex
         now = await self._now()
@@ -224,10 +236,15 @@ class Limiter:
                 f"Tenant already has {self._concurrent} runs in flight.",
                 concurrent_limit=self._concurrent,
             )
-        try:
-            yield member
-        finally:
-            await self._redis.zrem(key, member)
+        return member
+
+    async def refresh(self, tenant_id: str, member: str) -> None:
+        """Restart a held slot's lease, as a worker starts the run (XX: never re-adds)."""
+        now = await self._now()
+        await self._redis.zadd(f"rl:{{{tenant_id}}}:slots", {member: now}, xx=True)
+
+    async def release(self, tenant_id: str, member: str) -> None:
+        await self._redis.zrem(f"rl:{{{tenant_id}}}:slots", member)
 
     async def in_flight(self, tenant_id: str) -> int:
         now = await self._now()

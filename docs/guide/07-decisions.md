@@ -10,7 +10,7 @@ decision came from a measured failure, the entry says so.
 [D6](#d6-identity-in-context-ownership-in-our-own-table) ·
 [D7](#d7-one-postgres-pool-pgvector-from-day-one) · [D8](#d8-a-polled-advisory-lock-for-migrations) ·
 [D9](#d9-limits-as-lua-scripts-slot-taken-before-202) · [D10](#d10-a-redis-node-cache-with-identity-in-the-key) ·
-[D11](#d11-no-job-queue-yet)
+[D11](#d11-no-job-queue-yet) (superseded) · [D30](#d30-a-run-queue-and-a-worker-service-that-drives-runs)
 - **Agents**: [D12](#d12-a-model-per-role-resolved-once-per-run) ·
 [D13](#d13-a-small-model-for-the-searcher) · [D14](#d14-constrained-structured-output-retried-on-parse-errors) ·
 [D15](#d15-sources-from-citation-metadata-never-from-prose) ·
@@ -24,7 +24,9 @@ decision came from a measured failure, the entry says so.
 [D24](#d24-vector-search-then-a-reranker-nothing-else-earned-its-place)
 - **Workspace**: [D25](#d25-workspace-is-a-separate-agent-from-chat) ·
 [D26](#d26-workspace-shares-chats-memory) ·
-[D27](#d27-cited-workspace-replies-go-through-the-research-verifier)
+[D27](#d27-cited-workspace-replies-go-through-the-research-verifier) ·
+[D28](#d28-anything-that-could-change-something-waits-for-a-person) ·
+[D29](#d29-mcp-through-langchainmcp-calls-through-our-own-tool)
 
 ---
 
@@ -65,8 +67,9 @@ attach to an event stream separately (chapter [2](02-runs.md)).
 visibility to one connection.
 
 **Consequences.** Any number of watchers, from any worker, after any
-reconnect. The run executes on the worker that accepted it, which is what
-[D11](#d11-no-job-queue-yet) is about.
+reconnect. The run executed on the process that accepted it, which is what
+[D11](#d11-no-job-queue-yet) was about; since [D30](#d30-a-run-queue-and-a-worker-service-that-drives-runs) a worker process
+drives it.
 
 ### D3. Redis Streams for events, pub/sub for cancel
 
@@ -173,6 +176,8 @@ across. A test compiles both graphs with a cache to enforce it.
 
 ### D11. No job queue (yet)
 
+*Superseded by [D30](#d30-a-run-queue-and-a-worker-service-that-drives-runs) on 2026-10-15.*
+
 **Context.** Runs execute on the worker that accepted them.
 
 **Decision.** No queue for now.
@@ -180,6 +185,35 @@ across. A test compiles both graphs with a cache to enforce it.
 **Consequences.** Simple, and correct up to the point where work must survive
 the loss of a worker. Then the run goes on a queue and workers pick it up; the
 event bus and audit table already provide the observability half of that.
+
+### D30. A run queue, and a worker service that drives runs
+
+**Context.** Runs had become long and costly enough (research with
+verification, Workspace with tools and approval) that losing one to a deploy
+hurt: every deploy cancelled the runs in flight, and a process that died left
+its runs `running` for good. ROADMAP item 6; design in
+[design/queue.md](../design/queue.md).
+
+**Decision.** The API only admits runs and puts them on a Redis Streams queue
+(`runs:queue`). A separate service, `python -m waypoint.worker`, two replicas
+on the demo host, takes them off through a consumer group and drives them.
+Decided with Brent on 2026-10-15; the first proposal ran consumers inside the
+API processes.
+
+**Alternatives.** Consumers in the API processes, with a switch to split them
+later: one container fewer, but every API restart would move runs. A
+separate broker (RabbitMQ, a Postgres job table): another moving part, when
+Redis already holds the run's events, meta, slots and budgets, and Streams
+give claiming, pending lists and reclaiming (`XAUTOCLAIM`) as primitives.
+
+**Consequences.** API deploys no longer touch runs; workers scale on their
+own; a run cannot slow a request. One more service to run and watch
+(`/readyz` reports `workers` and `queue`), and local development with Redis
+needs a second command. Without Redis the API drives its own runs on an
+in-memory queue, so tests and a bare `python -m waypoint` still work. The
+trace id is chosen by the API and given to the worker's run span, so a run is
+still one trace. Recovering a dead worker's runs from their last checkpoint
+is the design's phase 2.
 
 ---
 

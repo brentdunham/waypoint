@@ -50,9 +50,13 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/healthz', timeout=3).status==200 else 1)"
 
-# One worker per core is wrong here: runs are I/O bound and concurrency comes
-# from each worker's event loop, not from forking. Two workers gives you rolling
-# restarts and a spare; raise it only if CPU-bound work appears.
+# The api image's default command. The worker service (compose.yaml) runs the
+# same image with `python -m waypoint.worker`; with Redis, runs execute there,
+# not in these processes (docs/design/queue.md).
+#
+# One gunicorn worker per core is wrong here: requests and event streams are
+# I/O bound and concurrency comes from each worker's event loop, not from
+# forking. Two give rolling restarts and a spare.
 #
 # No --access-logfile: waypoint.middleware logs every request once, as JSON,
 # with request id and tenant. uvicorn's own access line would duplicate it.

@@ -8,24 +8,33 @@
 # says. Here nothing is published except the web container, and that only on
 # 127.0.0.1, for the host's reverse proxy (Caddy) to reach. See docs/DEPLOY.md.
 
+# The api's and the worker's production environment (compose.yaml merges it
+# over x-app-env there). Anchors do not cross files, hence the second one.
+x-prod-env: &prod-env
+  DATABASE_URL: postgresql://waypoint:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/waypoint
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+  MODELS_ALLOWED: ${MODELS_ALLOWED:-}
+  LIMITS__RUN_TIMEOUT_S: ${LIMITS__RUN_TIMEOUT_S:-300}
+  # A public demo spends real money: no deploy without daily caps.
+  BUDGET__ENABLED: "true"
+  BUDGET__TENANT_USD_PER_DAY: ${BUDGET__TENANT_USD_PER_DAY:?set BUDGET__TENANT_USD_PER_DAY in .env}
+  BUDGET__GLOBAL_USD_PER_DAY: ${BUDGET__GLOBAL_USD_PER_DAY:?set BUDGET__GLOBAL_USD_PER_DAY in .env}
+  BUDGET__TENANTS: ${BUDGET__TENANTS:-}
+  # Traces to the jaeger service below (observability design, D5 to D7).
+  # TRACING__PANEL shows reviewers their own runs' timelines in the app.
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  TRACING__QUERY_URL: http://jaeger:16686
+  TRACING__PANEL: ${TRACING__PANEL:-false}
+
 services:
   api:
     ports: !reset []
-    environment:
-      DATABASE_URL: postgresql://waypoint:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/waypoint
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
-      MODELS_ALLOWED: ${MODELS_ALLOWED:-}
-      LIMITS__RUN_TIMEOUT_S: ${LIMITS__RUN_TIMEOUT_S:-300}
-      # A public demo spends real money: no deploy without daily caps.
-      BUDGET__ENABLED: "true"
-      BUDGET__TENANT_USD_PER_DAY: ${BUDGET__TENANT_USD_PER_DAY:?set BUDGET__TENANT_USD_PER_DAY in .env}
-      BUDGET__GLOBAL_USD_PER_DAY: ${BUDGET__GLOBAL_USD_PER_DAY:?set BUDGET__GLOBAL_USD_PER_DAY in .env}
-      BUDGET__TENANTS: ${BUDGET__TENANTS:-}
-      # Traces to the jaeger service below (observability design, D5 to D7).
-      # TRACING__PANEL shows reviewers their own runs' timelines in the app.
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
-      TRACING__QUERY_URL: http://jaeger:16686
-      TRACING__PANEL: ${TRACING__PANEL:-false}
+    environment: *prod-env
+    depends_on:
+      jaeger: { condition: service_started }
+
+  worker:
+    environment: *prod-env
     depends_on:
       jaeger: { condition: service_started }
 

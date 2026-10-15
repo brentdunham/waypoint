@@ -82,8 +82,8 @@ documents.
 
 ```bash
 docker compose up -d --build
-docker compose ps                                  # all healthy
-curl -s 127.0.0.1:8080/api/v1/readyz               # {"status":"ready",...}
+docker compose ps                                  # all healthy, two worker containers
+curl -s 127.0.0.1:8080/api/v1/readyz               # {"status":"ready",..."workers":"ok (2)"...}
 docker compose logs api | grep "bootstrap API key active"
 docker compose logs api | grep "seeded waypoint-docs"     # 18 indexed, ... in ~10s
 ```
@@ -216,6 +216,31 @@ curl -s -X POST $BASE/corpora/$ID/visibility -H "$ADMIN" -H 'Content-Type: appli
 To change one later, set it back to `private`, upload or delete, and publish
 again; while private it disappears from other tenants' pickers.
 
+## Workers
+
+Runs execute in the `worker` service, not in `api` (ARCHITECTURE §2a,
+[design/queue.md](design/queue.md)). The api accepts a run and puts it on a
+Redis queue; a worker takes it off and drives it. Same image as the api,
+command `python -m waypoint.worker`, no port, `WORKER_REPLICAS` (2)
+containers of `QUEUE__CONCURRENCY` (8) runs each, both set in `.env`.
+
+```bash
+docker compose ps worker                                  # two, healthy
+curl -s 127.0.0.1:8080/api/v1/readyz | jq .checks         # "workers": "ok (2)", "queue": "0 queued, 0 running"
+docker compose logs -f worker                             # run logs live here now
+docker stats --no-stream $(docker compose ps -q worker)   # about 140 MB each at rest
+```
+
+`workers: unavailable` means no worker has reported in the last 30 seconds.
+The api keeps accepting runs, which wait in the queue (`queue: 3 queued`)
+until a worker starts. `docker compose logs worker` says why it is not up.
+
+A worker that is stopped (a deploy, `docker compose restart worker`) takes no
+new runs and gives those in flight 20 seconds (`QUEUE__DRAIN_S`) to end; a
+run still going after that is cancelled. A worker that dies outright leaves
+its runs unfinished until phase 2 of the design adds recovery. Restarting or
+deploying only the api no longer touches runs at all.
+
 ## Notes server
 
 The demo MCP server (`waypoint.mcp_demo.notes`, the `notes` compose service):
@@ -230,13 +255,13 @@ With `NOTES_TOKEN` and `MCP__SERVERS` set as above:
 ```bash
 docker compose ps notes                                   # healthy
 curl -s 127.0.0.1:8080/api/v1/readyz | jq .checks         # "mcp:notes": "ok"
-docker compose logs api | grep "MCP server 'notes'"       # 4 tools (notes_search, ...)
+docker compose logs worker | grep "MCP server 'notes'"    # 4 tools (notes_search, ...)
 ```
 
-`mcp:notes: unavailable` means the api could not list the tools: a wrong
-token (the server answers 401) or the service down. The api keeps running and
-retries every `MCP__REFRESH_S` (5 minutes); `docker compose restart api` tries
-at once.
+`mcp:notes: unavailable` means the workers could not list the tools: a wrong
+token (the server answers 401) or the service down. They keep running and
+retry every `MCP__REFRESH_S` (5 minutes); `docker compose restart worker`
+tries at once.
 
 A key needs `tools:notes`. Reviewer links minted from now on have it. For
 keys minted before:
@@ -255,8 +280,8 @@ files and reads notes under it.
 | Task | Command |
 |---|---|
 | Update to `main` | `git pull && docker compose up -d --build` |
-| Logs | `docker compose logs -f api`; `journalctl -u caddy -f` |
-| Restart one service | `docker compose restart api` |
+| Logs | `docker compose logs -f api` (requests), `docker compose logs -f worker` (runs); `journalctl -u caddy -f` |
+| Restart one service | `docker compose restart api` (runs are not touched) or `docker compose restart worker` (runs in flight get 20 s to end) |
 | Re-index the docs corpus now | `docker compose exec api python -m waypoint.seed` (prints what it indexed, kept and removed) |
 | Back up Postgres | `docker compose exec -T postgres pg_dump -U waypoint waypoint \| gzip > ~/backups/waypoint-$(date +%F).sql.gz` |
 | Restore | `gunzip -c <file> \| docker compose exec -T postgres psql -U waypoint waypoint` |

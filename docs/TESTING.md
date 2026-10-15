@@ -10,8 +10,9 @@ because the cheaper one cannot catch what it catches.
 uv run pytest
 ```
 
-The app boots with the in-memory checkpointer, in-memory store and
-single-process event bus, and `FAKE_MODEL=true` swaps the LLM for
+The app boots with the in-memory checkpointer, in-memory store,
+single-process event bus and in-memory run queue (the API process drives its
+own runs, through the same worker code as production), and `FAKE_MODEL=true` swaps the LLM for
 `ScriptedChatModel`. That last part is the whole trick: **the graphs are
 testable because the model is deterministic**. No API key, no cost, no flake,
 and the assertions can be exact rather than "contains something plausible".
@@ -81,7 +82,19 @@ These exist for the things that are *only* true with real infrastructure:
   the chunk limit fails alone (`test_rag_pg.py`; the unit tier covers the
   same rules on the in-process counters in `test_uploads.py`);
 * API keys resolve, scope, revoke, and isolate tenants;
-* `readyz` reports both backends as `ok`.
+* `readyz` reports both backends as `ok`;
+* the API only queues runs and workers drive them (`test_queue.py`): with no
+  worker a run waits and `readyz` says `workers: unavailable`; two workers
+  with `QUEUE__CONCURRENCY=1` and a slowed scripted model both take runs; a
+  run cancelled while queued ends `cancelled` without its graph running, and
+  its slot comes back.
+
+With Redis the API process drives no runs, so every integration app gets a
+worker: `TestApp` starts one worker runtime (`start_runtime(role="worker")`)
+on the app's loop, with its own pools, as the separate process would have.
+`make_app(workers=0)` starts none, `workers=2` two, and `app.start_worker()`
+adds one mid-test. Tests that poke a runtime the worker uses, such as the MCP
+catalog, reach it through `app.workers`.
 
 A `clean_redis` autouse fixture flushes the scratch index before every test.
 Without it a burst test poisons the next test's rate-limit budget — which is

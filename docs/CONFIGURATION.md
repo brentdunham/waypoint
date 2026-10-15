@@ -229,10 +229,27 @@ chosen per thread, by run input (`corpus_ids`), not by a setting; retrieval uses
 | Variable | Default | Notes |
 |---|---|---|
 | `LIMITS__RPM` | `60` | Token bucket: capacity `RPM`, refill `RPM/60` per second. Allows a burst, then smooths. |
-| `LIMITS__CONCURRENT_RUNS` | `4` | Counting semaphore with a lease, so a crashed worker cannot leak a slot. Taken *before* the POST returns, so over-quota callers get a clean 429. |
+| `LIMITS__CONCURRENT_RUNS` | `4` | Counting semaphore with a lease, so a crashed worker cannot leak a slot. Taken *before* the POST returns, so over-quota callers get a clean 429; a queued run holds its slot, and the worker gives it back. |
 | `LIMITS__MAX_INPUT_CHARS` | `100000` | Checked before the model is called. |
 | `LIMITS__RECURSION_LIMIT` | `40` | LangGraph super-steps per run. The backstop against a looping agent. |
 | `LIMITS__RUN_TIMEOUT_S` | `300` | Wall clock per run. |
+
+## Run queue and workers
+
+With `REDIS_URL` set, the API only queues runs, and `python -m waypoint.worker`
+(the `worker` service in compose) drives them; see
+[design/queue.md](design/queue.md) and ARCHITECTURE §2a. These are the
+worker's settings. The worker reads every other setting too (models, keys,
+limits, MCP servers), which is why compose gives both services one
+environment. Without Redis the API drives its own runs and ignores all but
+`QUEUE__CONCURRENCY`.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `QUEUE__CONCURRENCY` | `8` | Runs one worker process drives at once. A run waits for a model most of the time, so this is about memory and the API rate limit, not CPU. Tenant slots (`LIMITS__CONCURRENT_RUNS`) still apply across all workers. |
+| `QUEUE__DRAIN_S` | `20` | On SIGTERM, how long a worker waits for its runs to end before it stops the rest. Inside compose's `stop_grace_period: 30s`, so the stop is never a `SIGKILL`. |
+| `QUEUE__HEARTBEAT_S` | `10` | How often a worker writes `worker:<name>` (TTL three beats) and its liveness file. `/readyz` counts live workers from these; the container healthcheck (`python -m waypoint.worker --check`) fails after three missed beats. |
+| `WORKER_REPLICAS` | `2` | Compose only: worker containers. Two, so a worker that dies leaves one to carry on. About 140 MB each at rest (phase 1 log). |
 
 ## MCP tools (Workspace)
 
@@ -407,4 +424,5 @@ Built by Vite, so these are baked in at build time.
 - [ ] `BUDGET__TENANT_USD_PER_DAY` and `BUDGET__GLOBAL_USD_PER_DAY` set, your own tenant exempted in `BUDGET__TENANTS`
 - [ ] Proxy buffering **off** on `/api/`, read timeout above the longest run (see `web/nginx.conf`)
 - [ ] Schema migrations run at boot under an advisory lock, so parallel workers are safe; for large fleets run them as a one-shot step instead
+- [ ] At least one `worker` running (`/readyz` shows `workers: ok (n)`); with none, runs are accepted and wait in the queue
 - [ ] Redis `maxmemory-policy noeviction` — evicting a run stream mid-stream looks like a hang

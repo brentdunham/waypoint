@@ -1,10 +1,11 @@
 """Application factory.
 
 Everything runs on the server's one event loop: request handlers, the
-Postgres pool, the LangGraph checkpointer and store, Redis, and every run
-task. The runtime that owns them is built in the app's lifespan, so it exists
-before the first request and is torn down (runs cancelled, pools closed)
-when the server stops.
+Postgres pool, the LangGraph checkpointer and store, and Redis. The runtime
+that owns them is built in the app's lifespan, so it exists before the first
+request and is torn down (pools closed) when the server stops. With Redis the
+API only queues runs and ``python -m waypoint.worker`` drives them; without
+it the API drives them itself, on the same loop.
 """
 
 import logging

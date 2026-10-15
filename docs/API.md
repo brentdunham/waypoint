@@ -39,11 +39,19 @@ call made from the page still needs a key.
 
 ```bash
 curl -s localhost:8000/api/v1/readyz | jq
-# {"status":"ready","checks":{"graphs":"ok","postgres":"ok","redis":"ok"}}
+# {"status":"ready","checks":{"graphs":"ok","postgres":"ok","redis":"ok",
+#  "workers":"ok (2)","queue":"0 queued, 1 running"}}
 ```
 
 `off` means "not configured"; `down` means "configured and unreachable". Only
 the second one fails readiness.
+
+With Redis, runs are driven by worker processes, and readiness reports them:
+`workers` is `ok (<live workers>)` or `unavailable`, and `queue` counts runs
+waiting for a worker and runs a worker holds. No worker does not fail
+readiness: the API still accepts runs, and they wait in the queue until a
+worker starts. Without Redis the API drives its own runs and neither key
+appears.
 
 ## Agents
 
@@ -75,7 +83,7 @@ an id exists is itself a leak.
 | POST | `/threads/<id>/runs` | `agents:run` | `202` with `run_id`, or `?wait=true` for a blocking `200` |
 | GET | `/runs/<run_id>` | `threads:read` | Status record |
 | GET | `/runs/<run_id>/events` | `threads:read` | SSE, resumable |
-| POST | `/runs/<run_id>/cancel` | `agents:run` | `202`; `409` if already finished |
+| POST | `/runs/<run_id>/cancel` | `agents:run` | `202`; `409` if already finished. Works on a run still waiting in the queue: it ends `cancelled` without starting. |
 
 Request body — exactly one of these three shapes:
 
@@ -164,7 +172,7 @@ data: {"interrupts":[{"id":"6ac8…","value":{"kind":"approve_plan","plan":["…
 
 | Event | Meaning |
 |---|---|
-| `run.started` | Accepted and executing; carries the run's `models` map and, with tracing on, its `trace_id` |
+| `run.started` | Accepted and queued for a worker (a run's status is `running` from here); carries the run's `models` map and, with tracing on, its `trace_id` |
 | `token` | An LLM token, with the node that produced it |
 | `node` | A super-step finished; carries that node's state update |
 | `custom` | Whatever a node wrote via `get_stream_writer()`. The research agent writes `{"kind":"research","phase":…}` as each step *starts*: `planning`, `searching` (once per worker, with `question` and `round`), `reviewing` (with `round`), `writing` and `verifying` (the citation check; absent when `RESEARCH__VERIFY_CITATIONS=false`). `node` events say when each finished; the UI's research panel is built from both. |
@@ -464,5 +472,6 @@ handled it; other workers pick it up within the TTL.
 the MCP server of that name (`MCP__SERVERS`, CONFIGURATION.md); `*` allows
 every server. A key without it gets none of that server's tools, so existing
 keys get no external tools until granted. `/readyz` lists each server as
-`mcp:<name>` (`ok` or `unavailable`); an unavailable tool server never makes
-the service unready.
+`mcp:<name>` (`ok` or `unavailable`), as the workers see it, since they are
+the processes that call the tools; an unavailable tool server never makes the
+service unready.

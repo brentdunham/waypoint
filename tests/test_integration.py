@@ -129,11 +129,12 @@ def test_a_tool_approval_survives_a_process_restart(make_app, auth: dict[str, st
     }
 
     def with_notes(app):
-        mcp = app.runtime.mcp
-        app.call(mcp.aclose)
         server = notes_server()
-        mcp.connect = lambda _s: Client(server)
-        app.call(mcp.refresh)
+        for worker in app.workers:  # the processes that run the tools
+            mcp = worker.mcp
+            app.call(mcp.aclose)
+            mcp.connect = lambda _s: Client(server)
+            app.call(mcp.refresh)
         return app.test_client()
 
     first = make_app(**config)

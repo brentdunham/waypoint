@@ -33,7 +33,7 @@ instead of dollars.
 
 | Goals | Non-goals |
 |---|---|
-| A run survives a dropped connection, a page reload, a deploy and a week-long pause | Surviving the loss of the worker running it (no job queue yet; see [decision 11](07-decisions.md#d11-no-job-queue-yet)) |
+| A run survives a dropped connection, a page reload, an api deploy and a week-long pause | Surviving the loss of the worker running it: runs are queued and driven by workers, and recovering a dead worker's runs is the next phase ([design/queue.md](../design/queue.md), [decision 30](07-decisions.md#d30-a-run-queue-and-a-worker-service-that-drives-runs)) |
 | Many clients can watch one run, and reconnect without losing or repeating an event | Exactly-once side effects in tools |
 | Tenants are isolated in data, memory, cache and rate limits | Per-tenant model routing, SSO/JWT (both have a seam, neither is built) |
 | Each model call site can use a different model, chosen per run | A general-purpose agent framework; agents are code |
@@ -49,11 +49,12 @@ flowchart LR
 
     subgraph waypoint[Waypoint]
         web[web<br/>nginx + React SPA]
-        api[api<br/>FastAPI + LangGraph]
+        api[api<br/>FastAPI: admits and queues runs]
+        worker[worker<br/>drives runs: LangGraph]
     end
 
     pg[(Postgres + pgvector<br/>checkpoints, store,<br/>threads, keys, audit)]
-    redis[(Redis<br/>event streams, cancel,<br/>limits, node cache)]
+    redis[(Redis<br/>run queue, event streams,<br/>cancel, limits, node cache)]
     anthropic[[Anthropic API<br/>models + web search]]
     openai[[OpenAI embeddings<br/>optional]]
     langsmith[[LangSmith<br/>optional tracing]]
@@ -64,9 +65,11 @@ flowchart LR
     ci -- "python -m evals" --> anthropic
     api --> pg
     api --> redis
-    api --> anthropic
-    api -. "EMBEDDINGS_MODEL set" .-> openai
-    api -. "LANGSMITH_TRACING" .-> langsmith
+    worker --> pg
+    worker --> redis
+    worker --> anthropic
+    worker -. "EMBEDDINGS_MODEL set" .-> openai
+    worker -. "LANGSMITH_TRACING" .-> langsmith
 ```
 
 The evals do not go through the HTTP API. The harness builds the same graphs
@@ -75,7 +78,7 @@ the agents and nothing else.
 
 ## Deployment
 
-`compose.yaml` runs five services: the four below and `notes`, the demo MCP
+`compose.yaml` runs six services: the five below and `notes`, the demo MCP
 server Workspace calls for its notes tools (from the api's image, on the
 compose network only). The same images run anywhere that has
 Postgres 17 with pgvector and Redis.
@@ -89,24 +92,34 @@ flowchart TB
     end
 
     subgraph apic[api container]
-        gunicorn[gunicorn<br/>2 workers, UvicornWorker]
-        w1[worker 1<br/>one event loop<br/>runs are asyncio tasks]
-        w2[worker 2<br/>one event loop<br/>runs are asyncio tasks]
-        gunicorn --> w1
-        gunicorn --> w2
+        gunicorn[gunicorn<br/>2 processes, UvicornWorker]
+        p1[process 1<br/>one event loop<br/>admits and queues runs]
+        p2[process 2<br/>one event loop<br/>admits and queues runs]
+        gunicorn --> p1
+        gunicorn --> p2
+    end
+
+    subgraph workc[worker containers, 2 replicas]
+        wk1[python -m waypoint.worker<br/>one event loop<br/>up to 8 runs as asyncio tasks]
+        wk2[python -m waypoint.worker<br/>one event loop<br/>up to 8 runs as asyncio tasks]
     end
 
     nginx -->|"api:8000"| gunicorn
-    w1 & w2 --> pg[(postgres<br/>pgvector/pgvector:pg17)]
-    w1 & w2 --> rd[(redis<br/>redis:8-alpine)]
+    p1 & p2 --> pg[(postgres<br/>pgvector/pgvector:pg17)]
+    p1 & p2 --> rd[(redis<br/>redis:8-alpine)]
+    wk1 & wk2 --> pg
+    wk1 & wk2 --> rd
 ```
 
-Two workers is the default because runs are I/O bound: concurrency comes from
-the event loop, not from processes. A run started on worker 1 can be watched
-and cancelled through worker 2, because everything a watcher needs lives in
-Redis (chapter [2](02-runs.md)).
+The api accepts a run, puts it on a Redis queue and returns; a worker takes it
+off and drives the graph ([2.6](02-runs.md#26-the-run-queue-and-the-workers)).
+Two of each is the default because the work is I/O bound: concurrency comes
+from the event loop, not from processes. A run accepted by api process 1 and
+driven by worker 2 can be watched and cancelled through api process 2,
+because everything a watcher needs lives in Redis (chapter
+[2](02-runs.md)).
 
-## Inside one worker
+## Inside one api process
 
 ```mermaid
 flowchart TB
@@ -132,14 +145,19 @@ flowchart TB
     routes --> runs
     routes --> keys
     routes --> db
-    runs --> graphs
     runs --> bus
     runs --> lim
+    runs --> queue[RunQueue<br/>Redis Stream runs:queue]
     graphs --> db
     graphs --> cache
 ```
 
-Everything in the runtime box is bound to the worker's event loop and is
+The api's `RunManager` admits a run and queues it; with Redis it never drives
+one. A worker process builds the same runtime with `role="worker"`, minus the
+HTTP app, and adds a `RunWorker` that takes runs off the queue and drives the
+compiled graphs. Without Redis the api builds that `RunWorker` itself.
+
+Everything in the runtime box is bound to the process's event loop and is
 created once, before the first request, by FastAPI's lifespan
 (`src/waypoint/__init__.py`, which calls `start_runtime` in
 `src/waypoint/agents/runtime.py`). That is the reason the service is ASGI and
