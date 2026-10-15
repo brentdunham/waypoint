@@ -415,8 +415,10 @@ call, surviving a restart; a declined call is never made and the reply says
 so; a tool approval card in the web UI; the demo notes server in process for
 three new eval cases (`approval_requested`, `tool_declined`). New workspace
 baseline accepted the same day (`grounded` 4.00 after a fix: the verifier's
-evidence had been cutting off cited passages). Phase 5 (the notes server on
-Bob) is next.
+evidence had been cutting off cited passages). Phase 5 built 2026-10-15: the
+notes server as its own compose service (SQLite, shared token, not
+published), reviewer keys with `tools:notes`. Item 5 is done once it is
+deployed and a reviewer key adds a note on Bob.
 
 ### 6. Durable run queue
 

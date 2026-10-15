@@ -29,6 +29,10 @@ services:
     depends_on:
       jaeger: { condition: service_started }
 
+  notes:
+    environment:
+      NOTES_TOKEN: ${NOTES_TOKEN:?set NOTES_TOKEN in .env}
+
   web:
     # WEB_PORT differs per demo on a shared host: 8080 here, 8081 for the next.
     ports: !override ["127.0.0.1:${WEB_PORT:-8080}:80"]

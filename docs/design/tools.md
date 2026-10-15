@@ -1,8 +1,8 @@
 # Design: the workspace agent (documents, MCP tools, approval)
 
-Status: **phase 4 built** (2026-10-14): tool approval; phase 3 (the MCP
-client) built and 2a and 2b deployed the same day; phase 1 deployed
-2026-10-13. Phase 5 (the notes server on Bob) next. Written 2026-10-13. This note is the
+Status: **phase 5 built** (2026-10-15): the notes server as a compose
+service, reviewer keys with `tools:notes`. To deploy to Bob. Phases 1 to 4
+built and deployed 2026-10-13 and 2026-10-14. Written 2026-10-13. This note is the
 hand-off for the coding sessions: what to build, what is decided, what is
 still open, in what order, and which documents each phase must update. Read
 it with [ARCHITECTURE.md](../ARCHITECTURE.md),
@@ -630,6 +630,47 @@ The new baseline, and a verifier fix it led to:
   ran longer than the remembered one-paragraph preference) and
   `use-seeded-preference` (it gave feet as well as metres), the same kind of
   misses the old baseline had.
+
+### Phase 5: the notes server on Bob (2026-10-15)
+
+Built:
+
+* `waypoint/mcp_demo/notes.py` as a service: `python -m
+  waypoint.mcp_demo.notes` serves MCP over Streamable HTTP at `/mcp` and
+  `/healthz` for compose. `RequireToken` refuses every request but
+  `/healthz` without `Authorization: Bearer <NOTES_TOKEN>` (compared in
+  constant time), and the process will not start with a token under 16
+  characters. `SqliteNotes` keeps notes in one SQLite file (WAL, a
+  connection per call), numbered per tenant so one tenant's numbers say
+  nothing about another's notes; `MemoryNotes` numbers the same way now.
+* The `notes` compose service: the api's image, another command, the
+  `notesdata` volume (the Dockerfile creates its mount point owned by the
+  image's user, so a new volume starts writable), its own healthcheck, no
+  published port. `compose.prod.yaml` requires `NOTES_TOKEN`.
+* `MCP__SERVERS` in `deploy/.env.production.example` points at
+  `http://notes:8001/mcp` with the same token; `deploy/reviewer-link.sh`
+  gives new reviewer keys `tools:notes`; DEPLOY.md has the line that adds it
+  to keys minted before.
+* Tests: the SQLite store across a restart and its per-tenant numbers, and
+  the token check (`/healthz` open, `/mcp` 401 without the token or with a
+  wrong one).
+* Checked by hand: the service on port 8001 with a token and a SQLite file,
+  and the API with `MCP__SERVERS` pointing at it. `/healthz` 200, `/mcp`
+  without the token 401, `/readyz` showed `mcp:notes: ok`; a Workspace run
+  paused on `notes_add`, the resume ran it, and the row was in the SQLite
+  file under the run's tenant. A request with `Host: notes:8001`, the name
+  compose gives it, passed FastMCP's host check. The Docker image itself was
+  not built here (no Docker daemon in the sandbox): Bob's build is the first.
+
+Deviations:
+
+* **The token is in two places in `.env`** (`NOTES_TOKEN` for the server,
+  inside `MCP__SERVERS` for the client). Compose cannot put a variable inside
+  a JSON default without breaking its own `${...}` syntax, so DEPLOY.md says
+  to paste the same value twice.
+
+Done when a reviewer adds a note from Workspace after approving it, on Bob:
+pending the deploy.
 
 ## References
 

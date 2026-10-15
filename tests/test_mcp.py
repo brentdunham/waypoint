@@ -357,3 +357,30 @@ def test_the_notes_server_keeps_tenants_apart_and_needs_one() -> None:
             assert not (await call("delete", {"note_id": 1}, "acme")).is_error
 
     asyncio.run(scenario())
+
+
+def test_sqlite_notes_survive_a_new_store_and_number_per_tenant(tmp_path: Any) -> None:
+    from waypoint.mcp_demo.notes import SqliteNotes
+
+    path = tmp_path / "notes.sqlite3"
+    store = SqliteNotes(path)
+    assert store.add("acme", "one").note_id == 1
+    assert store.add("acme", "two").note_id == 2
+    assert store.add("globex", "theirs").note_id == 1  # numbers say nothing across tenants
+    assert store.delete("globex", 2) is False
+    assert store.delete("acme", 1) is True
+    again = SqliteNotes(path)  # a restart
+    assert [n.text for n in again.all("acme")] == ["two"]
+    assert again.add("acme", "three").note_id == 3
+
+
+def test_the_notes_service_wants_its_token_except_for_health() -> None:
+    from starlette.testclient import TestClient as Plain
+
+    from waypoint.mcp_demo.notes import MemoryNotes, http_app
+
+    client = Plain(http_app(MemoryNotes(), "a-shared-secret-123"))
+    assert client.get("/healthz").status_code == 200
+    assert client.post("/mcp", json={}).status_code == 401
+    wrong = {"Authorization": "Bearer not-it"}
+    assert client.post("/mcp", json={}, headers=wrong).status_code == 401

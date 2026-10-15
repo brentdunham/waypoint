@@ -75,7 +75,9 @@ the agents and nothing else.
 
 ## Deployment
 
-`compose.yaml` runs four services. The same images run anywhere that has
+`compose.yaml` runs five services: the four below and `notes`, the demo MCP
+server Workspace calls for its notes tools (from the api's image, on the
+compose network only). The same images run anywhere that has
 Postgres 17 with pgvector and Redis.
 
 ```mermaid

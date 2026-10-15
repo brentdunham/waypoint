@@ -276,6 +276,11 @@ select_corpus -> recall_memories -> model -> [approve_tools] -> tools -> model
   `tools` then runs the approved calls and answers each declined one with
   "Not run: the user declined this call", which the model reports. Read-only
   calls in the same reply wait for the answer and then run.
+* **The demo server is outside the agent.** `waypoint/mcp_demo/notes.py` is
+  an ordinary FastMCP server that knows nothing about Waypoint but the
+  tenant in `_meta`: the `notes` compose service runs it from the api's
+  image, on the compose network only, behind a shared token, with notes in
+  SQLite. The evals run the same server in process with an in-memory store.
 * **Each MCP call is ours, not the adapter's.** Tools are named
   `{server}_{tool}`. A call sends the tenant and user in the request's
   `_meta` and the server's token as a bearer header, has the server's

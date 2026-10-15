@@ -38,6 +38,9 @@ tier adds that a pause survives a restart: a second app object resumes it from
 Postgres. The HTTP transport itself was checked by hand against a local
 FastMCP server (design log, phase 3).
 
+The demo notes server's service parts are tested there too: its SQLite store
+across a restart, and the shared-token check.
+
 **Eval cases with tools** (`notes` in a workspace case) run the demo notes
 server (`waypoint.mcp_demo.notes`) in process for that case alone. Its write
 tools pause like any other, and the case's `resume` list answers them in

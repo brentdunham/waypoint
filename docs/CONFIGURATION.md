@@ -258,6 +258,18 @@ MCP request's `_meta` (`io.waypoint/tenant`, `io.waypoint/user`), which is how
 a server keeps tenants apart. Discovery runs in the background: a server that
 is down at boot is logged and retried, never fatal.
 
+### The demo notes server
+
+The `notes` compose service (`python -m waypoint.mcp_demo.notes`) reads its
+own environment, not Waypoint's settings:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `NOTES_TOKEN` | none (compose.yaml: `dev-notes-token-change-me`; compose.prod.yaml requires it) | Shared secret, at least 16 characters; every request but `/healthz` must send `Authorization: Bearer <it>`. Waypoint sends it from `MCP__SERVERS[].token`. |
+| `NOTES_DB` | `notes.sqlite3` | The SQLite file; `/waypoint/notes-data/notes.sqlite3` on the `notesdata` volume in compose. |
+| `NOTES_HOST`, `NOTES_PORT` | `0.0.0.0`, `8001` | Where it listens. Compose publishes no port. |
+| `NOTES_ALLOWED_HOSTS` | unset | Comma-separated `Host` headers to accept, if the default DNS-rebinding protection refuses yours. |
+
 ## Upload limits (per tenant per UTC day, enforced in Redis)
 
 What a key with `corpora:write` may add to the server (docs/design/tools.md,

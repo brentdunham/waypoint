@@ -23,7 +23,8 @@ flowchart LR
   revocation and in logs without revealing the secret.
 * **Scopes** are `threads:read`, `threads:write`, `agents:run`,
   `corpora:write` (create, delete and upload to corpora, within the daily
-  upload limits for every key but an admin's) and `keys:admin`;
+  upload limits for every key but an admin's), `tools:<server>` (an MCP
+  server's tools in Workspace) and `keys:admin`;
   `*` grants all. `tenant:admin` additionally lets a caller
   open threads of other users in its own tenant. Endpoints declare theirs through typed
   dependencies (`Reader`, `Writer`, `Runner`, `Admin`), so a handler cannot
@@ -76,6 +77,7 @@ Isolation is enforced at each place data could cross between tenants:
 | Graph state | Identity is in context, never state or `configurable`, so it is never checkpointed ([3.5](03-state-and-persistence.md#35-context-state-and-config)) |
 | Memories | Namespace `("memories", tenant_id, user_id)`, from one function used by both graph and API |
 | Corpora | Two guards: every query in `rag/store.py` filters `tenant_id`, and each runs as the `waypoint_tenant` role with `app.tenant_id` set, so Postgres row-level security filters again. The role is needed because the service's own user owns the tables (and is a superuser in compose), and owners bypass RLS. Public corpora are readable by all and written only as the owner, by the seeder for `RAG__SEED_DIR` ([ARCHITECTURE.md §8a](../ARCHITECTURE.md)); through the API, changing a corpus needs `corpora:write` |
+| External tools (MCP) | A run gets a server's tools only if its key has `tools:<server>`; the tenant is sent with each call from the run's context, never chosen by the model; anything but a trusted server's read-only tools waits for the person's approval. The demo notes server is on the compose network only and refuses requests without its shared token |
 | Node cache | Keys hash node input only, so cached nodes carry `tenant_id` in their input; per-user nodes are not cached ([3.8](03-state-and-persistence.md#38-the-node-cache)) |
 | Limits | Buckets and slots are per tenant |
 | Traces | Each run is tagged `tenant:<id>` and `agent:<name>`; OpenTelemetry spans carry `waypoint.tenant_id` and no prompt or document text unless `TRACING__CONTENT=true` |

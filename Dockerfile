@@ -40,6 +40,9 @@ COPY --from=builder --chown=waypoint:waypoint /waypoint /waypoint
 # The documentation, for the public demo corpus (RAG__SEED_DIR=docs). A few
 # hundred KB; seeding re-embeds only the pages a deploy changed.
 COPY --chown=waypoint:waypoint docs ./docs
+# Where the notes service keeps its SQLite file. Created here, owned by
+# waypoint, so a new named volume mounted on it starts with that owner.
+RUN install -d -o waypoint -g waypoint /waypoint/notes-data
 
 USER waypoint
 EXPOSE 8000

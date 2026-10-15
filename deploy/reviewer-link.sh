@@ -8,7 +8,9 @@
 # agents (including research over the public waypoint-docs corpus), read and
 # write its own threads, and create corpora of its own and upload into them
 # (corpora:write), within UPLOADS__* (3 corpora; 10 files, 5 MB and 2,000
-# chunks a day). It cannot mint keys or publish corpora (no keys:admin). The
+# chunks a day), and use the demo notes server's tools in Workspace
+# (tools:notes; adding or deleting a note waits for their approval). It
+# cannot mint keys or publish corpora (no keys:admin). The
 # key is in the URL fragment, which browsers never send to the server.
 #
 # Revoke:  curl -X DELETE "$WAYPOINT_URL/api/v1/keys/<key_id>" -H "Authorization: Bearer $WAYPOINT_ADMIN_KEY"
@@ -24,7 +26,7 @@ admin="${WAYPOINT_ADMIN_KEY:?set WAYPOINT_ADMIN_KEY to your admin key}"
 slug=$(printf '%s' "$who" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//' | cut -c1-40)
 [ -n "$slug" ] || { echo "the name must contain letters or digits" >&2; exit 1; }
 
-body=$(python3 -c 'import json,sys; print(json.dumps({"tenant_id": "rev-" + sys.argv[1], "user_id": "reviewer", "scopes": ["agents:run", "threads:read", "threads:write", "corpora:write"], "label": "reviewer: " + sys.argv[2]}))' "$slug" "$label")
+body=$(python3 -c 'import json,sys; print(json.dumps({"tenant_id": "rev-" + sys.argv[1], "user_id": "reviewer", "scopes": ["agents:run", "threads:read", "threads:write", "corpora:write", "tools:notes"], "label": "reviewer: " + sys.argv[2]}))' "$slug" "$label")
 
 response=$(curl -fsS -X POST "$base/api/v1/keys" \
   -H "Authorization: Bearer $admin" -H 'Content-Type: application/json' -d "$body")

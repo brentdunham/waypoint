@@ -45,7 +45,8 @@ Three agents ship in the registry, chosen to exercise the hard parts:
   citations that the research agent's verifier checks before you see them.
   Shares chat's memory. Uses tools from configured MCP servers, for keys
   with that server's scope, and pauses for your approval before any call that
-  could change something ([design](docs/design/tools.md)).
+  could change something ([design](docs/design/tools.md)). The demo ships a
+  notes server for it to use (`waypoint/mcp_demo/notes.py`).
 
 Around them:
 

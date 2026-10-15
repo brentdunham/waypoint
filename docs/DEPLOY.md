@@ -53,6 +53,8 @@ Fill in `.env`:
 | `ANTHROPIC_API_KEY` | The demo workspace's key |
 | `BOOTSTRAP_API_KEY` | `python3 -c "import secrets; print(f'ak_{secrets.token_hex(6)}.{secrets.token_urlsafe(32)}')"`; first boot only |
 | `WEB_PORT` | `8080` for this demo; a different loopback port for each other demo on the host |
+| `NOTES_TOKEN` | `openssl rand -hex 24`. The shared secret of the demo notes server; put the same value in `MCP__SERVERS` (next row) |
+| `MCP__SERVERS` | `'[{"name": "notes", "url": "http://notes:8001/mcp", "trusted": true, "token": "<NOTES_TOKEN>"}]'` (single quotes: JSON). Gives Workspace the notes server's tools; see [Notes server](#notes-server) |
 | `VOYAGE_API_KEY` | From [dashboard.voyageai.com](https://dashboard.voyageai.com/), with a payment method on the account (without one, Voyage allows 3 requests a minute, too few to index `docs/`). Embeds and reranks the public docs corpus. |
 
 The example file sets the budgets to $0.35 per tenant and $0.70 for the server
@@ -213,6 +215,40 @@ curl -s -X POST $BASE/corpora/$ID/visibility -H "$ADMIN" -H 'Content-Type: appli
 
 To change one later, set it back to `private`, upload or delete, and publish
 again; while private it disappears from other tenants' pickers.
+
+## Notes server
+
+The demo MCP server (`waypoint.mcp_demo.notes`, the `notes` compose service):
+a notes store kept apart per tenant, with `search` and `list` (read-only, run
+at once) and `add` and `delete` (Workspace stops for the person's approval
+first). Same image as the api, its own command. It is on the compose network
+only, publishes no port, and refuses every request except `/healthz` without
+`NOTES_TOKEN`. Notes live in SQLite on the `notesdata` volume.
+
+With `NOTES_TOKEN` and `MCP__SERVERS` set as above:
+
+```bash
+docker compose ps notes                                   # healthy
+curl -s 127.0.0.1:8080/api/v1/readyz | jq .checks         # "mcp:notes": "ok"
+docker compose logs api | grep "MCP server 'notes'"       # 4 tools (notes_search, ...)
+```
+
+`mcp:notes: unavailable` means the api could not list the tools: a wrong
+token (the server answers 401) or the service down. The api keeps running and
+retries every `MCP__REFRESH_S` (5 minutes); `docker compose restart api` tries
+at once.
+
+A key needs `tools:notes`. Reviewer links minted from now on have it. For
+keys minted before:
+
+```bash
+docker compose exec postgres psql -U waypoint -c \
+  "update api_keys set scopes = array_append(scopes, 'tools:notes') where tenant_id like 'rev-%' and not ('tools:notes' = any(scopes))"
+```
+
+Your own keys with `*` already have every scope. Each tenant sees only its
+own notes: Waypoint sends the run's tenant with every call, and the server
+files and reads notes under it.
 
 ## Operating it
 
