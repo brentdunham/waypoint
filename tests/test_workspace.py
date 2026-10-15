@@ -378,3 +378,18 @@ def test_the_visibility_endpoint(rag: TestClient) -> None:
     unknown = "00000000-0000-0000-0000-000000000000"
     response = rag.post(f"/api/v1/corpora/{unknown}/visibility", json={"visibility": "public"})
     assert response.status_code == 404
+
+
+def test_cited_passages_are_never_cut_from_the_evidence() -> None:
+    """A cited passage past the evidence budget stays, whole (docs-eval-costs, 2026-10-14)."""
+    from waypoint.agents.graphs.workspace import MAX_EVIDENCE_CHARS, _evidence
+    from waypoint.agents.state import Source
+
+    long = Source(url="doc://a#1", title="a", kind="document")
+    cited = Source(url="doc://b#1", title="b", kind="document")
+    other = Source(url="doc://c#1", title="c", kind="document")
+    texts = ["a: " + "x" * MAX_EVIDENCE_CHARS, "b: the verifier runs on Haiku", "c: unrelated"]
+    evidence = _evidence([long, cited, other], texts, {cited["url"]})
+    assert "b: the verifier runs on Haiku" in evidence
+    assert "c: unrelated" not in evidence  # no room left for uncited passages
+    assert evidence.splitlines()[0].endswith("…")  # the uncited one was cut, not dropped

@@ -78,9 +78,11 @@ ROLES = ("assistant", "verifier")
 ``MODELS__WORKSPACE__VERIFIER`` checks citations, on Haiku like research's."""
 
 MAX_EVIDENCE_CHARS = 6_000
-"""Passages per search shown to the verifier as that finding's answer. Eight
-passages of about 400 tokens are roughly 13,000 characters; the verifier needs
-the cited ones, which it also gets as quotes, not every word of the rest."""
+"""Room for a search's uncited passages in the evidence the verifier and the
+judge read as that finding's answer. Cited passages are always shown in full:
+cutting the text at 6,000 characters dropped a cited passage, and a correct
+sentence citing it was judged unsupported (docs-eval-costs, 2026-10-14). Eight
+passages of about 400 tokens are roughly 13,000 characters."""
 
 SYSTEM = """You are a concise, accurate assistant.
 Prefer calling a tool over guessing. When the user states a durable preference,
@@ -400,8 +402,8 @@ class Evidence:
     """
 
     def __init__(self) -> None:
-        self.searches: list[tuple[int, str, list[Source], str]] = []
-        """(message index, query, passages as sources, passage text) per search."""
+        self.searches: list[tuple[int, str, list[Source], list[str]]] = []
+        """(message index, query, passages as sources, each passage's text) per search."""
         self.sources: dict[str, Source] = {}
 
     @classmethod
@@ -433,10 +435,7 @@ class Evidence:
             text = " ".join(str(c.get("text", "")) for c in block.get("content") or [])
             texts.append(f"{source['title']}: {text}")
         if passages:
-            evidence = "\n".join(texts)
-            if len(evidence) > MAX_EVIDENCE_CHARS:
-                evidence = evidence[: MAX_EVIDENCE_CHARS - 1].rstrip() + "…"
-            self.searches.append((index, query, passages, evidence))
+            self.searches.append((index, query, passages, texts))
 
     def render(self, reply: Any) -> tuple[str, list[str]]:
         """The reply's text with ``[n]`` after each cited span, and the cited
@@ -504,16 +503,31 @@ class Evidence:
         findings = [
             Finding(
                 question=query,
-                answer=evidence,
+                answer=_evidence(passages, texts, cited_set),
                 sources=[self.sources[p["url"]] for p in passages],
                 cited=True,
                 confidence=None,
                 issue="",
                 round=1,
             )
-            for _, query, passages, evidence in kept
+            for _, query, passages, texts in kept
         ]
         return findings, numbers
+
+
+def _evidence(passages: list[Source], texts: list[str], cited: set[str]) -> str:
+    """A search's passages as one text, in retrieval order: every cited one in
+    full, and uncited ones while they fit in ``MAX_EVIDENCE_CHARS``."""
+    room = MAX_EVIDENCE_CHARS
+    shown = []
+    for passage, text in zip(passages, texts, strict=True):
+        if passage["url"] in cited:
+            shown.append(text)
+        elif room > 0:
+            part = text if len(text) <= room else text[: max(room - 1, 0)].rstrip() + "…"
+            shown.append(part)
+            room -= len(part)
+    return "\n".join(shown)
 
 
 def _names(selected: list[dict[str, Any]]) -> str:
