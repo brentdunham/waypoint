@@ -237,9 +237,18 @@ until a worker starts. `docker compose logs worker` says why it is not up.
 
 A worker that is stopped (a deploy, `docker compose restart worker`) takes no
 new runs and gives those in flight 20 seconds (`QUEUE__DRAIN_S`) to end; a
-run still going after that is cancelled. A worker that dies outright leaves
-its runs unfinished until phase 2 of the design adds recovery. Restarting or
-deploying only the api no longer touches runs at all.
+run still going after that is handed off without a terminal event. A dead
+worker's runs are reclaimed after the owner lease expires (30 s by default),
+on the next scan (10 s). Restarting or deploying only the api touches no
+runs. Recovery requires Postgres checkpoints and Redis persistence.
+
+Production acceptance after deploying this change remains pending: start
+and approve a research run, find its driving container in worker logs,
+kill that container, and check that the same event stream has one
+`run.reclaimed` and one terminal event. Repeat with a worker restart during
+a run longer than the drain. Check for doubled partial text and usage from
+both attempts. Repeat an approved notes write across a handoff and check
+that only one note exists. These checks have not been run on Bob.
 
 ## Notes server
 

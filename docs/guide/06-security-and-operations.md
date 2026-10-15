@@ -58,7 +58,7 @@ tenant `public`.
 | Long-term memory | Part of the namespace | Also part of it: `("memories", tenant, user)` |
 | Rate and concurrency limits | Yes: 60 run starts per minute, 4 concurrent runs | No: users share their tenant's quota |
 | Node cache (search answers) | Never shared across tenants | Shared between users of one tenant |
-| Run audit and traces | Tagged by tenant | Recorded with the user |
+| Runs, streams, cancellation and historical traces | Another tenant gets 404 | Owner only; `tenant:admin` or `*` may access other users in the same tenant |
 
 The two levels have different jobs. The tenant is the boundary you would sell
 and bill against: one customer's data, quota and cached results must never
@@ -199,9 +199,10 @@ empty `${VAR:-}` from compose counts as unset rather than as an empty key.
 **Shutdown.** The api drives no runs (with Redis), so stopping it closes
 pools within 20 s and touches no run; gunicorn's graceful timeout is 30 s. A
 worker on SIGTERM takes no new runs, gives those in flight `QUEUE__DRAIN_S`
-(20 s) to end, then cancels the rest, inside compose's 30 s
-`stop_grace_period`. A run cancelled by shutdown ends in `cancelled` and
-releases its slot.
+(20 s) to end, then hands unfinished entries to another worker inside
+compose's 30 s `stop_grace_period`. Handoff retains the thread reservation
+and emits no terminal event. The successor resumes under the original
+deadline. Without Redis, shutdown cancels the local runs.
 
 ## 6.7 Health
 
@@ -231,8 +232,8 @@ survive a restart) is what the integration tier tests.
 | Client connection drops | None on the run | Client reconnects with `Last-Event-ID` |
 | SSE reader errors | Response ends without a terminal event | Client treats it as a drop and reconnects |
 | api restarts or is deployed | None on runs: workers drive them | None needed |
-| Worker stopped (deploy, restart) | Runs in flight get `QUEUE__DRAIN_S` to end, then end `cancelled` | Start them again; [design/queue.md](../design/queue.md) phase 2 hands them to another worker instead |
-| Worker dies mid-run | That run's task dies; its record is left as `running` and its queue entry pending | Slot lease expires; checkpoint history is intact up to the last step. Reclaiming the run is phase 2 of the queue design |
+| Worker stopped (deploy, restart) | Drain, then handoff without ending the run | Another worker claims the entry and resumes; client sees `run.reclaimed` |
+| Worker dies mid-run | Ownership expires; entry remains pending | Another worker reclaims it, resumes its checkpoint, and aggregates usage; attempts and deadline are bounded |
 | No worker running | Runs are accepted and wait in the queue; `/readyz` says `workers: unavailable` | Start a worker (`docker compose up -d worker`) |
 | Run exceeds 300 s | `run.failed` with type `timeout` | Raise `LIMITS__RUN_TIMEOUT_S` or lower research bounds |
 | Model returns malformed structured output | Retried up to 3 times by the node | Verify step degrades to the unverified draft |

@@ -185,6 +185,8 @@ def start_run_span(
     resume: bool,
     link: SpanContext | None,
     trace_id: str | None = None,
+    attempt: int = 1,
+    created_at: str | None = None,
 ) -> Span:
     """A run's root span: a new trace, linked to the request that started it (O8).
 
@@ -193,7 +195,7 @@ def start_run_span(
     token = _PRESET_TRACE_ID.set(int(trace_id, 16) if trace_id else None)
     try:
         return tracing.tracer.start_span(
-            f"run {agent}",
+            f"run {agent}" if attempt == 1 else "run.attempt",
             context=otel_context.Context(),  # a new root, whatever is current
             kind=SpanKind.INTERNAL,
             links=[Link(link)] if link is not None else None,
@@ -203,6 +205,8 @@ def start_run_span(
                 "waypoint.tenant_id": tenant_id,
                 "waypoint.agent": agent,
                 "waypoint.resume": resume,
+                "waypoint.run.attempt": attempt,
+                **({"waypoint.run.created_at": created_at} if created_at else {}),
             },
         )
     finally:

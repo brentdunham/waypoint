@@ -235,13 +235,22 @@ research run cannot slow a request.
   `workers: ok (2)` and `queue: 0 queued, 1 running`, or
   `workers: unavailable`; with no worker, runs are accepted and wait.
 * **Stopping.** On SIGTERM a worker takes nothing new and gives its runs
-  `QUEUE__DRAIN_S` (20 s) to end before it cancels the rest.
+  `QUEUE__DRAIN_S` (20 s) to end before it hands the rest to another worker.
 * **Without Redis** there is no queue to share, so the API process runs a
   worker of its own on an in-memory queue, through the same code.
 
-What this does not do yet: a worker that dies mid-run leaves that run in the
-pending list, unfinished. Reclaiming it with `XAUTOCLAIM` and resuming it from
-its last checkpoint is the design's phase 2.
+A worker renews each run's fenced owner lease and pending-entry idle time
+on every heartbeat. Another worker reclaims abandoned entries with
+`XAUTOCLAIM`. Checkpoint progress selects `None` for continuation; without
+progress the original input is replayed. A lost owner cannot publish events
+or terminal state. The deadline is shared by all attempts, and retries are
+bounded. The same stream sends `run.reclaimed`; the client clears partial
+text and shows that the run resumed on another worker.
+
+A thread reservation is created atomically with enqueue, so a second run on
+an active thread gets `409`. The reservation stays held across recovery and
+is released by terminal publication. Usage snapshots from each attempt are
+summed; recovery never erases a completed call's recorded cost.
 
 ## 2.7 Limits on a run
 
@@ -264,9 +273,9 @@ when checkpoints are written:
 
 | Mode | Checkpoint written | Use |
 |---|---|---|
-| `sync` | before the next step starts | strongest; each step waits on Postgres |
-| `async` (default) | in the background while the next step runs | normal use; a crash can lose the last step |
-| `exit` | only when the run ends or pauses | cheapest; no mid-run history |
+| `sync` (default) | before the next step starts | recover from the last finished step |
+| `async` | in the background while the next step runs | recover from the last landed checkpoint; a step may repeat |
+| `exit` | only when the run ends or pauses | replay the original input from its starting branch |
 
 An interrupt is always durable: the graph cannot pause without writing the
 checkpoint it will resume from.

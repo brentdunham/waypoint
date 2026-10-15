@@ -20,6 +20,8 @@ from typing import Any, Protocol, cast
 
 from redis.asyncio import Redis
 
+from waypoint.infra.queue import OwnershipLostError
+
 log = logging.getLogger(__name__)
 
 CANCEL_CHANNEL = "runs:cancel"
@@ -41,13 +43,41 @@ TERMINAL = frozenset({"run.completed", "run.failed", "run.cancelled", "run.inter
 
 
 class EventBus(Protocol):
-    async def append(self, run_id: str, type_: str, data: dict[str, Any]) -> str: ...
+    async def append(
+        self, run_id: str, type_: str, data: dict[str, Any], *, owner: str | None = None
+    ) -> str: ...
     async def read(self, run_id: str, *, last_id: str, block_ms: int) -> list[Event]: ...
     async def set_meta(self, run_id: str, meta: dict[str, Any]) -> None: ...
     async def get_meta(self, run_id: str) -> dict[str, Any] | None: ...
     async def request_cancel(self, run_id: str) -> None: ...
     def cancellations(self) -> AsyncIterator[str]: ...
     async def close(self) -> None: ...
+    async def finish(
+        self,
+        run_id: str,
+        type_: str,
+        data: dict[str, Any],
+        meta: dict[str, Any],
+        *,
+        owner: str | None = None,
+    ) -> None: ...
+
+
+APPEND = """
+if ARGV[1] ~= '' and redis.call('get', KEYS[1]) ~= ARGV[1] then return false end
+local id = redis.call('xadd', KEYS[2], 'MAXLEN', '~', ARGV[2], '*', 't', ARGV[3], 'd', ARGV[4])
+redis.call('expire', KEYS[2], ARGV[5])
+return id
+"""
+
+FINISH = """
+if ARGV[1] ~= '' and redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('set', KEYS[3], ARGV[6], 'EX', ARGV[5])
+redis.call('xadd', KEYS[2], 'MAXLEN', '~', ARGV[2], '*', 't', ARGV[3], 'd', ARGV[4])
+redis.call('expire', KEYS[2], ARGV[5])
+if redis.call('get', KEYS[4]) == ARGV[7] then redis.call('del', KEYS[4]) end
+return 1
+"""
 
 
 class RedisBus:
@@ -62,19 +92,51 @@ class RedisBus:
     def _meta(self, run_id: str) -> str:
         return f"run:{run_id}:meta"
 
-    async def append(self, run_id: str, type_: str, data: dict[str, Any]) -> str:
+    async def append(
+        self, run_id: str, type_: str, data: dict[str, Any], *, owner: str | None = None
+    ) -> str:
         key = self._stream(run_id)
-        raw = cast(
-            "bytes",
-            await self._redis.xadd(
-                key,
-                {b"t": type_.encode(), b"d": json.dumps(data, default=str).encode()},
-                maxlen=self._maxlen,
-                approximate=True,
-            ),
+        raw = await self._redis.eval(
+            APPEND,
+            2,
+            f"run:{run_id}:owner",
+            key,
+            owner or "",
+            self._maxlen,
+            type_,
+            json.dumps(data, default=str),
+            self._ttl,
         )
-        await self._redis.expire(key, self._ttl)
-        return raw.decode()
+        if not raw:
+            raise OwnershipLostError
+        return cast("bytes", raw).decode()
+
+    async def finish(
+        self,
+        run_id: str,
+        type_: str,
+        data: dict[str, Any],
+        meta: dict[str, Any],
+        *,
+        owner: str | None = None,
+    ) -> None:
+        ok = await self._redis.eval(
+            FINISH,
+            4,
+            f"run:{run_id}:owner",
+            self._stream(run_id),
+            self._meta(run_id),
+            f"thread:{meta['thread_id']}:active",
+            owner or "",
+            self._maxlen,
+            type_,
+            json.dumps(data, default=str),
+            self._ttl,
+            json.dumps(meta, default=str),
+            run_id,
+        )
+        if not ok:
+            raise OwnershipLostError
 
     async def read(self, run_id: str, *, last_id: str, block_ms: int) -> list[Event]:
         result = cast(
@@ -138,7 +200,9 @@ class MemoryBus:
     def _stream(self, run_id: str) -> _MemStream:
         return self._streams.setdefault(run_id, _MemStream())
 
-    async def append(self, run_id: str, type_: str, data: dict[str, Any]) -> str:
+    async def append(
+        self, run_id: str, type_: str, data: dict[str, Any], *, owner: str | None = None
+    ) -> str:
         stream = self._stream(run_id)
         stream.seq += 1
         event = Event(id=f"{int(time.time() * 1000)}-{stream.seq}", type=type_, data=data)
@@ -148,6 +212,18 @@ class MemoryBus:
             waiter.set()
         stream.waiters.clear()
         return event.id
+
+    async def finish(
+        self,
+        run_id: str,
+        type_: str,
+        data: dict[str, Any],
+        meta: dict[str, Any],
+        *,
+        owner: str | None = None,
+    ) -> None:
+        await self.set_meta(run_id, meta)
+        await self.append(run_id, type_, data)
 
     async def read(self, run_id: str, *, last_id: str, block_ms: int) -> list[Event]:
         stream = self._stream(run_id)

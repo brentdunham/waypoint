@@ -227,6 +227,7 @@ sequenceDiagram
 | Attribute | Mechanism | Chapter |
 |---|---|---|
 | Runs outlive requests and connections | Runs are tasks; events go to a Redis Stream; SSE is a reader | [2](02-runs.md) |
+| Recovery after worker loss | Redis reclaim, fenced ownership and Postgres checkpoints | [2.6](02-runs.md#26-the-run-queue-and-the-workers) |
 | Lossless reconnection | Stream ids are the SSE `Last-Event-ID` | [2.3](02-runs.md#24-reconnection) |
 | Pauses survive restarts | `interrupt()` checkpoints to Postgres and ends the run | [3.3](03-state-and-persistence.md#33-interrupts) |
 | Rewind and branch | Every super-step is a checkpoint; writing to an old one forks | [3.4](03-state-and-persistence.md#34-time-travel) |

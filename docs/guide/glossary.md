@@ -16,7 +16,7 @@ definition gives the general meaning first, then what it means here.
 | **Config** | LangGraph plumbing for a run: thread id, checkpoint id, recursion limit, callbacks, tags. |
 | **Critic** | The research role that scores each finding's confidence, notes its weaknesses, and may ask follow-up questions. |
 | **`defer`** | A LangGraph node option: run once after all parallel branches in a step have finished. Used on `critique`. |
-| **Durability mode** | When checkpoints are written: `sync`, `async` (default) or `exit`. |
+| **Durability mode** | When checkpoints are written: `sync` (default), `async` or `exit`. |
 | **Edge** | A connection between nodes. A conditional edge chooses the next node, or returns `Send` objects to fan out. |
 | **Fan-out** | Running one node several times in parallel on different inputs, here with `Send`. |
 | **Finding** | One research question's answer: question, answer, sources with quotes, whether it was cited, confidence, reviewer note, round, model. |
@@ -59,7 +59,7 @@ definition gives the general meaning first, then what it means here.
 | **Ack** | A worker telling the run queue a run is done with (`XACK`, then `XDEL`), however it ended. Until then the run is in the consumer group's pending list. |
 | **API key** | `ak_<key_id>.<secret>`. Only its SHA-256 is stored. Resolves to a principal. |
 | **Consumer group** | A Redis Streams group (`workers` on `runs:queue`) that gives each queued run to exactly one of its readers. Each worker process is one consumer. |
-| **Drain** | What a worker does on SIGTERM: take no new runs, give those in flight `QUEUE__DRAIN_S` to end, then cancel the rest. |
+| **Drain** | What a worker does on SIGTERM: take no new runs, give those in flight `QUEUE__DRAIN_S` to end, then hand the rest to another worker. |
 | **Event** | One item in a run's stream: `run.*` lifecycle, `token`, `node`, `custom`, `heartbeat`. |
 | **Event bus** | Where run events are written and read: Redis Streams in production, in memory without Redis. |
 | **`Last-Event-ID`** | The SSE header a reconnecting client sends so the server resumes after that event. Equal to the Redis Stream id here. |
@@ -128,3 +128,11 @@ definition gives the general meaning first, then what it means here.
 | **Reranker** | A second retrieval stage that reads the query with each candidate chunk and reorders them. Voyage `rerank-3` over the top 50, on by default. |
 | **`search_result` block** | A Claude content block carrying a retrieved passage with a source id and title; citations to it come back as `search_result_location`. |
 | **Span** | Exact text from a document that answers a gold query. A retrieved chunk is relevant when it contains the span, so labels survive re-chunking. |
+
+| Term | Meaning |
+|---|---|
+| **Owner fence** | Attempt-specific token checked atomically before events or terminal state can be published. |
+| **Reclaim** | `XAUTOCLAIM` transfers an idle pending run to another worker after its owner lease expires. |
+| **Attempt** | One delivery. Costs accumulate across attempts; the original deadline is retained. |
+| **Handoff** | Leave the entry pending and immediately reclaimable without a terminal event. |
+| **Idempotency key** | Stable thread/tool-call identity in MCP metadata. The notes server saves a mutation and its replay result in one transaction for one day. |

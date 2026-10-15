@@ -54,7 +54,7 @@ local limit, now, ttl, member = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(A
 redis.call('ZREMRANGEBYSCORE', key, '-inf', now - ttl)
 if redis.call('ZCARD', key) >= limit then return 0 end
 redis.call('ZADD', key, now, member)
-redis.call('EXPIRE', key, ttl + 60)
+redis.call('EXPIRE', key, math.ceil(ttl + 60))
 return 1
 """
 

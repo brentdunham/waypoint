@@ -100,6 +100,40 @@ def test_the_panel_needs_a_trace_backend() -> None:
         TracingSettings(panel=True)
 
 
+@pytest.mark.parametrize("first_exported", [False, True])
+def test_recovery_timeline_uses_the_original_start_and_final_cumulative_cost(
+    first_exported: bool,
+) -> None:
+    def span(span_id: str, name: str, start: int, duration: int, cost: float) -> dict[str, Any]:
+        return {
+            "spanID": span_id,
+            "operationName": name,
+            "startTime": start,
+            "duration": duration,
+            "tags": [
+                {"key": k, "value": v}
+                for k, v in {
+                    "waypoint.run_id": "run",
+                    "waypoint.tenant_id": "tenant",
+                    "waypoint.cost_usd": cost,
+                    "waypoint.run.created_at": "1970-01-01T00:00:00+00:00",
+                }.items()
+            ],
+        }
+
+    spans = [
+        span("attempt2", "run.attempt", 30_000, 20_000, 3.0),
+        span("node", "node model", 35_000, 5_000, 0),
+    ]
+    if first_exported:
+        spans.append(span("attempt1", "run chat", 10_000, 10_000, 1.0))
+    result = timeline({"traceID": "trace", "spans": spans}, run_id="run", tenant_id="tenant")
+    assert result["duration_ms"] == 50
+    assert result["cost_usd"] == 3.0
+    assert len(result["steps"]) == 1
+    assert result["steps"][0]["start_ms"] == 35
+
+
 def test_off_by_default_the_endpoint_is_absent(client: TestClient) -> None:
     done = run_and_wait(client, new_thread(client, "chat"), {"message": "hi"})
     response = client.get(f"/api/v1/runs/{done['run_id']}/trace")

@@ -444,14 +444,17 @@ enqueues, and a separate `worker` service drives runs. Phase 0 done (spikes;
 in phase 2). Phase 1 built: the run queue, `python -m waypoint.worker` and
 its compose service (two replicas), the slot carried by member, the cancel
 flag, `/readyz` reporting workers and the queue. Not yet deployed. Phase 2
-(reclaim and resume) next.
+(reclaim and resume) and phase 3 safety are implemented locally as the
+2026-10-15 follow-up. See [NEXT-STEPS.md](NEXT-STEPS.md) for verification.
+Production deployment and the Bob kill/deploy acceptance checks remain
+pending; local tests are not a production deployment claim.
 
 ## Smaller open items
 
-* **Two runs on one thread.** Nothing stops a second `POST /runs` on a thread
-  while a run on it is still going, so two workers can drive two runs of one
-  thread at once and interleave its checkpoints. Refuse it with `409` while a
-  run is `running` (found while designing item 6; design/queue.md, Risks).
+* **Two runs on one thread.** Fixed locally 2026-10-15: an atomic queue/thread
+  reservation returns `409` for another queued or executing run and remains
+  held during recovery. Ownership and stream lifetime fixes are part of the
+  same follow-up ([NEXT-STEPS.md](NEXT-STEPS.md)).
 
 * **Context window management.** Chat threads grow without bound. Add
   `trim_messages` or a summarisation node that keeps a running summary in state.

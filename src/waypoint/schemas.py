@@ -28,7 +28,7 @@ class StartRun(Strict):
     resume: dict[str, Any] | str | None = None
     checkpoint_id: str | None = Field(default=None, max_length=200)
     """Fork from this checkpoint instead of the thread head (time travel)."""
-    durability: Literal["sync", "async", "exit"] = "async"
+    durability: Literal["sync", "async", "exit"] = "sync"
     models: dict[str, str] | None = Field(default=None, max_length=16)
     """Role -> model for this run, e.g. ``{"critic": "claude-opus-..."}``;
     ``"default"`` covers every role not named. Models must be in MODELS_ALLOWED."""

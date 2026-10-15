@@ -85,6 +85,7 @@ mypy_path = "src:."
 packages = ["waypoint", "evals"]
 strict = true
 warn_unreachable = true
+exclude = ["^src/waypoint/agents/trash\\.py$", "^evals/results/"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]

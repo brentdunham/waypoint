@@ -10,7 +10,7 @@ import logging
 import uuid
 from typing import Any
 
-from waypoint.errors import Forbidden, NotFound
+from waypoint.errors import NotFound
 from waypoint.infra.db import Database
 from waypoint.infra.security import Principal
 
@@ -62,17 +62,17 @@ class ThreadStore:
         row = await self.get(thread_id)
         if row is None:
             raise NotFound(f"Unknown thread {thread_id!r}.")
-        if row["tenant_id"] != principal.tenant_id:
-            # Same response as a missing thread: never confirm existence.
-            raise NotFound(f"Unknown thread {thread_id!r}.")
-        owned = row["user_id"] == principal.user_id
-        if not owned and "tenant:admin" not in principal.scopes:
-            raise Forbidden("This thread belongs to another user.")
+        principal.require_owner(row["tenant_id"], row["user_id"], f"thread {thread_id!r}")
         return row
 
     async def list(self, principal: Principal, *, limit: int = 50) -> list[dict[str, Any]]:
         if self._db is None:
-            rows = [r for r in self._memory.values() if r["tenant_id"] == principal.tenant_id]
+            rows = [
+                r
+                for r in self._memory.values()
+                if r["tenant_id"] == principal.tenant_id
+                and (r["user_id"] == principal.user_id or principal.tenant_admin)
+            ]
             return rows[:limit]
         rows = await self._db.fetch_all(
             """select * from threads
@@ -81,7 +81,7 @@ class ThreadStore:
             (
                 principal.tenant_id,
                 principal.user_id,
-                "tenant:admin" in principal.scopes,
+                principal.tenant_admin,
                 limit,
             ),
         )

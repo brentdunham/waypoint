@@ -247,8 +247,11 @@ environment. Without Redis the API drives its own runs and ignores all but
 | Variable | Default | Notes |
 |---|---|---|
 | `QUEUE__CONCURRENCY` | `8` | Runs one worker process drives at once. A run waits for a model most of the time, so this is about memory and the API rate limit, not CPU. Tenant slots (`LIMITS__CONCURRENT_RUNS`) still apply across all workers. |
-| `QUEUE__DRAIN_S` | `20` | On SIGTERM, how long a worker waits for its runs to end before it stops the rest. Inside compose's `stop_grace_period: 30s`, so the stop is never a `SIGKILL`. |
+| `QUEUE__DRAIN_S` | `20` | On SIGTERM, wait this long, then hand unfinished runs to another worker without ending them. Keep below compose's `stop_grace_period: 30s`. |
 | `QUEUE__HEARTBEAT_S` | `10` | How often a worker writes `worker:<name>` (TTL three beats) and its liveness file. `/readyz` counts live workers from these; the container healthcheck (`python -m waypoint.worker --check`) fails after three missed beats. |
+| `QUEUE__LEASE_S` | `30` | Ownership TTL and minimum idle time for reclaim. Must exceed the heartbeat interval. |
+| `QUEUE__RECLAIM_S` | `10` | Interval between scans for abandoned entries. Recovery normally starts within lease plus scan interval. |
+| `QUEUE__MAX_ATTEMPTS` | `3` | Maximum deliveries. Further delivery fails the run. |
 | `WORKER_REPLICAS` | `2` | Compose only: worker containers. Two, so a worker that dies leaves one to carry on. About 140 MB each at rest (phase 1 log). |
 
 ## MCP tools (Workspace)

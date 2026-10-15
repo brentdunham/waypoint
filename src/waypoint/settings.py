@@ -317,7 +317,7 @@ class QueueSettings(BaseModel):
         ge=0,
         description=(
             "On shutdown, how long a worker waits for its runs to end before it "
-            "stops the rest. Keep it under the container's stop grace period (30 s)."
+            "hands the rest off. Keep it under the container's stop grace period (30 s)."
         ),
     )
     heartbeat_s: float = Field(
@@ -325,6 +325,21 @@ class QueueSettings(BaseModel):
         gt=0,
         description="How often a worker reports itself alive (Redis and its liveness file).",
     )
+    lease_s: float = Field(
+        default=30.0, gt=0, description="Run ownership lease; also the reclaim idle threshold."
+    )
+    reclaim_s: float = Field(
+        default=10.0, gt=0, description="Seconds between scans for abandoned runs."
+    )
+    max_attempts: int = Field(
+        default=3, ge=1, description="Maximum deliveries before a lost run fails."
+    )
+
+    @model_validator(mode="after")
+    def _lease_headroom(self) -> QueueSettings:
+        if self.heartbeat_s >= self.lease_s:
+            raise ValueError("QUEUE__HEARTBEAT_S must be less than QUEUE__LEASE_S")
+        return self
 
 
 class UploadSettings(BaseModel):

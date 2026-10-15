@@ -1,6 +1,8 @@
 # Design: the durable run queue
 
-Status: **phase 1 built** (written 2026-10-15), not yet deployed. All decisions settled with Brent
+Status: **phases 1 to 3 implemented locally** (2026-10-15), not yet deployed.
+Local verification is recorded in [NEXT-STEPS.md](../NEXT-STEPS.md); Bob
+kill/deploy acceptance remains pending. All decisions settled with Brent
 on 2026-10-15: Q2 as he changed it (the API only enqueues; runs execute in a
 separate `worker` service), the rest as proposed. Phase 0 is done. This note is the hand-off for the
 coding sessions: what to build, what is decided, what is still open, in what
@@ -40,7 +42,7 @@ Non-goals for v1: priorities or fair scheduling between tenants beyond the
 existing concurrency slots; scheduled or delayed runs; a queue other than
 Redis; exactly-once execution (see Q10).
 
-## What exists today
+## Starting point before phase 1
 
 * **`RunManager.start`** (`infra/runs.py`) checks the agent, opens the run's
   span, takes a tenant concurrency slot (a 429 comes from the POST, not a
@@ -239,10 +241,9 @@ implementation log records what changed from this design and why.
 * **Redis loss.** The queue is only as durable as Redis; compose runs it
   with `--appendonly yes`, and the audit row in Postgres still records the
   run.
-* **Two runs on one thread.** Nothing today stops a second POST on a thread
-  while a run on it is still going, and the queue does not change that: two
-  workers can drive two runs of one thread, as two tasks can now. Out of
-  scope here; worth a guard (409 while a run is `running`) as its own item.
+* **Two runs on one thread.** Addressed in the follow-up: enqueue and a
+  persistent thread reservation are one atomic operation. Terminal publication
+  releases only that run's reservation; handoff retains it.
 
 ## Implementation log
 
@@ -361,3 +362,45 @@ Redis 7), twice.
 
 Next: deploy to Bob and check `docker compose ps worker`, `/readyz`, and
 that `docker compose logs worker` shows runs. Then phase 2.
+
+### Recovery and safety follow-up (2026-10-15)
+
+Implemented ownership leases with attempt-specific tokens, atomic renewal
+of the owner and pending entry, reclaim with bounded deliveries and the
+original deadline, checkpoint continuation, and shutdown handoff. The
+terminal event and record commit in one Redis operation, so a worker lost
+after publication but before ACK cannot repeat the graph. Admission
+atomically reserves each thread, including queued runs. Memory mode remains
+single-process and cancels at shutdown.
+
+The follow-up also fences Postgres checkpoint writes. `run_fences` records
+the active attempt token. Registering a successor and writing a checkpoint
+both lock the thread row; the token check and checkpoint write share one
+transaction. Registration rechecks Redis ownership under that lock. This
+extends Q4 so a delayed old attempt cannot overwrite the successor's state,
+even if its graph resumes before its heartbeat notices the lost lease.
+
+Usage is a Redis hash of per-attempt snapshots, written after completed
+calls and summed at the end. Q11 uses snapshots rather than incremental
+counters so repeated flushes cannot double-count. Repeated model work is
+still charged. A killed provider call that never reported usage cannot be
+reconstructed; the provider's bill is the authority for unobserved calls.
+Each retry opens `run.attempt` in the same trace. Timelines include the
+accepted time and the final attempt's cumulative cost.
+
+The frontend handles `run.reclaimed`, clears partial text and displays the
+move. Transport ownership prevents late POST, stream or cancel callbacks
+from updating another conversation. MCP sends `{thread_id}:{tool_call_id}`
+as `io.waypoint/idempotency-key`. The notes server stores a day's replay
+results alongside each mutation in the same SQLite transaction, with tenant
+separation and payload-conflict checks. `remember` hashes the thread and
+tool call id for its store key. Other MCP servers must honor the metadata
+to deduplicate their own writes. `exit` repeats the original input from the
+starting checkpoint, or an empty branch if none existed. `sync` is default.
+
+Run record, SSE, cancel and historical trace ownership follow the thread
+user/tenant rule. In-memory thread lists use the database tier's user filter.
+Fractional run timeouts round the Redis slot TTL up to whole seconds.
+Validation results are in NEXT-STEPS.md. No production deployment or paid
+evaluation was performed. Bob kill/deploy and browser acceptance remain
+required before marking ROADMAP item 6 deployed and complete.

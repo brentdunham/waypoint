@@ -13,6 +13,7 @@ copied, so nothing a span might carry (prompt text with ``TRACING__CONTENT``,
 document ids) reaches a reviewer by accident.
 """
 
+import datetime as dt
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -105,7 +106,7 @@ def _tags(span: dict[str, Any]) -> dict[str, Any]:
 
 
 def _kind(name: str, tags: dict[str, Any]) -> Kind | None:
-    if name.startswith("run "):
+    if name.startswith("run ") or name == "run.attempt":
         return "run"
     if name.startswith("node "):
         return "node"
@@ -122,7 +123,7 @@ def timeline(trace: dict[str, Any], *, run_id: str, tenant_id: str) -> dict[str,
     """Steps relative to the run's start, ordered by time; refuses a foreign trace."""
     spans = trace.get("spans") or []
     steps: list[Step] = []
-    root: dict[str, Any] | None = None
+    roots: list[dict[str, Any]] = []
     for span in spans:
         tags = _tags(span)
         name = str(span.get("operationName", ""))
@@ -132,7 +133,7 @@ def timeline(trace: dict[str, Any], *, run_id: str, tenant_id: str) -> dict[str,
         if tags.get("waypoint.tenant_id") != tenant_id or tags.get("waypoint.run_id") != run_id:
             raise TraceMismatchError(name)
         if kind == "run":
-            root = span
+            roots.append(span)
         parent = next(
             (
                 r.get("spanID")
@@ -160,21 +161,27 @@ def timeline(trace: dict[str, Any], *, run_id: str, tenant_id: str) -> dict[str,
                 fields=fields,
             )
         )
-    if root is None:
+    if not roots:
         raise TraceNotReadyError  # the run span ends last; until then the trace is partial
+    root = min(roots, key=lambda s: float(s.get("startTime", 0)))
     start = float(root.get("startTime", 0)) / 1000
+    created = _tags(root).get("waypoint.run.created_at")
+    if isinstance(created, str):
+        start = dt.datetime.fromisoformat(created).timestamp() * 1000
+    runs = [s for s in steps if s.kind == "run"]
+    latest = max(runs, key=lambda s: s.start_ms + s.duration_ms)
+    duration = latest.start_ms + latest.duration_ms - start
     known = {s.id for s in steps}
     for step in steps:
         step.start_ms -= start
         if step.parent not in known:
             step.parent = None
     steps.sort(key=lambda s: (s.start_ms, s.kind != "node"))
-    run = next(s for s in steps if s.kind == "run")
     return {
         "status": "ready",
         "run_id": run_id,
         "trace_id": trace.get("traceID"),
-        "duration_ms": round(run.duration_ms, 1),
-        "cost_usd": (run.fields or {}).get("cost_usd"),
+        "duration_ms": round(duration, 1),
+        "cost_usd": (latest.fields or {}).get("cost_usd"),
         "steps": [s.public() for s in steps if s.kind != "run"],
     }

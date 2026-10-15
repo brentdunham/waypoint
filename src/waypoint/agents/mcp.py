@@ -40,6 +40,7 @@ from typing import Any
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool, StructuredTool, ToolException
+from langgraph.prebuilt import ToolRuntime
 from langgraph.runtime import get_runtime
 
 from waypoint.agents.context import AgentContext
@@ -49,6 +50,7 @@ log = logging.getLogger(__name__)
 
 TENANT_META = "io.waypoint/tenant"
 USER_META = "io.waypoint/user"
+IDEMPOTENCY_META = "io.waypoint/idempotency-key"
 SERVER_METADATA = "waypoint_tool_server"
 """Tool metadata key naming the tool's server; tracing reads it (T9)."""
 TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
@@ -241,9 +243,11 @@ class McpCatalog:
 def _calling_tool(server: McpServer, client: Any, remote: BaseTool, name: str) -> BaseTool:
     """Our tool for one MCP tool: tenant in ``_meta``, timeout, errors as messages."""
 
-    async def call(**arguments: Any) -> str:
+    async def call(runtime: ToolRuntime[AgentContext, Any], **arguments: Any) -> str:
         context = get_runtime(AgentContext).context
         meta = {TENANT_META: context.tenant_id, USER_META: context.user_id}
+        thread_id = runtime.config.get("configurable", {}).get("thread_id", context.thread_id)
+        meta[IDEMPOTENCY_META] = f"{thread_id}:{runtime.tool_call_id}"
         try:
             async with asyncio.timeout(server.timeout_s + 5), client:
                 result = await client.call_tool(

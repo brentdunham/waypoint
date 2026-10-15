@@ -153,6 +153,7 @@ export interface RunTrace {
 // --- SSE frames -----------------------------------------------------------
 
 export type RunEvent =
+  | { type: "run.reclaimed"; data: { attempt: number; from_checkpoint: boolean } }
   | {
       type: "run.started";
       data: { run_id: string; thread_id: string; agent: string; models?: Record<string, string> };

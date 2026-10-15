@@ -18,7 +18,7 @@ from typing import Annotated
 from fastapi import Depends, Request, Security
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
-from waypoint.errors import Forbidden, Unauthorized
+from waypoint.errors import Forbidden, NotFound, Unauthorized
 from waypoint.infra.db import Database
 
 log = logging.getLogger(__name__)
@@ -37,6 +37,17 @@ class Principal:
     def require(self, scope: str) -> None:
         if scope not in self.scopes and "*" not in self.scopes:
             raise Forbidden(f"Key is missing the {scope!r} scope.")
+
+    def require_owner(self, tenant_id: str, user_id: str, resource: str) -> None:
+        """One ownership rule for threads, runs and historical traces."""
+        if tenant_id != self.tenant_id:
+            raise NotFound(f"Unknown {resource}.")
+        if user_id != self.user_id and not self.tenant_admin:
+            raise Forbidden(f"This {resource.split(maxsplit=1)[0]} belongs to another user.")
+
+    @property
+    def tenant_admin(self) -> bool:
+        return "tenant:admin" in self.scopes or "*" in self.scopes
 
 
 ANONYMOUS = Principal(tenant_id="public", user_id="anonymous", key_id="-", scopes=frozenset("*"))

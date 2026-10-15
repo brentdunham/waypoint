@@ -26,6 +26,7 @@ the agents against a baseline.
 | [docs/API.md](docs/API.md) | Every endpoint, with curl |
 | [docs/TESTING.md](docs/TESTING.md) | How to run and extend each test tier |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What is done, what is next, and why in that order |
+| [docs/NEXT-STEPS.md](docs/NEXT-STEPS.md) | Follow-up fixes, verification, and remaining deployment acceptance |
 | [docs/case-studies/grounded.md](docs/case-studies/grounded.md) | Raising citation quality with the eval loop: measure, calibrate the judge, fix, re-measure |
 | [docs/case-studies/cost.md](docs/case-studies/cost.md) | Cutting a research run's cost by 38%: where the money goes, three one-trial experiments, a three-trial confirmation, and a check that was counting honest sentences as failures |
 | [docs/case-studies/retrieval.md](docs/case-studies/retrieval.md) | Which retrieval techniques earned their place: reranking, contextual retrieval, embedding models, chunk size, top-k, measured on a reviewed gold set |
@@ -57,10 +58,13 @@ Around them:
   it in a second HTTP request, five minutes or five days later.
 * **Time travel.** Every super-step leaves a checkpoint. List them, read state
   at any one, rewrite it, and continue down the new branch.
-* **Cancellation that reaches the model.** Closing the browser tab aborts the
-  fetch, which closes the SSE stream, which cancels the asyncio task running
-  the graph. `POST /runs/<id>/cancel` does the same across workers via Redis
-  pub/sub.
+* **Cancellation that reaches the model.** `POST /runs/<id>/cancel` stops
+  the graph across workers through Redis. Closing the browser detaches its
+  event stream; the run continues.
+* **Worker recovery.** A dead worker's run is reclaimed and continued from
+  its checkpoint. Shutdown drains, then hands unfinished runs to another
+  worker. `sync` durability is the default. One active run is admitted per
+  thread; overlapping submissions return `409`.
 * **Multi-tenancy that holds.** API keys resolve to a `{tenant, user, scopes}`
   principal; threads are owned; another tenant's thread returns 404, not 403.
 * **Limits that hold across workers.** A Lua token bucket and a Lua counting
@@ -153,7 +157,9 @@ uv sync
 copy .env.example .env
 
 docker compose -f compose.dev.yaml up -d    # postgres + redis only
-uv run python -m waypoint                        # API on :8000
+uv run python -m waypoint                 # API on :8000
+# In a second terminal, while Redis is configured:
+uv run python -m waypoint.worker          # executes queued runs
 
 cd web; npm install; npm run dev            # UI on :5173, proxies /api
 ```
@@ -170,7 +176,7 @@ cross-worker streaming and rate limits, and the logs say so at startup.
 ## Try it without the UI
 
 ```bash
-KEY=ak_dev000000.change-this-local-key
+KEY='paste-your-api-key-here'
 BASE=http://localhost:8000/api/v1
 
 TID=$(curl -s -X POST $BASE/threads -H "Authorization: Bearer $KEY" \

@@ -3,8 +3,8 @@
 docs/design/queue.md. With Redis the queue is the stream ``runs:queue`` and
 its consumer group ``workers``: ``XADD`` to enqueue, ``XREADGROUP`` to claim
 one run for one worker, ``XACK`` and ``XDEL`` when the run ends. A claimed run
-stays in the group's pending list until then, which is what lets a later
-phase hand a dead worker's runs to another one.
+stays in the group's pending list until then. Reclaim transfers an abandoned
+entry; an attempt-specific owner token fences output and terminal writes.
 
 Also here, because they are the queue's bookkeeping rather than the run's:
 
@@ -21,11 +21,14 @@ tests without Redis: the API process runs the worker itself.
 import asyncio
 import json
 import logging
+import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol, cast
 
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
+
+from waypoint.errors import Conflict
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +54,7 @@ class RunJob:
     resume: Any = None
     """The ``Command(resume=...)`` value; ``None`` means a fresh input."""
     checkpoint_id: str | None = None
-    durability: str = "async"
+    durability: str = "sync"
     models: dict[str, str] = field(default_factory=dict)
     trace_id: str | None = None
     """Chosen by the API; the worker's run span takes it (tracing.new_trace_id)."""
@@ -59,6 +62,7 @@ class RunJob:
     """The span of the request that started the run (O8), as hex ids."""
     slot: str | None = None
     """The tenant concurrency slot the API took; the worker gives it back."""
+    deadline: float | None = None
 
     def dumps(self) -> str:
         return json.dumps(asdict(self), default=str, separators=(",", ":"))
@@ -73,6 +77,54 @@ class RunJob:
 class Claimed:
     entry_id: str
     job: RunJob
+    attempt: int = 1
+    reclaimed: bool = False
+    owner: str | None = None
+
+
+class OwnershipLostError(Exception):
+    """This attempt must stop without ending or acknowledging the run."""
+
+
+ENQUEUE = """
+if redis.call('exists', KEYS[1]) == 1 then return false end
+local entry = redis.call('xadd', KEYS[2], '*', 'j', ARGV[1])
+redis.call('set', KEYS[1], ARGV[2])
+return entry
+"""
+
+RENEW = """
+if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end
+local entry = redis.call('xclaim', KEYS[2], ARGV[2], ARGV[3], 0, ARGV[4], 'JUSTID')
+if #entry == 0 then return 0 end
+redis.call('pexpire', KEYS[1], ARGV[5])
+return 1
+"""
+
+HANDOFF = """
+if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('xclaim', KEYS[2], ARGV[2], ARGV[3], 0, ARGV[4], 'IDLE', ARGV[5], 'JUSTID')
+redis.call('del', KEYS[1])
+return 1
+"""
+
+COMPLETE = """
+if redis.call('get', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('xack', KEYS[2], ARGV[2], ARGV[3])
+redis.call('xdel', KEYS[2], ARGV[3])
+if redis.call('get', KEYS[3]) == ARGV[4] then redis.call('del', KEYS[3]) end
+redis.call('del', KEYS[1])
+return 1
+"""
+
+OWN = """
+local pending = redis.call('xpending', KEYS[2], ARGV[2], ARGV[4], ARGV[4], 1)
+if #pending == 0 or pending[1][2] ~= ARGV[3] then return 0 end
+if redis.call('exists', KEYS[1]) == 1 then return 0 end
+redis.call('set', KEYS[1], ARGV[1], 'PX', ARGV[5])
+redis.call('xclaim', KEYS[2], ARGV[2], ARGV[3], 0, ARGV[4], 'JUSTID')
+return 1
+"""
 
 
 class RunQueue(Protocol):
@@ -86,11 +138,20 @@ class RunQueue(Protocol):
     async def forget(self, consumer: str) -> None: ...
     async def workers(self) -> list[dict[str, Any]]: ...
     async def stats(self) -> dict[str, int]: ...
+    async def reclaim(self, consumer: str, *, lease_s: float) -> Claimed | None: ...
+    async def own(self, claimed: Claimed, consumer: str, *, lease_s: float) -> Claimed: ...
+    async def renew(self, claimed: Claimed, consumer: str, *, lease_s: float) -> bool: ...
+    async def handoff(self, claimed: Claimed, consumer: str, *, lease_s: float) -> None: ...
+    async def complete(self, claimed: Claimed) -> None: ...
+    async def baseline(self, run_id: str, checkpoint: str | None) -> str | None: ...
+    async def save_usage(self, run_id: str, attempt: str, usage: dict[str, Any]) -> None: ...
+    async def usage(self, run_id: str) -> list[dict[str, Any]]: ...
 
 
 class RedisRunQueue:
     def __init__(self, client: Redis) -> None:
         self._redis = client
+        self._cursor = "0-0"
 
     async def ensure(self) -> None:
         """Create the stream and the group if they do not exist. Idempotent."""
@@ -101,8 +162,111 @@ class RedisRunQueue:
                 raise
 
     async def enqueue(self, job: RunJob) -> str:
-        raw = cast("bytes", await self._redis.xadd(STREAM, {b"j": job.dumps().encode()}))
+        raw = await self._redis.eval(
+            ENQUEUE, 2, f"thread:{job.thread_id}:active", STREAM, job.dumps(), job.run_id
+        )
+        if not raw:
+            raise Conflict("This thread already has an active run.")
+        raw = cast("bytes", raw)
         return raw.decode()
+
+    async def reclaim(self, consumer: str, *, lease_s: float) -> Claimed | None:
+        try:
+            result = await self._redis.xautoclaim(
+                STREAM, GROUP, consumer, int(lease_s * 1000), self._cursor, count=1
+            )
+        except ResponseError as exc:
+            if "NOGROUP" not in str(exc):
+                raise
+            await self.ensure()
+            self._cursor = "0-0"
+            return None
+        self._cursor = result[0].decode()
+        for entry_id, fields in result[1]:
+            pending = await self._redis.xpending_range(STREAM, GROUP, entry_id, entry_id, 1)
+            attempt = int(pending[0]["times_delivered"]) if pending else 1
+            try:
+                return Claimed(entry_id.decode(), RunJob.loads(fields[b"j"]), attempt, True)
+            except Exception:
+                log.exception("dropping an unreadable pending entry %r", entry_id)
+                await self.ack(entry_id.decode())
+        return None
+
+    async def own(self, claimed: Claimed, consumer: str, *, lease_s: float) -> Claimed:
+        owner = f"{consumer}:{uuid.uuid4().hex}"
+        ok = await self._redis.eval(
+            OWN,
+            2,
+            f"run:{claimed.job.run_id}:owner",
+            STREAM,
+            owner,
+            GROUP,
+            consumer,
+            claimed.entry_id,
+            int(lease_s * 1000),
+        )
+        if not ok:
+            raise OwnershipLostError
+        return Claimed(claimed.entry_id, claimed.job, claimed.attempt, claimed.reclaimed, owner)
+
+    async def renew(self, claimed: Claimed, consumer: str, *, lease_s: float) -> bool:
+        return bool(
+            await self._redis.eval(
+                RENEW,
+                2,
+                f"run:{claimed.job.run_id}:owner",
+                STREAM,
+                claimed.owner or "",
+                GROUP,
+                consumer,
+                claimed.entry_id,
+                int(lease_s * 1000),
+            )
+        )
+
+    async def handoff(self, claimed: Claimed, consumer: str, *, lease_s: float) -> None:
+        await self._redis.eval(
+            HANDOFF,
+            2,
+            f"run:{claimed.job.run_id}:owner",
+            STREAM,
+            claimed.owner or "",
+            GROUP,
+            consumer,
+            claimed.entry_id,
+            int(lease_s * 1000),
+        )
+
+    async def complete(self, claimed: Claimed) -> None:
+        await self._redis.eval(
+            COMPLETE,
+            3,
+            f"run:{claimed.job.run_id}:owner",
+            STREAM,
+            f"thread:{claimed.job.thread_id}:active",
+            claimed.owner or "",
+            GROUP,
+            claimed.entry_id,
+            claimed.job.run_id,
+        )
+
+    async def baseline(self, run_id: str, checkpoint: str | None) -> str | None:
+        key = f"run:{run_id}:start"
+        await self._redis.set(key, checkpoint or "", nx=True, ex=CANCEL_TTL_S)
+        raw = await self._redis.get(key)
+        return (raw.decode() if isinstance(raw, bytes) else raw) or None
+
+    async def save_usage(self, run_id: str, attempt: str, usage: dict[str, Any]) -> None:
+        key = f"run:{run_id}:usage"
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.hset(key, attempt, json.dumps(usage))
+            pipe.expire(key, CANCEL_TTL_S)
+            await pipe.execute()
+
+    async def usage(self, run_id: str) -> list[dict[str, Any]]:
+        return [
+            json.loads(raw) for raw in (await self._redis.hgetall(f"run:{run_id}:usage")).values()
+        ]
 
     async def read(self, consumer: str, *, block_ms: int) -> Claimed | None:
         try:
@@ -172,13 +336,21 @@ class MemoryRunQueue:
         self._running: set[str] = set()
         self._cancelled: set[str] = set()
         self._workers: dict[str, dict[str, Any]] = {}
+        self._threads: dict[str, str] = {}
+        self._entries: dict[str, RunJob] = {}
+        self._baselines: dict[str, str | None] = {}
+        self._usage: dict[str, dict[str, dict[str, Any]]] = {}
 
     async def ensure(self) -> None:
         return None
 
     async def enqueue(self, job: RunJob) -> str:
+        if job.thread_id in self._threads:
+            raise Conflict("This thread already has an active run.")
         self._seq += 1
         entry = f"0-{self._seq}"
+        self._threads[job.thread_id] = job.run_id
+        self._entries[entry] = job
         await self._jobs.put(Claimed(entry, job))
         return entry
 
@@ -192,6 +364,33 @@ class MemoryRunQueue:
 
     async def ack(self, entry_id: str) -> None:
         self._running.discard(entry_id)
+        job = self._entries.pop(entry_id, None)
+        if job is not None and self._threads.get(job.thread_id) == job.run_id:
+            del self._threads[job.thread_id]
+
+    async def reclaim(self, consumer: str, *, lease_s: float) -> Claimed | None:
+        return None
+
+    async def own(self, claimed: Claimed, consumer: str, *, lease_s: float) -> Claimed:
+        return claimed
+
+    async def renew(self, claimed: Claimed, consumer: str, *, lease_s: float) -> bool:
+        return True
+
+    async def handoff(self, claimed: Claimed, consumer: str, *, lease_s: float) -> None:
+        await self.ack(claimed.entry_id)
+
+    async def complete(self, claimed: Claimed) -> None:
+        await self.ack(claimed.entry_id)
+
+    async def baseline(self, run_id: str, checkpoint: str | None) -> str | None:
+        return self._baselines.setdefault(run_id, checkpoint)
+
+    async def save_usage(self, run_id: str, attempt: str, usage: dict[str, Any]) -> None:
+        self._usage.setdefault(run_id, {})[attempt] = usage
+
+    async def usage(self, run_id: str) -> list[dict[str, Any]]:
+        return list(self._usage.get(run_id, {}).values())
 
     async def request_cancel(self, run_id: str) -> None:
         self._cancelled.add(run_id)

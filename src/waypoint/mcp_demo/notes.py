@@ -24,11 +24,14 @@ another's notes.
 import contextlib
 import datetime as dt
 import hmac
+import json
 import os
 import sqlite3
 import sys
+import threading
+import time
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -40,6 +43,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 
 TENANT_META = "io.waypoint/tenant"
+IDEMPOTENCY_META = "io.waypoint/idempotency-key"
+DEDUPE_S = 86_400
 LIST_LIMIT = 20
 MIN_WORD = 3
 """Shorter words (a, of, to) would match nearly every note."""
@@ -54,8 +59,8 @@ class Note:
 
 
 class NoteStore(Protocol):
-    def add(self, tenant: str, text: str) -> Note: ...
-    def delete(self, tenant: str, note_id: int) -> bool: ...
+    def add(self, tenant: str, text: str, key: str | None = None) -> Note: ...
+    def delete(self, tenant: str, note_id: int, key: str | None = None) -> bool: ...
     def all(self, tenant: str) -> list[Note]: ...
 
 
@@ -66,21 +71,64 @@ class MemoryNotes:
     notes: dict[str, list[Note]] = field(default_factory=dict)
     next_ids: dict[str, int] = field(default_factory=dict)
 
-    def add(self, tenant: str, text: str) -> Note:
+    _results: dict[tuple[str, str], tuple[float, str, str, Note | bool]] = field(
+        default_factory=dict
+    )
+    _lock: Any = field(default_factory=threading.RLock)
+
+    def _cached(
+        self, tenant: str, key: str | None, operation: str, payload: str
+    ) -> Note | bool | None:
+        now = time.time()
+        self._results = {k: v for k, v in self._results.items() if v[0] > now}
+        cached = self._results.get((tenant, key)) if key else None
+        if cached is not None:
+            if cached[1:3] != (operation, payload):
+                raise ValueError("Idempotency key reused for a different operation")
+            return cached[3]
+        return None
+
+    def add(self, tenant: str, text: str, key: str | None = None) -> Note:
+        with self._lock:
+            cached = self._cached(tenant, key, "add", text)
+            if isinstance(cached, Note):
+                return cached
+            note = self._add(tenant, text)
+            if key:
+                self._results[tenant, key] = (time.time() + DEDUPE_S, "add", text, note)
+            return note
+
+    def _add(self, tenant: str, text: str) -> Note:
         number = self.next_ids.get(tenant, 1)
         self.next_ids[tenant] = number + 1
         note = Note(number, text, _now())
         self.notes.setdefault(tenant, []).append(note)
         return note
 
-    def delete(self, tenant: str, note_id: int) -> bool:
+    def delete(self, tenant: str, note_id: int, key: str | None = None) -> bool:
+        with self._lock:
+            cached = self._cached(tenant, key, "delete", str(note_id))
+            if isinstance(cached, bool):
+                return cached
+            result = self._delete(tenant, note_id)
+            if key:
+                self._results[tenant, key] = (
+                    time.time() + DEDUPE_S,
+                    "delete",
+                    str(note_id),
+                    result,
+                )
+            return result
+
+    def _delete(self, tenant: str, note_id: int) -> bool:
         mine = self.notes.get(tenant, [])
         kept = [n for n in mine if n.note_id != note_id]
         self.notes[tenant] = kept
         return len(kept) < len(mine)
 
     def all(self, tenant: str) -> list[Note]:
-        return list(self.notes.get(tenant, []))
+        with self._lock:
+            return list(self.notes.get(tenant, []))
 
 
 class SqliteNotes:
@@ -96,6 +144,44 @@ class SqliteNotes:
                 " tenant text not null, number integer not null, text text not null,"
                 " created_at text not null, primary key (tenant, number))"
             )
+            db.execute(
+                "create table if not exists dedupe (tenant text, key text, operation text, payload text, result text, expires real, primary key (tenant, key))"
+            )
+
+    @staticmethod
+    def _cached(
+        db: sqlite3.Connection, tenant: str, key: str | None, operation: str, payload: str
+    ) -> Any:
+        db.execute("delete from dedupe where expires <= ?", (time.time(),))
+        row = (
+            db.execute(
+                "select operation, payload, result from dedupe where tenant = ? and key = ?",
+                (tenant, key),
+            ).fetchone()
+            if key
+            else None
+        )
+        if row is None:
+            return None
+        if row[:2] != (operation, payload):
+            raise ValueError("Idempotency key reused for a different operation")
+        return json.loads(row[2])
+
+    @staticmethod
+    def _save(
+        db: sqlite3.Connection,
+        tenant: str,
+        key: str | None,
+        operation: str,
+        payload: str,
+        *,
+        result: Any,
+    ) -> None:
+        if key:
+            db.execute(
+                "insert into dedupe values (?, ?, ?, ?, ?, ?)",
+                (tenant, key, operation, payload, json.dumps(result), time.time() + DEDUPE_S),
+            )
 
     @contextlib.contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
@@ -106,9 +192,12 @@ class SqliteNotes:
         finally:
             db.close()
 
-    def add(self, tenant: str, text: str) -> Note:
+    def add(self, tenant: str, text: str, key: str | None = None) -> Note:
         with self._db() as db:
-            db.execute("begin immediate")  # the next number is read and written together
+            db.execute("begin immediate")  # the mutation and its dedupe record commit together
+            cached = self._cached(db, tenant, key, "add", text)
+            if cached is not None:
+                return Note(**cached)
             (last,) = db.execute(
                 "select coalesce(max(number), 0) from notes where tenant = ?", (tenant,)
             ).fetchone()
@@ -117,14 +206,21 @@ class SqliteNotes:
                 "insert into notes values (?, ?, ?, ?)",
                 (tenant, note.note_id, note.text, note.created_at),
             )
+            self._save(db, tenant, key, "add", text, result=asdict(note))
         return note
 
-    def delete(self, tenant: str, note_id: int) -> bool:
+    def delete(self, tenant: str, note_id: int, key: str | None = None) -> bool:
         with self._db() as db:
+            db.execute("begin immediate")
+            cached = self._cached(db, tenant, key, "delete", str(note_id))
+            if cached is not None:
+                return bool(cached)
             cursor = db.execute(
                 "delete from notes where tenant = ? and number = ?", (tenant, note_id)
             )
-            return cursor.rowcount > 0
+            result = cursor.rowcount > 0
+            self._save(db, tenant, key, "delete", str(note_id), result=result)
+            return result
 
     def all(self, tenant: str) -> list[Note]:
         with self._db() as db:
@@ -145,6 +241,12 @@ def _tenant(ctx: Context) -> str:
     if not isinstance(tenant, str) or not tenant:
         raise ToolError("This server needs the caller's tenant in _meta; none was sent.")
     return tenant
+
+
+def _key(ctx: Context) -> str | None:
+    meta = (ctx.request_context.meta if ctx.request_context else None) or {}
+    key = meta.get(IDEMPOTENCY_META)
+    return key if isinstance(key, str) and key else None
 
 
 def _show(notes: list[Note]) -> str:
@@ -172,13 +274,13 @@ def build(store: NoteStore) -> FastMCP:
     @server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     def add(text: str, ctx: Context) -> str:
         """Save a new note for the user."""
-        note = store.add(_tenant(ctx), text.strip())
+        note = store.add(_tenant(ctx), text.strip(), _key(ctx))
         return f"Saved note #{note.note_id}."
 
     @server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
     def delete(note_id: int, ctx: Context) -> str:
         """Delete one of the user's notes by its number."""
-        if not store.delete(_tenant(ctx), note_id):
+        if not store.delete(_tenant(ctx), note_id, _key(ctx)):
             raise ToolError(f"No note #{note_id}.")
         return f"Deleted note #{note_id}."
 

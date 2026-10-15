@@ -37,6 +37,7 @@ from waypoint.agents.types import Graph
 from waypoint.infra import redis as redis_infra
 from waypoint.infra.bus import EventBus, MemoryBus, RedisBus
 from waypoint.infra.cache import RedisCache
+from waypoint.infra.checkpoints import FencedPostgresSaver
 from waypoint.infra.db import Database
 from waypoint.infra.queue import MemoryRunQueue, RedisRunQueue, RunQueue
 from waypoint.infra.quota import MemoryUploadQuota, RedisUploadQuota, UploadQuota
@@ -165,11 +166,10 @@ async def create_runtime(
         ).open()
         closers.append(db.close)
 
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
         from langgraph.store.postgres.aio import AsyncPostgresStore
 
         index = await _memory_index(settings)
-        checkpointer = AsyncPostgresSaver(db.pool)  # type: ignore[arg-type]
+        checkpointer = FencedPostgresSaver(db)
         store = AsyncPostgresStore(db.pool, index=index)  # type: ignore[arg-type]
 
         # All schema work behind one advisory lock. Workers boot in parallel,

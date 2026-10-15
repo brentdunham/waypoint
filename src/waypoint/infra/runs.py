@@ -35,8 +35,9 @@ from waypoint.agents.context import AgentContext
 from waypoint.agents.types import Graph
 from waypoint.errors import Conflict, NotFound
 from waypoint.infra.bus import TERMINAL, Event, EventBus
+from waypoint.infra.checkpoints import checkpoint_fence
 from waypoint.infra.db import Database
-from waypoint.infra.queue import Claimed, RunJob, RunQueue
+from waypoint.infra.queue import Claimed, OwnershipLostError, RunJob, RunQueue
 from waypoint.infra.ratelimit import Limiter
 from waypoint.infra.security import Principal
 from waypoint.log_config import bind, unbind
@@ -53,7 +54,7 @@ from waypoint.tracing import (
     new_trace_id,
     start_run_span,
 )
-from waypoint.usage import METER, Meter
+from waypoint.usage import METER, Meter, merge_usage
 
 log = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ class RunManager:
         payload: dict[str, Any] | None = None,
         resume: Any = None,
         checkpoint_id: str | None = None,
-        durability: str = "async",
+        durability: str = "sync",
         models: dict[str, str] | None = None,
         link: SpanContext | None = None,
     ) -> RunRecord:
@@ -186,6 +187,7 @@ class RunManager:
                     trace_id=record.trace_id,
                     link=link_to_dict(link),
                     slot=slot,
+                    deadline=time.time() + self._settings.limits.run_timeout_s,
                 )
             )
         except BaseException as exc:
@@ -214,8 +216,7 @@ class RunManager:
         record = await self.get(run_id)
         if record is None:
             raise NotFound(f"Unknown run {run_id!r}.")
-        if record.tenant_id != principal.tenant_id:
-            raise NotFound(f"Unknown run {run_id!r}.")  # do not leak existence
+        principal.require_owner(record.tenant_id, record.user_id, f"run {run_id!r}")
         return record
 
     async def events(
@@ -256,17 +257,18 @@ class RunManager:
         """
         record = await self.get(run_id)
         if record is not None:
-            if record.tenant_id != principal.tenant_id:
-                raise NotFound(f"Unknown run {run_id!r}.")
+            principal.require_owner(record.tenant_id, record.user_id, f"run {run_id!r}")
             return record.trace_id
         row = None
         if self._db is not None:
             with contextlib.suppress(Exception):  # not a uuid: no such run
                 row = await self._db.fetch_one(
-                    "select tenant_id, trace_id from run_audit where run_id = %s", (run_id,)
+                    "select tenant_id, user_id, trace_id from run_audit where run_id = %s",
+                    (run_id,),
                 )
-        if row is None or row["tenant_id"] != principal.tenant_id:
+        if row is None:
             raise NotFound(f"Unknown run {run_id!r}.")
+        principal.require_owner(row["tenant_id"], row["user_id"], f"run {run_id!r}")
         trace_id: str | None = row["trace_id"]
         return trace_id
 
@@ -329,6 +331,9 @@ class RunWorker:
         self._started_at = _now()
         self.claimed = 0
         self._driving: set[str] = set()
+        self._claims: dict[str, Claimed] = {}
+        self._handoffs: set[str] = set()
+        self._lost: set[str] = set()
         """Runs this worker has taken off the queue since it started."""
         self.drain_s = settings.queue.drain_s if drain else 0.0
 
@@ -354,7 +359,7 @@ class RunWorker:
         )
 
     async def aclose(self) -> None:
-        """Stop taking runs, give those in flight ``QUEUE__DRAIN_S`` to end, stop the rest."""
+        """Drain, then hand unfinished Redis jobs to a successor."""
         loop_task = self._background[0] if self._background else None
         if loop_task is not None:
             loop_task.cancel()
@@ -362,8 +367,11 @@ class RunWorker:
                 await loop_task
         if self._tasks:
             _done, still = await asyncio.wait(list(self._tasks.values()), timeout=self.drain_s)
-            for task in still:
-                task.cancel()
+            for run_id, task in self._tasks.items():
+                if task in still:
+                    if self._claims.get(run_id) is not None and self._claims[run_id].owner:
+                        self._handoffs.add(run_id)
+                    task.cancel()
             if still:
                 log.warning("stopped %d runs still going at shutdown", len(still))
                 await asyncio.gather(*still, return_exceptions=True)
@@ -377,10 +385,21 @@ class RunWorker:
 
     async def _loop(self) -> None:
         block_ms = self._settings.stream.block_ms
+        next_reclaim = 0.0
         while True:
             await self._capacity.acquire()
             try:
-                claimed = await self._queue.read(self.consumer, block_ms=block_ms)
+                claimed = None
+                if time.monotonic() >= next_reclaim:
+                    claimed = await self._queue.reclaim(
+                        self.consumer, lease_s=self._settings.queue.lease_s
+                    )
+                    next_reclaim = time.monotonic() + self._settings.queue.reclaim_s
+                if claimed is None:
+                    claimed = await self._queue.read(
+                        self.consumer,
+                        block_ms=min(block_ms, int(self._settings.queue.reclaim_s * 1000)),
+                    )
             except asyncio.CancelledError:
                 self._capacity.release()
                 raise
@@ -394,11 +413,22 @@ class RunWorker:
                 continue
             self.claimed += 1
             run_id = claimed.job.run_id
+            if previous := self._tasks.get(run_id):
+                # This process itself may reclaim an expired attempt after a
+                # loop stall. Finish its cancellation before reusing local
+                # bookkeeping for the successor attempt.
+                self._lost.add(run_id)
+                previous.cancel()
+                await asyncio.gather(previous, return_exceptions=True)
             task = asyncio.create_task(self._run(claimed), name=f"run-{run_id}")
             self._tasks[run_id] = task
 
             def done(_t: asyncio.Task[None], run_id: str = run_id) -> None:
-                self._tasks.pop(run_id, None)
+                if self._tasks.get(run_id) is _t:
+                    self._tasks.pop(run_id, None)
+                    self._claims.pop(run_id, None)
+                    self._handoffs.discard(run_id)
+                    self._lost.discard(run_id)
                 self._capacity.release()
 
             task.add_done_callback(done)
@@ -433,6 +463,21 @@ class RunWorker:
                 log.warning("worker heartbeat failed", exc_info=True)
 
     async def _beat_once(self) -> None:
+        for run_id, claimed in list(self._claims.items()):
+            try:
+                owns = await self._queue.renew(
+                    claimed, self.consumer, lease_s=self._settings.queue.lease_s
+                )
+            except Exception:
+                # Without a renewed lease this worker must stop, even on a
+                # Redis outage. Its successor will recover the pending entry.
+                owns = False
+            if not owns:
+                self._lost.add(run_id)
+                if task := self._tasks.get(run_id):
+                    task.cancel()
+            elif claimed.job.slot and self._limiter is not None:
+                await self._limiter.refresh(claimed.job.tenant_id, claimed.job.slot)
         info: dict[str, Any] = {
             "started_at": self._started_at,
             "running": self.running,
@@ -448,42 +493,97 @@ class RunWorker:
     # -- one run ----------------------------------------------------------------
 
     async def _run(self, claimed: Claimed) -> None:
-        """Drive one claimed run, and take it off the queue however it ends."""
+        """Only the fenced owner may end and acknowledge a claimed run."""
         job = claimed.job
-        entered = False
+        finished = False
         try:
-            if await self._queue.cancel_requested(job.run_id):
-                await self._end_unstarted(job, "cancelled", None)
-            elif (graph := self._graphs.get(job.agent)) is None:
-                await self._end_unstarted(job, "failed", f"No agent named {job.agent!r}.")
-            else:
-                entered = True
-                await self._drive(job, graph)
+            claimed = await self._queue.own(
+                claimed, self.consumer, lease_s=self._settings.queue.lease_s
+            )
+            self._claims[job.run_id] = claimed
+            await self._execute(claimed)
+            finished = True
+        except OwnershipLostError:
+            self._lost.add(job.run_id)
         except asyncio.CancelledError:
-            if not entered:  # stopped at shutdown before its graph began
+            if not self._moving(job.run_id):
+                # Includes shutdown before the graph entered its protected body.
                 with contextlib.suppress(Exception):
                     await asyncio.shield(self._end_unstarted(job, "cancelled", None))
-            # Otherwise the run already wrote its run.cancelled.
+                    finished = True
         except Exception:
-            log.exception("run worker could not finish a run", extra={"run_id": job.run_id})
+            log.exception(
+                "run attempt could not finish; leaving it for recovery",
+                extra={"run_id": job.run_id},
+            )
         finally:
-            with contextlib.suppress(Exception):
-                await asyncio.shield(self._queue.ack(claimed.entry_id))
+            if job.run_id in self._claims:
+                if finished:
+                    # Terminal publication has ended graph writes. Return the
+                    # tenant slot and acknowledge only this owned entry.
+                    await self._release_slot(job)
+                    with contextlib.suppress(Exception):
+                        await asyncio.shield(self._queue.complete(claimed))
+                elif job.run_id not in self._lost:
+                    with contextlib.suppress(Exception):
+                        await asyncio.shield(
+                            self._queue.handoff(
+                                claimed, self.consumer, lease_s=self._settings.queue.lease_s
+                            )
+                        )
+            self._claims.pop(job.run_id, None)
+            self._handoffs.discard(job.run_id)
+            self._lost.discard(job.run_id)
 
-    async def _end_unstarted(self, job: RunJob, status: str, error: str | None) -> None:
-        """End a run that never reached its graph: cancelled while queued, or unknown."""
-        record = _record(job)
-        record.status, record.error = status, error
-        event = "run.cancelled" if status == "cancelled" else "run.failed"
-        data: dict[str, Any] = {"run_id": job.run_id}
-        if error:
-            data |= {"error": error, "type": "NotFound"}
-        await self._bus.append(job.run_id, event, data)
-        with contextlib.suppress(Exception):
-            await self._bus.set_meta(job.run_id, record.public())
+    async def _execute(self, claimed: Claimed) -> None:
+        job = claimed.job
+        meta = await self._bus.get_meta(job.run_id)
+        if meta and meta.get("status") != "running":
+            # The predecessor published its terminal result atomically,
+            # then died before ACK. Never execute that graph again.
+            await _audit_end(self._db, RunRecord(**meta))
+        elif await self._queue.cancel_requested(job.run_id):
+            await self._end_unstarted(job, "cancelled", None)
+        elif job.deadline is not None and time.time() >= job.deadline:
+            await self._end_unstarted(job, "failed", "Run exceeded its deadline.")
+        elif claimed.attempt > self._settings.queue.max_attempts:
+            await self._end_unstarted(
+                job,
+                "failed",
+                f"The worker running this run was lost {claimed.attempt - 1} times.",
+            )
+        elif (graph := self._graphs.get(job.agent)) is None:
+            await self._end_unstarted(job, "failed", f"No agent named {job.agent!r}.")
+        else:
+            async with checkpoint_fence(
+                self._db, self._queue, claimed, self.consumer, self._settings.queue.lease_s
+            ):
+                await self._drive(job, graph)
+
+    def _moving(self, run_id: str) -> bool:
+        return run_id in self._lost or run_id in self._handoffs
+
+    async def _append(self, run_id: str, type_: str, data: dict[str, Any]) -> str:
+        owner = self._claims[run_id].owner
+        if owner is None:
+            return await self._bus.append(run_id, type_, data)
+        return await self._bus.append(run_id, type_, data, owner=owner)
+
+    async def _finish(self, record: RunRecord, type_: str, data: dict[str, Any]) -> None:
+        owner = self._claims[record.run_id].owner
+        await self._bus.finish(record.run_id, type_, data, record.public(), owner=owner)
         with contextlib.suppress(Exception):
             await _audit_end(self._db, record)
-        await self._release_slot(job)
+
+    async def _end_unstarted(self, job: RunJob, status: str, error: str | None) -> None:
+        record = _record(job)
+        record.status, record.error = status, error
+        record.usage = merge_usage(await self._queue.usage(job.run_id))
+        event = "run.cancelled" if status == "cancelled" else "run.failed"
+        data: dict[str, Any] = {"run_id": job.run_id, "usage": record.usage}
+        if error:
+            data |= {"error": error, "type": "recovery"}
+        await self._finish(record, event, data)
 
     async def _release_slot(self, job: RunJob) -> None:
         if job.slot is not None and self._limiter is not None:
@@ -501,6 +601,8 @@ class RunWorker:
             resume=job.resume is not None,
             link=link_from_dict(job.link),
             trace_id=job.trace_id,
+            attempt=self._claims[job.run_id].attempt,
+            created_at=job.created_at,
         )
         if job.slot is not None and self._limiter is not None:
             # The lease ran from when the API accepted the run; time in the
@@ -531,103 +633,118 @@ class RunWorker:
             agent=job.agent,
             models=tuple(sorted(job.models.items())),
             scopes=tuple(job.scopes),
+            thread_id=job.thread_id,
         )
         return config, context
 
-    async def _drive(self, job: RunJob, graph: Graph) -> None:
-        record = _record(job)
-        run_id, limits, durability, resume = (
-            job.run_id,
-            self._settings.limits,
-            job.durability,
-            job.resume,
+    async def _input(
+        self, job: RunJob, graph: Graph, config: RunnableConfig
+    ) -> tuple[Any, RunnableConfig]:
+        run_id = job.run_id
+        claimed = self._claims[run_id]
+        # Compare the head, not a requested historical checkpoint: a run that
+        # forks history still owns the whole thread until it ends.
+        head_config: RunnableConfig = {"configurable": {"thread_id": job.thread_id}}
+        head = await graph.aget_state(head_config)
+        checkpoint = (
+            (head.config.get("configurable") or {}).get("checkpoint_id") if head.config else None
         )
-        span = await self._open(job)
-        config, context = self._config(job)
-        graph_input: Any = Command(resume=resume) if resume is not None else job.payload
+        baseline = await self._queue.baseline(run_id, checkpoint)
+        from_checkpoint = claimed.reclaimed and job.durability != "exit" and checkpoint != baseline
+        graph_input: Any = Command(resume=job.resume) if job.resume is not None else job.payload
+        if from_checkpoint:
+            config["configurable"] = {"thread_id": job.thread_id}
+            graph_input = None
+        elif claimed.reclaimed and job.durability == "exit" and not job.checkpoint_id:
+            # A non-existent explicit id makes the saver start an empty branch
+            # when this run began on an empty thread. Never append its original
+            # input to the partially written attempt's head.
+            config["configurable"] = {
+                "thread_id": job.thread_id,
+                "checkpoint_id": baseline or "00000000-0000-0000-0000-000000000000",
+            }
+        if claimed.reclaimed:
+            await self._append(
+                run_id,
+                "run.reclaimed",
+                {"attempt": claimed.attempt, "from_checkpoint": from_checkpoint},
+            )
+        return graph_input, head_config
 
-        # Every chat model call in the graph reports to the meter through the
-        # callbacks; embeddings and reranking find it through METER. This task
-        # has its own copy of the context, so neither leaks to other runs.
-        meter = Meter(charge=self._charger(record.tenant_id))
+    async def _drive(self, job: RunJob, graph: Graph) -> None:
+        record, run_id = _record(job), job.run_id
+        claimed = self._claims[run_id]
+        config, context = self._config(job)
+        graph_input, head_config = await self._input(job, graph, config)
+        span = await self._open(job)
+
+        async def persist(usage: dict[str, Any]) -> None:
+            await self._queue.save_usage(run_id, claimed.owner or str(claimed.attempt), usage)
+
+        meter = Meter(charge=self._charger(record.tenant_id), persist=persist)
         observed = _Observed.open(self._tracing, record, span, meter)
         config["callbacks"] = observed.callbacks
-
         status, error = "completed", None
+        data: dict[str, Any] = {}
         self._driving.add(run_id)
         try:
             if await self._queue.cancel_requested(run_id):
-                raise asyncio.CancelledError  # asked before the listener would act
-            async with asyncio.timeout(limits.run_timeout_s):
+                raise asyncio.CancelledError
+            # A reclaimed attempt has only the original deadline's remainder.
+            remaining = (
+                (job.deadline - time.time())
+                if job.deadline is not None
+                else self._settings.limits.run_timeout_s
+            )
+            async with asyncio.timeout(max(0, remaining)):
                 async for mode, chunk in graph.astream(  # type: ignore[call-overload]
                     graph_input,
                     config=config,
                     context=context,
                     stream_mode=STREAM_MODES,
-                    durability=durability,
+                    durability=job.durability,
                 ):
                     await self._emit(run_id, mode, chunk)
-
-            snapshot = await graph.aget_state(config)
-            if snapshot.interrupts:
-                status = "interrupted"
-                await self._bus.append(
-                    run_id,
-                    "run.interrupted",
-                    {
-                        "interrupts": [
-                            {"id": getattr(i, "id", None), "value": jsonable(i.value)}
-                            for i in snapshot.interrupts
-                        ],
-                        "next": list(snapshot.next or ()),
-                        "usage": self._usage(record, meter),
-                    },
-                )
-            else:
-                await self._bus.append(
-                    run_id,
-                    "run.completed",
-                    {
-                        "result": self._summarize(snapshot.values),
-                        "usage": self._usage(record, meter),
-                    },
-                )
-        except asyncio.CancelledError:
-            status = "cancelled"
-            await self._bus.append(
-                run_id, "run.cancelled", {"run_id": run_id, "usage": self._usage(record, meter)}
-            )
+            status, data = await self._result(graph, head_config)
+        except OwnershipLostError:
+            status = "ownership_lost"
+            self._lost.add(run_id)
             raise
+        except asyncio.CancelledError:
+            if self._moving(run_id):
+                status = "handed_off"
+                raise
+            status = "cancelled"
+            data = {"run_id": run_id}
         except TimeoutError:
-            status, error = "failed", f"Run exceeded {limits.run_timeout_s}s."
-            await self._bus.append(
-                run_id,
-                "run.failed",
-                {"error": error, "type": "timeout", "usage": self._usage(record, meter)},
-            )
+            status, error = "failed", f"Run exceeded {self._settings.limits.run_timeout_s}s."
+            data = {"error": error, "type": "timeout"}
         except Exception as exc:
             status, error = "failed", f"{type(exc).__name__}: {exc}"
             log.exception("run failed")
-            await self._bus.append(
-                run_id,
-                "run.failed",
-                {"error": error, "type": type(exc).__name__, "usage": self._usage(record, meter)},
-            )
+            data = {"error": error, "type": type(exc).__name__}
         finally:
             self._driving.discard(run_id)
-            record.status, record.error = status, error
-            self._usage(record, meter)  # the terminal append may not have been reached
-            # Costs reported after the last model call (a final rerank, say).
-            await asyncio.shield(meter.flush())
-            with contextlib.suppress(Exception):
-                await self._bus.set_meta(run_id, record.public())
             try:
-                await _audit_end(self._db, record)
-            except Exception:
-                # Spend is never lost silently: if Postgres missed it, the log has it.
-                log.warning("could not write the run's audit row", extra={"usage": record.usage})
-            observed.close(status, error, record.usage)
-            await self._release_slot(job)
+                await asyncio.shield(meter.flush())
+                record.usage = merge_usage(await self._queue.usage(run_id))
+            finally:
+                observed.close(status, error, record.usage)
+        if not self._moving(run_id):
+            record.status, record.error = status, error
+            await self._finish(record, f"run.{status}", data | {"usage": record.usage})
+
+    async def _result(self, graph: Graph, config: RunnableConfig) -> tuple[str, dict[str, Any]]:
+        snapshot = await graph.aget_state(config)
+        if snapshot.interrupts:
+            return "interrupted", {
+                "interrupts": [
+                    {"id": getattr(i, "id", None), "value": jsonable(i.value)}
+                    for i in snapshot.interrupts
+                ],
+                "next": list(snapshot.next or ()),
+            }
+        return "completed", {"result": self._summarize(snapshot.values)}
 
     def _charger(self, tenant_id: str) -> Callable[[float], Awaitable[None]] | None:
         """What the run's meter charges its costs to: the tenant's budget, if any."""
@@ -640,15 +757,6 @@ class RunWorker:
 
         return charge
 
-    @staticmethod
-    def _usage(record: RunRecord, meter: Meter) -> dict[str, Any] | None:
-        """Snapshot the meter onto the record; never fails the run."""
-        try:
-            record.usage = meter.summary()
-        except Exception:
-            log.warning("could not summarise the run's usage", exc_info=True)
-        return record.usage
-
     async def _emit(self, run_id: str, mode: str, chunk: Any) -> None:
         match mode:
             case "messages":
@@ -657,7 +765,7 @@ class RunWorker:
                 if isinstance(text, list):  # provider content blocks
                     text = "".join(b.get("text", "") for b in text if isinstance(b, dict))
                 if text:
-                    await self._bus.append(
+                    await self._append(
                         run_id,
                         "token",
                         {"text": text, "node": (meta or {}).get("langgraph_node")},
@@ -666,13 +774,13 @@ class RunWorker:
                 for node, update in (chunk or {}).items():
                     if node == "__interrupt__":
                         continue  # emitted once, authoritatively, from the snapshot
-                    await self._bus.append(
+                    await self._append(
                         run_id,
                         "node",
                         {"node": node, "update": jsonable(update)},
                     )
             case "custom":
-                await self._bus.append(run_id, "custom", {"payload": jsonable(chunk)})
+                await self._append(run_id, "custom", {"payload": jsonable(chunk)})
             case _:  # pragma: no cover - defensive
                 log.debug("unhandled stream mode %s", mode)
 

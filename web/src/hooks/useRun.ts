@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../api/client";
-import { streamRun } from "../api/sse";
+import { RunSession } from "../runSession";
 import { TERMINAL_EVENTS } from "../api/types";
 import type { Interrupt, RunEvent, RunResult, RunStatus, RunUsage } from "../api/types";
 import { applyEvent, EMPTY_PROGRESS, type Progress } from "../research/progress";
@@ -21,6 +21,7 @@ export interface RunState {
   /** Milliseconds from starting the run to its terminal event. */
   durationMs: number | null;
   startedAt: number | null;
+  recoveryNotice: string | null;
 }
 
 const IDLE: RunState = {
@@ -35,6 +36,7 @@ const IDLE: RunState = {
   usage: null,
   durationMs: null,
   startedAt: null,
+  recoveryNotice: null,
 };
 
 /**
@@ -47,11 +49,11 @@ const IDLE: RunState = {
  */
 export function useRun(onSettled?: () => void | Promise<void>) {
   const [state, setState] = useState<RunState>(IDLE);
-  const abortRef = useRef<AbortController | null>(null);
+  const session = useRef(new RunSession());
   const settled = useRef(onSettled);
   settled.current = onSettled;
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => session.current.reset(), []);
 
   const consume = useCallback((event: RunEvent) => {
     setState((current) => {
@@ -65,6 +67,13 @@ export function useRun(onSettled?: () => void | Promise<void>) {
         };
       }
       switch (event.type) {
+        case "run.reclaimed":
+          return {
+            ...prev,
+            streamedText: "",
+            progress: event.data.from_checkpoint ? prev.progress : EMPTY_PROGRESS,
+            recoveryNotice: `Resumed on another worker (attempt ${event.data.attempt}).`,
+          };
         case "run.started":
           return { ...prev, status: "running", runId: event.data.run_id };
         case "token":
@@ -90,61 +99,36 @@ export function useRun(onSettled?: () => void | Promise<void>) {
       threadId: string,
       body: Parameters<typeof api.startRun>[1],
     ): Promise<void> => {
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-      setState({ ...IDLE, status: "running", startedAt: Date.now() });
-
-      try {
-        const record = await api.startRun(threadId, body);
-        setState((prev) => ({ ...prev, runId: record.run_id }));
-        await streamRun(record.run_id, {
-          signal: controller.signal,
-          onEvent: consume,
-          // Called only once reconnecting has been given up on. The run itself
-          // may well still be going server-side; say so rather than "failed".
-          onError: (error) =>
-            setState((prev) => ({
-              ...prev,
-              status: prev.status === "running" ? "failed" : prev.status,
-              error: `Lost the connection to this run (${String(error)}). It may still be running; reopen the thread to see its result.`,
-            })),
-        });
-      } catch (error) {
-        setState((prev) => ({
+      await session.current.launch(threadId, body, {
+        start: () => setState({ ...IDLE, status: "running", startedAt: Date.now() }),
+        record: (record) => setState((prev) => ({ ...prev, runId: record.run_id })),
+        event: consume,
+        error: (error, stream) => setState((prev) => ({
           ...prev,
           status: "failed",
-          error: error instanceof Error ? error.message : String(error),
-        }));
-      } finally {
-        try {
-          // Reload the thread so the persisted messages include this reply...
-          await settled.current?.();
-        } finally {
-          // ...then drop the live copy, or the reply renders twice: once from the
-          // snapshot and once from the token stream. Clearing only after the
-          // reload avoids a frame where the reply disappears. Skip if a newer
-          // run has started and owns the stream now.
-          if (abortRef.current === controller) {
-            setState((prev) => ({ ...prev, streamedText: "" }));
-          }
-        }
-      }
+          error: stream
+            ? `Lost the connection to this run (${String(error)}). It may still be running; reopen the thread to see its result.`
+            : error instanceof Error ? error.message : String(error),
+        })),
+        settled: () => settled.current?.(),
+        clear: () => setState((prev) => ({ ...prev, streamedText: "" })),
+      });
     },
     [consume],
   );
 
   const cancel = useCallback(async () => {
     if (!state.runId) return;
-    try {
-      await api.cancel(state.runId);
-    } finally {
-      abortRef.current?.abort();
+    await session.current.cancel(state.runId, () => {
       setState((prev) => ({ ...prev, status: "cancelled" }));
-    }
+      void settled.current?.();
+    });
   }, [state.runId]);
 
-  const reset = useCallback(() => setState(IDLE), []);
+  const reset = useCallback(() => {
+    session.current.reset();
+    setState(IDLE);
+  }, []);
 
   return { ...state, launch, cancel, reset, busy: state.status === "running" };
 }

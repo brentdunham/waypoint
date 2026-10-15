@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../api/client";
 import type { AgentSpec, Snapshot, Thread } from "../api/types";
@@ -35,8 +35,12 @@ export function useThreads() {
 export function useSnapshot(threadId: string | null) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [history, setHistory] = useState<Snapshot[]>([]);
+  const selected = useRef(threadId);
+  selected.current = threadId;
+  const request = useRef(0);
 
   const refresh = useCallback(async () => {
+    const version = ++request.current;
     if (!threadId) {
       setSnapshot(null);
       setHistory([]);
@@ -46,6 +50,7 @@ export function useSnapshot(threadId: string | null) {
       api.state(threadId),
       api.history(threadId, 30),
     ]);
+    if (selected.current !== threadId || request.current !== version) return;
     setSnapshot(head);
     setHistory(past);
   }, [threadId]);

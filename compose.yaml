@@ -55,6 +55,10 @@ x-app-env: &app-env
   # The worker's (docs/design/queue.md); read by the api only when it has no Redis.
   QUEUE__CONCURRENCY: ${QUEUE__CONCURRENCY:-8}
   QUEUE__DRAIN_S: ${QUEUE__DRAIN_S:-20}
+  QUEUE__HEARTBEAT_S: ${QUEUE__HEARTBEAT_S:-10}
+  QUEUE__LEASE_S: ${QUEUE__LEASE_S:-30}
+  QUEUE__RECLAIM_S: ${QUEUE__RECLAIM_S:-10}
+  QUEUE__MAX_ATTEMPTS: ${QUEUE__MAX_ATTEMPTS:-3}
 
 services:
   api:

@@ -56,7 +56,10 @@ flowchart LR
 ```
 
 Every run in a thread continues from the thread's head checkpoint unless the
-request names another one with `checkpoint_id`.
+request names another one with `checkpoint_id`. One run owns the thread at
+a time, including time queued and time waiting for worker recovery. A
+competing run gets `409`. Recovery uses the recorded starting head to decide
+whether to continue from a new checkpoint or replay the original input.
 
 ## 3.3 Interrupts
 

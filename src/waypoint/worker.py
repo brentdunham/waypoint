@@ -7,7 +7,7 @@ Redis (``/readyz`` on the API counts workers) and by touching a file the
 container healthcheck reads.
 
 SIGTERM or Ctrl-C stops it: it takes no new runs, gives those in flight
-``QUEUE__DRAIN_S`` to end, then stops the rest.
+``QUEUE__DRAIN_S`` to end, then hands the rest to another worker.
 """
 
 import asyncio

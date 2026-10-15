@@ -408,3 +408,24 @@ steps:
       TEST_REDIS_URL: redis://localhost:6379/15
   - run: npm ci --prefix web && npm run build --prefix web
 ```
+
+## Recovery and safety regressions
+
+`test_run_safety.py` covers same-tenant user isolation for run records,
+streams, cancellation and historical traces, in-memory listing, thread
+admission and replay of `remember`. `test_notes_idempotency.py` checks
+concurrent repeated writes, payload conflicts, tenant separation and SQLite
+restart persistence.
+
+On Linux, `test_queue_recovery.py` uses real Postgres checkpoints and Redis
+leases. It tests recovery and handoff under `sync`, `async` and `exit`,
+cancellation while orphaned, exhausted attempts, the original deadline,
+fenced writes and cleanup, and cumulative usage. Its SIGKILL tests launch a
+separate deterministic worker process, kill only that child mid-step without
+cleanup, and finish the same run on a successor. No real model calls.
+Use disposable databases: the Redis fixture flushes its configured index.
+
+The web `runSession.test.ts` exercises late POST responses, late events and
+errors, thread switches during refresh, and late cancellation responses.
+Default mypy discovery excludes the ignored local scratch file and
+`evals/results/`; these are not application modules.

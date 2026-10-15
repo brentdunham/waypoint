@@ -194,6 +194,7 @@ def test_concurrency_slots_are_enforced(make_app, auth: dict[str, str]) -> None:
     from tests.conftest import TEST_DATABASE_URL, TEST_REDIS_URL
 
     app = make_app(
+        workers=0,  # Keep admitted runs queued so their slots cannot finish mid-assertion.
         database_url=TEST_DATABASE_URL,
         redis_url=TEST_REDIS_URL,
         auth_enabled=True,
@@ -201,16 +202,16 @@ def test_concurrency_slots_are_enforced(make_app, auth: dict[str, str]) -> None:
         limits={"concurrent_runs": 2, "rpm": 1000},
     )
     client = app.test_client()
-    thread_id = new_thread(client, "research", auth)
-
     codes = [
         client.post(
-            f"/api/v1/threads/{thread_id}/runs", json={"message": f"topic {i}"}, headers=auth
+            f"/api/v1/threads/{new_thread(client, 'research', auth)}/runs",
+            json={"message": f"topic {i}"},
+            headers=auth,
         ).status_code
         for i in range(6)
     ]
     assert 429 in codes
-    assert codes.count(202) <= 4  # slots free as runs finish, so allow some drift
+    assert codes.count(202) == 2
 
 
 def test_the_token_bucket_refuses_a_burst(make_app, auth: dict[str, str]) -> None:

@@ -97,9 +97,21 @@ Optional alongside any of them:
 
 ```jsonc
 {"checkpoint_id": "1f1a…",   // start from this checkpoint instead of the head
- "durability": "async",      // "sync" | "async" | "exit" — how eagerly to persist
+ "durability": "sync",       // default; also "async" or "exit"
  "models": {"critic": "claude-opus-4-5"}}  // optional; role -> model, "default" for the rest
 ```
+
+Only one queued or executing run may own a thread. A competing POST gets
+`409 conflict`. Threads, run records, SSE, cancellation and historical
+traces require the owning user or `tenant:admin`/`*` in the same tenant.
+Another tenant gets `404`; another user without admin access gets `403`.
+
+`durability` controls recovery: `sync` (default) persists each finished step
+before starting the next; `async` resumes from the last checkpoint that
+landed and may repeat more work; `exit` restarts this run's original input
+from its starting branch. Repeated model calls cost again. Reclaim never
+extends the original deadline (`LIMITS__RUN_TIMEOUT_S`, including queue
+wait), and delivery beyond `QUEUE__MAX_ATTEMPTS` fails the run.
 
 `models` picks a model per role for this run (`GET /agents` lists each agent's
 `model_roles`). Every name must be in `MODELS_ALLOWED`; an unknown role or a
@@ -173,6 +185,7 @@ data: {"interrupts":[{"id":"6ac8…","value":{"kind":"approve_plan","plan":["…
 | Event | Meaning |
 |---|---|
 | `run.started` | Accepted and queued for a worker (a run's status is `running` from here); carries the run's `models` map and, with tracing on, its `trace_id` |
+| `run.reclaimed` | Nonterminal recovery notice: `{attempt, from_checkpoint}`. Keep following the same stream; discard partial text before the successor repeats the interrupted step. |
 | `token` | An LLM token, with the node that produced it |
 | `node` | A super-step finished; carries that node's state update |
 | `custom` | Whatever a node wrote via `get_stream_writer()`. The research agent writes `{"kind":"research","phase":…}` as each step *starts*: `planning`, `searching` (once per worker, with `question` and `round`), `reviewing` (with `round`), `writing` and `verifying` (the citation check; absent when `RESEARCH__VERIFY_CITATIONS=false`). `node` events say when each finished; the UI's research panel is built from both. |

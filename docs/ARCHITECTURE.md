@@ -136,9 +136,32 @@ runs a worker of its own on an in-memory queue (`MemoryRunQueue`). That keeps
 `python -m waypoint` and the unit tests self-contained, through the same
 code.
 
-Not yet: a run whose worker dies stays in the group's pending list and is not
-picked up again. Reclaiming it, and resuming it from its last checkpoint, is
-phase 2 of the design.
+Every worker scans the pending list with `XAUTOCLAIM`. A 30 s owner lease
+and an attempt-specific token fence every event and the atomic terminal
+record/event publication. Heartbeats renew the owner and pending entry,
+and refresh the tenant slot. Losing ownership stops an attempt without a
+terminal event. Shutdown hands unfinished entries off after the drain.
+
+Checkpoint writes have a Postgres fence too (`infra/checkpoints.py`). A
+write locks the thread row and verifies the token in `run_fences` in the
+same transaction as the checkpoint. A successor registers its token under
+that lock after rechecking Redis ownership. A delayed previous attempt
+therefore cannot overwrite the successor's state.
+
+The first attempt records the thread head before executing. A successor
+continues with `astream(None)` if a checkpoint advanced, or replays the
+original input if it did not. `exit` replays from the starting branch;
+`sync` is now the default. All attempts share the original deadline and a
+three-attempt limit. `run.reclaimed` makes the browser discard partial
+text before the repeated step streams again.
+
+Admission atomically reserves the thread with the enqueue. Another queued
+or active run on that thread gets `409`, across API processes. Terminal
+publication releases that reservation; handoff retains it. Usage is
+stored as per-attempt snapshots in a Redis hash and summed for the final
+record, audit and trace. MCP calls carry a stable tool-call idempotency key;
+the demo notes server commits its mutation and cached result together.
+`remember` uses the thread and tool call id as its memory key.
 
 ## 3. Interrupts are the point
 
@@ -506,10 +529,6 @@ with `--control-socket /tmp/gunicorn.ctl` instead.
 
 ## What is deliberately missing
 
-* **Recovering a dead worker's runs.** Runs are queued and driven by workers
-  (§2a), but a worker that dies mid-run leaves its runs unfinished. Phase 2 of
-  [design/queue.md](design/queue.md) reclaims them with `XAUTOCLAIM` and
-  resumes them from their last checkpoint.
 * **Auth beyond API keys.** Swap `KeyStore.resolve` for JWT verification; the
   `Principal` everything else depends on does not change.
 * **Per-tenant model routing.** Models are chosen per agent, role and run

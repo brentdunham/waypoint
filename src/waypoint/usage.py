@@ -16,6 +16,7 @@ with :func:`report_embedding` and :func:`report_rerank`, which find the current
 run's meter through :data:`METER` and do nothing when there is none.
 """
 
+import asyncio
 import logging
 import tomllib
 import uuid
@@ -289,11 +290,14 @@ class Meter(AsyncCallbackHandler):
         prices: PriceTable | None = None,
         *,
         charge: Callable[[float], Awaitable[None]] | None = None,
+        persist: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self.prices = prices if prices is not None else load_prices()
         self.roles: dict[str, RoleUsage] = {}
         self._open: dict[uuid.UUID, tuple[str, str]] = {}
         self._charge = charge
+        self._persist = persist
+        self._persist_lock = asyncio.Lock()
         self.charged_usd = 0.0
 
     def _role(self, role: str) -> RoleUsage:
@@ -335,17 +339,18 @@ class Meter(AsyncCallbackHandler):
 
     async def flush(self) -> None:
         """Charge the budget for everything not yet charged."""
-        if self._charge is None:
-            return
-        due = self.priced_usd() - self.charged_usd
-        if due <= 0:
-            return
-        # Counted before the await, so concurrent calls never charge twice.
-        self.charged_usd += due
-        try:
-            await self._charge(due)
-        except Exception:
-            log.warning("could not charge the budget", exc_info=True, extra={"usd": due})
+        if self._charge is not None:
+            due = self.priced_usd() - self.charged_usd
+            if due > 0:
+                # Counted before the await, so concurrent calls never charge twice.
+                self.charged_usd += due
+                try:
+                    await self._charge(due)
+                except Exception:
+                    log.warning("could not charge the budget", exc_info=True, extra={"usd": due})
+        if self._persist is not None:
+            async with self._persist_lock:
+                await self._persist(self.summary())
 
     @override
     async def on_llm_error(self, error: BaseException, *, run_id: uuid.UUID, **kwargs: Any) -> None:
@@ -390,6 +395,34 @@ class Meter(AsyncCallbackHandler):
             "searches": sum(r.searches for r in self.roles.values()),
             "roles": roles,
         }
+
+
+def merge_usage(attempts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Sum snapshots from distinct attempts, preserving unknown prices."""
+    totals: dict[str, Any] = {
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "searches": 0,
+        "roles": {},
+    }
+    for usage in attempts:
+        for key in ("cost_usd", "input_tokens", "output_tokens", "searches"):
+            totals[key] = _sum_usage(totals[key], usage.get(key, 0))
+        for name, row in usage.get("roles", {}).items():
+            target = totals["roles"].setdefault(name, {"model": ""})
+            models = set(filter(None, target["model"].split(", "))) | set(
+                filter(None, row.get("model", "").split(", "))
+            )
+            target["model"] = ", ".join(sorted(models))
+            for key, value in row.items():
+                if key != "model":
+                    target[key] = _sum_usage(target.get(key, 0), value)
+    return totals
+
+
+def _sum_usage(left: Any, right: Any) -> Any:
+    return None if left is None or right is None else round(left + right, 6)
 
 
 METER: ContextVar[Meter | None] = ContextVar("usage_meter", default=None)

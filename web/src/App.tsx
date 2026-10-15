@@ -150,6 +150,7 @@ export default function App() {
   return (
     <div className="shell">
       <ConnectionBar />
+      {run.recoveryNotice && <p role="status">{run.recoveryNotice}</p>}
       <div className="layout">
         <Sidebar
           agents={agents}

@@ -48,6 +48,11 @@ create table if not exists threads (
 );
 create index if not exists threads_tenant_idx on threads (tenant_id, updated_at desc);
 
+create table if not exists run_fences (
+    thread_id uuid primary key references threads on delete cascade,
+    owner text not null
+);
+
 create table if not exists run_audit (
     run_id      uuid primary key,
     thread_id   uuid not null,

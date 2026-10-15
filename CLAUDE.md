@@ -15,8 +15,11 @@ rediscovering it.
   `waypoint/mcp_demo/notes.py`; ROADMAP item 5) is complete, deployed to Bob
   2026-10-15. **In progress: `queue.md`** (the durable run queue, ROADMAP
   item 6): phase 1 built (the API only queues runs; `python -m waypoint.worker`,
-  the `worker` compose service, drives them), phase 2 (reclaim and resume)
-  next. With Redis the API drives no runs, so integration tests get a worker
+  the `worker` compose service, drives them), phases 2 and 3 (recovery,
+  idempotency and client safety) built locally;
+  production deployment and Bob kill/deploy acceptance checks pending.
+  `docs/NEXT-STEPS.md` records the follow-up validation. With Redis the API
+  drives no runs, so integration tests get a worker
   runtime from `TestApp` (docs/TESTING.md). Each phase updates every
   document in that design's Documentation table in the same commit as its
   code. `observability.md` is complete (deployed 2026-10-13; case study

@@ -212,8 +212,12 @@ own; a run cannot slow a request. One more service to run and watch
 needs a second command. Without Redis the API drives its own runs on an
 in-memory queue, so tests and a bare `python -m waypoint` still work. The
 trace id is chosen by the API and given to the worker's run span, so a run is
-still one trace. Recovering a dead worker's runs from their last checkpoint
-is the design's phase 2.
+still one trace. Each attempt renews a fenced owner lease. Successors reclaim
+abandoned entries, continue checkpoints, and publish `run.reclaimed` on the
+same stream. Shutdown drains then hands work off. The default durability is
+`sync`. At-least-once execution requires stable keys for side effects; the
+demo notes server deduplicates mutations and `remember` upserts by tool call.
+One atomic thread reservation prevents overlapping runs.
 
 ---
 

@@ -1,5 +1,6 @@
 """Model construction, including the deterministic stand-in used by tests."""
 
+import hashlib
 import json
 import logging
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -127,10 +128,14 @@ class ScriptedChatModel(BaseChatModel):
             # Several markers make several calls in one reply, as a model may.
             matches = re.findall(r"\[\[tool:(\w+)\((.*?)\)\]\]", text)
             if matches:
+                # Replays of a saved model message keep its call ids, while
+                # separate user turns must not collide in tool deduplication.
+                turn = messages[-1].id or f"{len(messages)}:{text}"
+                prefix = hashlib.sha256(turn.encode()).hexdigest()[:16]
                 return AIMessage(
                     content="",
                     tool_calls=[
-                        {"name": name, "args": _json.loads(raw or "{}"), "id": f"call_{i}"}
+                        {"name": name, "args": _json.loads(raw or "{}"), "id": f"call_{prefix}_{i}"}
                         for i, (name, raw) in enumerate(matches, start=1)
                     ],
                 )

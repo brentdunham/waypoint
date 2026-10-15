@@ -6,12 +6,13 @@ than a captured reference, so the same tool object works across graphs.
 """
 
 import datetime as dt
+import hashlib
 import zoneinfo
 from typing import Annotated, Any
 
 from langchain_core.tools import BaseTool, tool
 from langgraph.config import get_store
-from langgraph.prebuilt import InjectedState
+from langgraph.prebuilt import InjectedState, ToolRuntime
 from langgraph.runtime import get_runtime
 
 from waypoint.agents.citations import search_result
@@ -57,7 +58,7 @@ def calculate(expression: str) -> str:
 
 
 @tool
-async def remember(fact: str) -> str:
+async def remember(fact: str, runtime: ToolRuntime[AgentContext, Any]) -> str:
     """Store a durable fact about the user, e.g. "prefers metric units".
 
     Use this only for stable preferences and facts, never for the content of
@@ -65,8 +66,12 @@ async def remember(fact: str) -> str:
     """
     store = get_store()
     namespace = _namespace()
-    key = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%S%f")
-    await store.aput(namespace, key, {"fact": fact, "created_at": key})
+    thread_id = runtime.config.get("configurable", {}).get("thread_id", "")
+    key = hashlib.sha256(f"{thread_id}:{runtime.tool_call_id}".encode()).hexdigest()
+    if await store.aget(namespace, key) is None:
+        await store.aput(
+            namespace, key, {"fact": fact, "created_at": dt.datetime.now(dt.UTC).isoformat()}
+        )
     return f"Remembered: {fact}"
 
 
