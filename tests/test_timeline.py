@@ -116,6 +116,7 @@ def test_recovery_timeline_uses_the_original_start_and_final_cumulative_cost(
                     "waypoint.run_id": "run",
                     "waypoint.tenant_id": "tenant",
                     "waypoint.cost_usd": cost,
+                    "waypoint.status": "completed" if span_id == "attempt2" else "handed_off",
                     "waypoint.run.created_at": "1970-01-01T00:00:00+00:00",
                 }.items()
             ],
@@ -132,6 +133,25 @@ def test_recovery_timeline_uses_the_original_start_and_final_cumulative_cost(
     assert result["cost_usd"] == 3.0
     assert len(result["steps"]) == 1
     assert result["steps"][0]["start_ms"] == 35
+
+
+@pytest.mark.parametrize("status", ["handed_off", "ownership_lost", "running"])
+def test_recovery_timeline_waits_for_the_terminal_attempt(status: str) -> None:
+    trace = {
+        "spans": [
+            {
+                "spanID": "first-attempt",
+                "operationName": "run.attempt",
+                "tags": [
+                    {"key": "waypoint.run_id", "value": "run"},
+                    {"key": "waypoint.tenant_id", "value": "tenant"},
+                    {"key": "waypoint.status", "value": status},
+                ],
+            }
+        ]
+    }
+    with pytest.raises(TraceNotReadyError):
+        timeline(trace, run_id="run", tenant_id="tenant")
 
 
 def test_off_by_default_the_endpoint_is_absent(client: TestClient) -> None:

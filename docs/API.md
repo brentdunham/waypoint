@@ -431,7 +431,8 @@ writes a public row ([design](design/tools.md), T12).
 `parent` is the node it ran inside. `start_ms` counts from the start of the
 run. Read from the trace backend (Jaeger), which receives spans in batches:
 right after a run ends the answer is `{"status": "pending", ...}`, so poll
-every couple of seconds. Only the caller's tenant's runs, found through the
+every couple of seconds. A handed-off attempt alone stays pending until the
+terminal attempt arrives with cumulative cost. Only the caller's tenant's runs, found through the
 run record or `run_audit` (a run is readable as long as its trace is kept, a
 week on the demo), and only whitelisted fields: no prompt or document text,
 whatever the spans hold. `503` when the trace backend cannot be read.

@@ -161,15 +161,22 @@ def timeline(trace: dict[str, Any], *, run_id: str, tenant_id: str) -> dict[str,
                 fields=fields,
             )
         )
-    if not roots:
-        raise TraceNotReadyError  # the run span ends last; until then the trace is partial
+    runs = [s for s in steps if s.kind == "run"]
+    terminal = [
+        s
+        for s in runs
+        if (s.fields or {}).get("status") in {"completed", "interrupted", "failed", "cancelled"}
+    ]
+    if not terminal:
+        # A handed-off attempt can export before its successor finishes. Keep
+        # the client's poll alive until the terminal attempt and cumulative cost arrive.
+        raise TraceNotReadyError
     root = min(roots, key=lambda s: float(s.get("startTime", 0)))
     start = float(root.get("startTime", 0)) / 1000
     created = _tags(root).get("waypoint.run.created_at")
     if isinstance(created, str):
         start = dt.datetime.fromisoformat(created).timestamp() * 1000
-    runs = [s for s in steps if s.kind == "run"]
-    latest = max(runs, key=lambda s: s.start_ms + s.duration_ms)
+    latest = max(terminal, key=lambda s: s.start_ms + s.duration_ms)
     duration = latest.start_ms + latest.duration_ms - start
     known = {s.id for s in steps}
     for step in steps:
